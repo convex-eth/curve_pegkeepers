@@ -1,0 +1,17 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "script"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.30"
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 200
+
+[vyper]
+path = ".venv/bin/vyper"
+optimize = "gas"
+
+[fmt]
+line_length = 100
