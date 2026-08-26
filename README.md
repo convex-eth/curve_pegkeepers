@@ -2,6 +2,67 @@
 
 Foundry workspace for reproducing Curve's live crvUSD `PegKeeperV2`, testing protocol offboarding, and using V2 as the starting point for a future V3.
 
+## What PegKeepers are built for
+
+PegKeepers are automated monetary-policy and liquidity contracts for crvUSD. Their job is to push crvUSD back toward its peg while adding liquidity to selected crvUSD/stablecoin markets.
+
+When demand makes crvUSD scarce in a supported pool, a PegKeeper can use crvUSD allocated by the ControllerFactory to add crvUSD-side liquidity. This expands circulating supply, deepens the market, and pushes the pool back toward balance. When crvUSD is abundant, the PegKeeper can remove crvUSD-side liquidity and return that crvUSD to its reserve, where it can be taken out of circulation through Factory debt accounting.
+
+PegKeepers therefore connect three protocol functions:
+
+- crvUSD supply expansion and contraction;
+- liquidity provision in the pools used to trade crvUSD;
+- permissionless peg maintenance, with a reward for the caller that performs a useful update.
+
+They are not a hard peg guarantee. Their effectiveness depends on pool liquidity, oracle and regulator limits, available debt capacity, and whether the adjustment is economically viable.
+
+## How V2 works
+
+Each `PegKeeperV2` manages one two-coin Curve pool containing crvUSD and another stablecoin.
+
+1. The ControllerFactory assigns the PegKeeper a crvUSD debt ceiling and mints the corresponding idle crvUSD allocation.
+2. The shared PegKeeperRegulator checks the aggregate crvUSD price, the target pool's oracle price, other registered PegKeeper pools, and debt-ratio limits before allowing an action.
+3. Anyone can call `update()`. If normalized non-crvUSD liquidity exceeds crvUSD liquidity, the PegKeeper can provide crvUSD to the pool. If crvUSD liquidity is excessive, it can withdraw crvUSD from the pool.
+4. The PegKeeper records how much crvUSD it has deployed as debt and holds the resulting pool LP tokens.
+5. V2 values those LP tokens against its debt. When an update creates positive incremental accounting profit, it pays the caller a configured percentage in LP tokens. The remaining profit belongs to the protocol fee receiver.
+
+V2 does not trade through the pool like a normal swapper. It uses one-sided liquidity additions and imbalance withdrawals to move the pool toward balance.
+
+## What's wrong with V2
+
+### 1. No first-class offboarding or migration path
+
+V2 has governance setters, but no single operation that can quickly retire a PegKeeper or move its position into a replacement. Governance must install an offboarding regulator, change each PegKeeper's regulator, reduce Factory debt ceilings, and wait for residual pool debt to become economically withdrawable. Idle crvUSD can be burned immediately; LP-backed debt can remain stuck until a profitable withdrawal is available.
+
+### 2. Keeper compensation is open-ended
+
+The caller reward is a percentage of incremental profit. It has no absolute cap. A large adjustment can therefore pay far more than the amount needed to cover transaction cost and execution risk. Keeper compensation should be predictable and capped rather than scaling without limit with protocol profit.
+
+### 3. The capital produces little profit
+
+V2 commits a large crvUSD allocation to low-margin stablecoin LP positions. Its return comes mainly from pool fees and favorable imbalance accounting, minus the keeper's percentage. That is a weak revenue source relative to the amount of protocol balance sheet committed.
+
+### 4. crvUSD growth does not produce comparable revenue growth
+
+When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM position. This supports the peg and expands supply, but the protocol receives ordinary LP exposure rather than building a dedicated yield-bearing reserve. crvUSD demand can grow substantially while protocol revenue grows little or not at all.
+
+## Preliminary V3 direction
+
+V3 should keep permissionless peg maintenance while changing what the protocol acquires when it expands crvUSD supply. The external AMM asset and the yield-bearing reserve asset are separate choices:
+
+- **Target AMM asset:** the stablecoin quoted against crvUSD through the pool interface, such as USDT.
+- **Target yield token:** the asset held behind that interface to earn revenue, such as sUSDe.
+
+A crvUSD/USDT-facing implementation could therefore convert the USDT it earns into USDe and then sUSDe. It does not need to expose sUSDe as the paired pool coin.
+
+1. **Use a flat, Curve-compatible pricing surface.** V3 can expose the functions expected from a normal Curve AMM without using a normal invariant. From the protocol's perspective, the expansion side could sell `1 crvUSD` only when it receives at least `1 + x USDT`, where `x` is a configured number of basis points. The contraction side could spend `1 USDT` only when it receives at least `1 + x crvUSD`. These flat quotes create a no-trade band around the target price instead of continuously moving along a bonding curve.
+2. **Convert proceeds into a yield-bearing reserve.** After selling crvUSD for the target AMM asset, V3 can route that asset into a separately configured yield token such as sUSDS, sUSDe, or sfrxUSD. Yield belongs to the protocol and can be forwarded to the fee receiver.
+3. **Use sane, capped keeper fees.** Keepers should receive enough to make updates reliable, but every update should have a hard maximum reward. V3 should not pay an uncapped percentage of protocol profit.
+4. **Execute only profitable transactions.** The configured quote must leave positive value after pool or routing fees, slippage, keeper compensation, reserve conversion costs, and changes in the yield token's exchange rate. A nominal peg deviation is not enough by itself.
+5. **Retain a permissionless `update()` flow.** On the expansion side, an update can mint crvUSD within a governance-controlled limit, sell it for the target AMM asset at the configured profitable quote, and convert the proceeds into the target yield token. On the contraction side, it can redeem enough of the yield reserve, buy crvUSD only at a profitable discount, and return that crvUSD to reserves or take it out of circulation through burning or debt reduction.
+
+This is a design direction, not a V3 specification. Follow-up work must define the exact Curve-compatible interface, flat-price quote rules, asset-conversion route, accounting model, oracle rules, profitability test, keeper fee formula, loss handling, reserve limits, emergency controls, and migration/offboarding lifecycle.
+
 ## Toolchain
 
 - Foundry with native Vyper compilation support (verified with Forge `1.7.1`)
