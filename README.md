@@ -52,35 +52,35 @@ The current V3 design is asymmetric:
 
 - **Above peg:** a permissionless keeper sells idle Factory-allocated crvUSD into a designated crvUSD/stablecoin AMM. V3 prefers to deploy the proceeds through the configured yield route, but a downstream failure leaves the target stablecoin as approved accounted backing instead of reverting the peg-critical swap.
 - **Below peg:** users can sell crvUSD directly to V3 against available approved backing.
-- **Fallback below peg:** if direct buyback flow does not arrive, a keeper can buy crvUSD using either buffered target stablecoin or an independently configured yield-unwind path.
+- **Fallback below peg:** if direct buyback flow does not arrive, a keeper can buy crvUSD using either undeployed backing or an independently configured yield-unwind path.
 
 For a USDT-facing sUSDS implementation:
 
 ```text
 Preferred expansion: crvUSD -> USDT -> DAI -> USDS -> sUSDS
-Fallback expansion:  crvUSD -> USDT (accounted target buffer)
+Fallback expansion:  crvUSD -> USDT (undeployed backing)
 
-Buffer contraction:  USDT -> crvUSD
+Undeployed-backing contraction:  USDT -> crvUSD
 Yield contraction:   sUSDS -> USDS -> crvUSD
 ```
 
-The target buffer is intentional backing; intermediate DAI and USDS balances remain transient route assets. The core backing invariant counts normalized accounted USDT plus the trusted USDS value represented by sUSDS. Unsolicited token transfers do not enter accounting automatically.
+Undeployed backing is an intentional terminal accounting state; intermediate DAI and USDS balances remain transient route assets. The core invariant counts normalized `undeployedBacking` (USDT) plus the trusted USDS value represented by sUSDS. Unsolicited token transfers do not enter accounting automatically.
 
-The downstream expansion and yield contraction paths are separately updatable through delayed governance. Routes use typed Curve-swap, exact-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. Target-buffer contraction uses the designated target AMM directly and does not depend on the downstream yield route.
+The downstream expansion and yield contraction paths are separately updatable through delayed governance. Routes use typed Curve-swap, exact-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. Undeployed-backing contraction uses the designated target AMM directly and does not depend on the downstream yield route.
 
 The governance owner also has a separate unrestricted `execute(target, value, calldata)` escape hatch. It can move or convert assets through a one-off recovery path if a configured venue breaks or governance loses confidence in the held yield token or an underlying stablecoin. This power belongs only to the DAO owner, not keepers or the emergency admin. The DAO already controls crvUSD minting and protocol configuration, so the function does not introduce a new trusted actor; it makes that existing governance authority directly usable for urgent recovery.
 
-V3 does not require the target crvUSD AMM spot price to remain close to its EMA. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. After the target swap, V3 attempts the fixed downstream path in an isolated call. Success finishes in yield backing; failure rolls back only the downstream attempt and retains target backing. The keeper cannot select the branch, route, minima, or recipient, and an implementation gas reserve prevents deliberate fallback through gas starvation.
+V3 does not require the target crvUSD AMM spot price to remain close to its EMA. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. After the target swap, V3 attempts the fixed downstream path in an isolated call. Success finishes in yield backing; failure rolls back only the downstream attempt and retains the target asset as `undeployedBacking`. The keeper cannot select the branch, route, minima, or recipient, and an implementation gas reserve prevents deliberate fallback through gas starvation.
 
 V3 treats governance-approved backing stablecoins as one-dollar assets for PegKeeper accounting. Yield shares are first converted into units of their approved underlying through the configured vault or adapter; raw share count is never assumed to equal underlying. The target AMM spot is not used to price the final position. This matches the Factory trust model: the Factory mints an allocation to an approved PegKeeper but does not independently inspect or mark to market what that PegKeeper acquires. A real depeg or redemption failure is therefore governance collateral risk, handled through pauses, route migration, and the owner execute escape hatch—not something the nominal profit check can detect.
 
 Governance route analysis also distinguishes gross PegKeeper output from DAO-consolidated cost. A Curve pool may direct some or all swap fees to Curve DAO admin balances rather than LPs. V3 still treats every fee as a local execution cost because it does not receive admin balances atomically, but governance can prefer DAO-capturing routes when comparing where protocol-level fees accrue. The current 3pool example is recorded in the V3 specification.
 
-Keeper rewards are paid from realized gross profit rather than principal. A fully deployed expansion measures profit after the downstream stable conversion and before terminal yield deposit. A target-only fallback measures normalized target asset received minus crvUSD sold. Each branch pays `min(grossProfit * keeperProfitShareBps / 10_000, maxKeeperReward)` in its realized stablecoin and must retain principal plus the configured margin after reward. Contraction applies the analogous formula to crvUSD received minus the trusted backing source spent. Direct buyback and later buffer-deployment callers receive no percentage reward.
+Keeper rewards are paid from realized gross profit rather than principal. A fully deployed expansion measures profit after the downstream stable conversion and before terminal yield deposit. A target-only fallback measures normalized target asset received minus crvUSD sold. Each branch pays `min(grossProfit * keeperProfitShareBps / 10_000, maxKeeperReward)` in its realized stablecoin and must retain principal plus the configured margin after reward. Contraction applies the analogous formula to crvUSD received minus the trusted backing source spent. Direct buyback and `deployUndeployedBacking()` callers receive no percentage reward.
 
-Future target-to-yield fees are not deducted hypothetically from fallback keeper profit because later conversion is optional: the USDT may instead contract crvUSD directly. `deployBufferedTarget(amount)` can invest accounted USDT later, but conversion loss may consume only existing protocol surplus, remains bounded by a route-specific loss limit, and can never reduce combined trusted backing below deployed crvUSD plus the configured reserve. It does not reset the expansion timer or increase deployed debt.
+Future target-to-yield fees are not deducted hypothetically from fallback keeper profit because later conversion is optional: the USDT may instead contract crvUSD directly. `deployUndeployedBacking(amount)` can invest `undeployedBacking` later, but conversion loss may consume only existing protocol surplus, remains bounded by a route-specific loss limit, and can never reduce combined trusted backing below deployed crvUSD plus the configured reserve. It does not reset the expansion timer or increase deployed debt.
 
-Old buffered USDT is not blindly combined with a newly rewarded expansion. A successful new expansion may trigger a separate capped, best-effort buffer flush with independent balance snapshots; failure of that maintenance subcall cannot revert the peg action. The explicit buffer-deployment function remains available if the route recovers without another expansion.
+Existing undeployed USDT backing is not blindly combined with a newly rewarded expansion. A successful new expansion may trigger a separate capped, best-effort deployment of undeployed backing with independent balance snapshots; failure of that maintenance subcall cannot revert the peg action. The explicit `deployUndeployedBacking()` function remains available if the route recovers without another expansion.
 
 Keeper execution remains fully open. Rewarded keeper functions accept an exact amount but no caller-selected route or minimum-output parameters. The contract validates minimum and maximum size bounds, computes every path minimum and reward internally, and enforces the selected branch's realized profit. V3 does not calculate or probe for a maximum amount. A keeper may split an opportunity and collect more than one flat cap, but every call must independently leave the configured post-reward margin and pay its own gas. `minExpansionAmount` blocks true dust; the design treats remaining fragmentation as bounded rent leakage rather than a solvency problem.
 
@@ -88,7 +88,7 @@ Timing is intentionally asymmetric. Expansion has no cooldown and should execute
 
 The initial timing model can use one global `lastExpansionAt`, but only a successful expansion meeting a governance-set `minExpansionAmount` resets it. A flash-liquidity actor can buy crvUSD, request the minimum expansion, and sell back to reset the timer, but V3 countertrades at least that material threshold. The actor eats the round-trip loss, fees, and V3's required entry economics. The attack is therefore paid rather than free, while genuinely distressed crvUSD can still use the higher-profit early-exit path.
 
-At `4%` to `5%` annualized stablecoin yield, approximately one basis point accrues in `17.5` to `21.9` hours. A one-day minimum deployment time is therefore a useful initial reference for assets that reached the yield token, but buffered USDT earns no such carry. The global timer remains an anti-churn control rather than a guarantee that every backing source earned yield; every exit must still pass its final-value check.
+At `4%` to `5%` annualized stablecoin yield, approximately one basis point accrues in `17.5` to `21.9` hours. A one-day minimum deployment time is therefore a useful initial reference for assets that reached the yield token, but undeployed USDT backing earns no such carry. The global timer remains an anti-churn control rather than a guarantee that every backing source earned yield; every exit must still pass its final-value check.
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, and deferred decisions.
 

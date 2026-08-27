@@ -10,7 +10,7 @@ PegKeeper V3 is an asymmetric, protocol-owned peg module:
 
 - **Above peg:** a permissionless keeper deploys crvUSD into a designated external crvUSD/stablecoin AMM. V3 prefers to continue through an approved yield path, but a failure after the peg-critical AMM swap leaves the target stablecoin as accounted backing instead of reverting an otherwise profitable expansion.
 - **Below peg:** users can sell crvUSD directly to V3 against available approved backing.
-- **Fallback below peg:** a permissionless keeper can use either the buffered target stablecoin or an independently configured yield-unwind path to buy crvUSD if direct buyback flow does not arrive.
+- **Fallback below peg:** a permissionless keeper can use either the undeployed backing or an independently configured yield-unwind path to buy crvUSD if direct buyback flow does not arrive.
 
 The target asset is an intentional fallback backing state, not merely route dust. For a USDT-facing sUSDS deployment:
 
@@ -18,7 +18,7 @@ The target asset is an intentional fallback backing state, not merely route dust
 Preferred expansion: crvUSD -> USDT -> DAI -> USDS -> sUSDS
 Fallback expansion:  crvUSD -> USDT (hold as accounted backing)
 
-Buffer contraction:  USDT -> crvUSD
+Undeployed-backing contraction:  USDT -> crvUSD
 Yield contraction:   sUSDS -> USDS -> crvUSD
 ```
 
@@ -56,7 +56,7 @@ V3 is not intended to:
 - **crvUSD:** the stablecoin whose supply V3 expands and contracts.
 - **Target AMM:** the external crvUSD/stablecoin pool used by keeper expansion and fallback contraction.
 - **Target asset:** the non-crvUSD coin in the target AMM, such as USDT.
-- **Accounted target buffer:** target asset retained by a successful fallback expansion and explicitly included in backing accounting. Unsolicited target-asset transfers are not automatically included.
+- **Undeployed backing:** target asset retained by a successful fallback expansion and explicitly included in backing accounting. Unsolicited target-asset transfers are not automatically included.
 - **Backing asset:** the approved stablecoin immediately before yield deployment, such as USDS before an sUSDS deposit.
 - **Yield token:** the final token held after the expansion path, such as sUSDS.
 - **Downstream expansion path:** the updatable sequence from the target asset to the yield token.
@@ -101,7 +101,7 @@ yieldToken
 feeReceiver
 
 deployedCrvUsd
-accountedTargetBuffer
+undeployedBacking
 downstreamExpansionPath
 yieldContractionPath
 
@@ -119,16 +119,16 @@ lastExpansionAt
 maxExpansionPerCall
 maxBuybackPerCall
 maxDeployedCrvUsd
-maxTargetBuffer
-maxBufferDeployPerCall
-maxBufferDeploymentLossBps
+maxUndeployedBacking
+maxBackingDeployPerCall
+maxBackingDeploymentLossBps
 requiredBackingReserve
 downstreamAttemptGas
 
 expansionPaused
-bufferDeploymentPaused
+backingDeploymentPaused
 directBuybackPaused
-targetContractionPaused
+undeployedContractionPaused
 yieldContractionPaused
 shutdown
 ```
@@ -144,7 +144,7 @@ The first implementation should therefore treat the Factory allocation as reusab
 ```text
 Idle crvUSD
     -> expansion
-Accounted target buffer or yield-token position
+Undeployed backing or yield-token position
     -> contraction
 Idle crvUSD
 ```
@@ -164,7 +164,7 @@ V3 makes that trust assumption explicit and narrow:
 - governance approves the AMM-facing stablecoin, yield token, vault underlying, and typed conversion paths;
 - one normalized unit of an approved backing stablecoin is accounted as one dollar and one crvUSD unit;
 - yield-token shares are not treated as one dollar each; they are converted into units of the approved underlying through the configured vault or adapter;
-- only the configured target buffer and configured yield position count toward V3 principal and surplus accounting;
+- only `undeployedBacking` and the configured yield position count toward V3 principal and surplus accounting;
 - unsolicited tokens and arbitrary assets sent to V3 do not count as backing.
 
 For an ERC-4626-style sUSDS position:
@@ -182,14 +182,14 @@ For a USDT-facing sUSDS deployment:
 
 ```text
 trustedBackingValue
-    = normalize(accountedTargetBuffer)
+    = normalize(undeployedBacking)
     + normalize(convertToAssets(sUsdsShares))
 
 deployedCrvUsd <= Factory allocation
 deployedCrvUsd <= trustedBackingValue
 ```
 
-Expansion increases `deployedCrvUsd` by the crvUSD sold regardless of whether the action finishes in target asset or yield token. Direct buyback decreases it by crvUSD received from the user; keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. Idle crvUSD backs itself; the combined trusted value of the accounted target buffer and yield position must cover the portion currently deployed into the market after rewards, later conversion costs, and fee claims.
+Expansion increases `deployedCrvUsd` by the crvUSD sold regardless of whether the action finishes in target asset or yield token. Direct buyback decreases it by crvUSD received from the user; keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. Idle crvUSD backs itself; the combined trusted value of the undeployed backing and yield position must cover the portion currently deployed into the market after rewards, later conversion costs, and fee claims.
 
 ## Expansion lifecycle
 
@@ -205,10 +205,10 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 5. Receive the target asset.
 6. Attempt the configured target-to-yield path in an isolated, typed, `onlySelf` call with protocol-calculated minima. That subcall includes full-route balance measurement, keeper payment in the backing asset, terminal yield deployment, and the final yield-backing floor.
 7. Treat the downstream branch as successful only if the isolated call completes all of those operations and returns consistent measured deltas.
-8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, require the resulting accounted buffer not to exceed `maxTargetBuffer`, and retain the remainder as accounted target backing.
+8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, require the resulting `undeployedBacking` not to exceed `maxUndeployedBacking`, and retain the remainder as `undeployedBacking`.
 9. Require the selected branch to leave principal plus its configured entry margin after reward. A failure of both branches reverts the complete expansion, including the target-AMM swap.
 10. Increase `deployedCrvUsd` and set `lastExpansionAt` to the current timestamp.
-11. Emit the branch, complete execution result, gross profit, keeper reward, target amount buffered, and maturity time.
+11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
 ```
 
 The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, deposit, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
@@ -218,7 +218,7 @@ A preliminary interface is:
 ```solidity
 function expand(uint256 crvUsdAmount) external returns (
     uint256 crvUsdSold,
-    uint256 targetBuffered,
+    uint256 backingRetained,
     uint256 yieldSharesReceived,
     uint256 keeperReward,
     bool deployedToYield
@@ -270,25 +270,25 @@ normalize(targetAssetRetained)
     >= crvUsdSold + fallbackEntryMargin
 ```
 
-The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: the target buffer may instead be used directly for contraction. With an illustrative `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding when the flat cap does not bind, and more when it does.
+The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: `undeployedBacking` may instead be used directly for contraction. With an illustrative `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding when the flat cap does not bind, and more when it does.
 
-### Later target-buffer deployment
+### Later undeployed backing deployment
 
-Buffered target asset may be converted later through the same fixed downstream path:
+Undeployed backing may be converted later through the same fixed downstream path:
 
 ```solidity
-function deployBufferedTarget(uint256 targetAmount)
+function deployUndeployedBacking(uint256 targetAmount)
     external
     returns (uint256 targetSpent, uint256 yieldSharesReceived);
 ```
 
-This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `accountedTargetBuffer`; unsolicited target tokens are excluded unless governance explicitly reconciles them.
+This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them.
 
 Later route fees are paid only from existing protocol surplus:
 
 ```text
 trustedBackingBefore
-    = normalize(accountedTargetBufferBefore)
+    = normalize(undeployedBackingBefore)
     + trustedYieldValueBefore
 
 availableDeploymentSurplus
@@ -306,21 +306,21 @@ conversionCost = max(
 
 conversionCost <= availableDeploymentSurplus
 conversionCost <= normalize(targetSpent)
-    * maxBufferDeploymentLossBps / 10_000
+    * maxBackingDeploymentLossBps / 10_000
 
 trustedBackingAfter
     >= deployedCrvUsd + requiredBackingReserve
 ```
 
-If the route is unavailable or those checks fail, the maintenance call reverts and the target buffer remains intact. This means later deployment can reduce the protocol's retained execution spread, but cannot consume the principal backing deployed crvUSD.
+If the route is unavailable or those checks fail, the maintenance call reverts and `undeployedBacking` remains intact. This means later deployment can reduce the protocol's retained execution spread, but cannot consume the principal backing deployed crvUSD.
 
-V3 should not blindly combine the entire old buffer with a newly rewarded expansion. That would contaminate current-call profit attribution and may make a healthy small conversion fail from excessive combined size. After a new expansion has settled its own reward and demonstrated that the downstream route works, V3 may make a separate best-effort subcall for:
+V3 should not blindly combine all existing undeployed backing with a newly rewarded expansion. That would contaminate current-call profit attribution and may make a healthy small conversion fail from excessive combined size. After a new expansion has settled its own reward and demonstrated that the downstream route works, V3 may make a separate best-effort subcall for:
 
 ```text
-min(accountedTargetBuffer, maxBufferDeployPerCall)
+min(undeployedBacking, maxBackingDeployPerCall)
 ```
 
-The flush has independent balance snapshots and failure cannot revert the completed expansion. An explicit `deployBufferedTarget()` remains necessary when the route recovers without another expansion.
+The separate deployment has independent balance snapshots and failure cannot revert the completed expansion. An explicit `deployUndeployedBacking()` remains necessary when the route recovers without another expansion.
 
 ## Direct buyback lifecycle
 
@@ -332,11 +332,11 @@ Direct buyback provides one-sided downward liquidity against an explicitly selec
 3. Bound the transaction by deployed crvUSD and the per-call buyback limit.
 4. Determine whether V3 is in the mature or young deployment state.
 5. Select the normal exit margin in the mature state or the higher early exit margin in the young state.
-6. Determine whether the called entry point spends accounted target buffer or redeems yield backing.
+6. Determine whether the called entry point spends undeployed backing or redeems yield backing.
 7. Determine the maximum backing amount that may be spent while preserving the selected margin.
 8. Measure the exact approved backing transferred to the caller.
 9. Verify the crvUSD received exceeds the trusted backing value spent by the selected margin.
-10. Decrease `accountedTargetBuffer` when the target-buffer entry point is used.
+10. Decrease `undeployedBacking` when the undeployed backing entry point is used.
 11. Reduce deployedCrvUsd by the crvUSD reacquired.
 12. Retain the crvUSD as idle inventory.
 13. Emit the shares spent, target asset paid, crvUSD reacquired, and whether early exit was used.
@@ -345,7 +345,7 @@ Direct buyback provides one-sided downward liquidity against an explicitly selec
 A preliminary interface is:
 
 ```solidity
-function buybackFromTargetBuffer(
+function buybackFromUndeployedBacking(
     uint256 crvUsdAmount,
     uint256 minTargetOut
 ) external returns (uint256 targetOut, uint256 targetSpent);
@@ -356,17 +356,17 @@ function buybackFromYield(
 ) external returns (uint256 underlyingOut, uint256 yieldSharesSpent);
 ```
 
-The target-buffer entry point pays the configured target asset directly and does not depend on the downstream yield route. The yield-backed entry point redeems the configured yield token and pays its configured approved underlying, such as USDS from sUSDS; it does not need to reconstruct USDT. Each call reverts if its selected backing source cannot produce an acceptable output.
+The undeployed backing entry point pays the configured target asset directly and does not depend on the downstream yield route. The yield-backed entry point redeems the configured yield token and pays its configured approved underlying, such as USDS from sUSDS; it does not need to reconstruct USDT. Each call reverts if its selected backing source cannot produce an acceptable output.
 
 The direct quote should be previewable:
 
 ```solidity
-function previewBuybackFromTargetBuffer(uint256 crvUsdAmount)
+function previewBuybackFromUndeployedBacking(uint256 crvUsdAmount)
     external
     view
     returns (
         uint256 expectedTargetOut,
-        uint256 maxTargetSpent,
+        uint256 maxBackingSpent,
         uint256 requiredExitProfit,
         bool earlyExit
     );
@@ -380,15 +380,15 @@ Caller minimums are retained here because the direct buyback caller supplies crv
 
 If no direct buyback flow arrives, a keeper can contract supply from either backing source.
 
-For buffered target asset:
+For undeployed backing:
 
 ```text
-1. Spend an exact bounded amount of accounted target buffer.
+1. Spend an exact bounded amount of undeployed backing.
 2. Swap target asset for crvUSD through the target AMM.
 3. Calculate gross exit profit as crvUSD received minus normalized target asset spent.
 4. Pay the percentage-plus-flat-cap keeper reward in crvUSD.
 5. Enforce the selected post-reward exit margin.
-6. Decrease `accountedTargetBuffer` by the target asset actually spent.
+6. Decrease `undeployedBacking` by the target asset actually spent.
 7. Reduce `deployedCrvUsd` by net crvUSD retained, capped at the deployed amount.
 ```
 
@@ -410,7 +410,7 @@ For yield backing:
 A preliminary interface is:
 
 ```solidity
-function contractBufferedTarget(uint256 targetAmount)
+function contractUndeployedBacking(uint256 targetAmount)
     external
     returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
 
@@ -419,7 +419,7 @@ function contractViaAmm(uint256 yieldShares)
     returns (uint256 yieldSharesSpent, uint256 crvUsdReceived, uint256 keeperReward);
 ```
 
-The keeper chooses only the exact target amount or yield-token shares. V3 calculates every route minimum, realized profit, and reward internally. The two contraction paths have separate venues, limits, and pause controls; failure of the downstream expansion route does not disable either target-buffer contraction or a healthy yield-to-crvUSD route.
+The keeper chooses only the exact target amount or yield-token shares. V3 calculates every route minimum, realized profit, and reward internally. The two contraction paths have separate venues, limits, and pause controls; failure of the downstream expansion route does not disable either undeployed backing contraction or a healthy yield-to-crvUSD route.
 
 The keeper's proposed fallback should also be previewable:
 
@@ -434,7 +434,7 @@ function previewKeeperBuyback(uint256 yieldShares)
         bool earlyExit
     );
 
-function previewBufferedContraction(uint256 targetAmount)
+function previewUndeployedContraction(uint256 targetAmount)
     external
     view
     returns (
@@ -476,7 +476,7 @@ No normal route step accepts arbitrary calldata. Additional venue types require 
 
 ### Separate directional paths
 
-Downstream expansion and yield contraction paths are configured separately. V3 must not assume that the reverse path has the same venue, cost, liquidity, endpoint, or safety parameters. Target-buffer contraction uses the reverse direction of the designated target AMM and does not depend on either downstream path.
+Downstream expansion and yield contraction paths are configured separately. V3 must not assume that the reverse path has the same venue, cost, liquidity, endpoint, or safety parameters. Undeployed-backing contraction uses the reverse direction of the designated target AMM and does not depend on either downstream path.
 
 Example expansion path:
 
@@ -510,7 +510,7 @@ A path is valid only when:
 11. The path length is bounded.
 12. No venue, token, or endpoint is zero.
 
-Changing the target AMM, target asset, backing asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths, buffer accounting, or contraction endpoints mismatched.
+Changing the target AMM, target asset, backing asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
 
 ### Path governance
 
@@ -560,7 +560,7 @@ crvUsdAmount <= min(
 )
 ```
 
-Fallback contraction applies ordinary minimum and maximum limits to either requested target amount or requested yield shares and their trusted backing value. The contract executes every requested amount exactly or reverts; it does not silently resize the transaction. A fallback expansion can complete only if its retained target asset also fits within remaining `maxTargetBuffer` capacity.
+Fallback contraction applies ordinary minimum and maximum limits to either requested target amount or requested yield shares and their trusted backing value. The contract executes every requested amount exactly or reverts; it does not silently resize the transaction. A fallback expansion can complete only if its retained target asset also fits within remaining `maxUndeployedBacking` capacity.
 
 The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(shares)` offchain to select an economically useful amount. Onchain, V3 still calculates every intermediate minimum, profit-share reward, flat reward cap, and final post-reward margin. A keeper-supplied amount can cause its own transaction to revert but cannot make an unsafe amount execute.
 
@@ -574,7 +574,7 @@ Realized profitability under the trusted-backing convention is the primary execu
 
 Expansion therefore has two authoritative realized postconditions. A fully deployed branch uses the approved underlying units represented by final yield shares after the complete downstream route and keeper reward. A fallback branch uses only the accounted target asset actually retained after its keeper reward. A downstream preview is never counted as backing. Each approved stablecoin unit is treated as one dollar without consulting the target AMM spot.
 
-Contraction applies the inverse test to either source: crvUSD retained after paying the keeper must exceed the normalized target buffer or trusted yield value consumed by the configured margin.
+Contraction applies the inverse test to either source: crvUSD retained after paying the keeper must exceed the normalized undeployed backing or trusted yield value consumed by the configured margin.
 
 Sandwich and execution protection should come from controls that do not reject the desired crvUSD dislocation:
 
@@ -768,7 +768,7 @@ At a simple annualized stablecoin yield of `4%` to `5%`, earning one basis point
 5% APR: 17.5 hours
 ```
 
-One full day earns approximately `1.10` to `1.37` basis points at those rates. A one-day minimum deployment time is therefore a reasonable initial reference for exposure that reached the yield token. Accounted target buffer does not earn this carry; its holding period is justified only by supply anti-churn and may need a separate policy after live simulation.
+One full day earns approximately `1.10` to `1.37` basis points at those rates. A one-day minimum deployment time is therefore a reasonable initial reference for exposure that reached the yield token. Undeployed backing does not earn this carry; its holding period is justified only by supply anti-churn and may need a separate policy after live simulation.
 
 The timer must not be used as a solvency assumption. Yield can change, stop, or become impaired. Every contraction still has to pass its realized final-value condition. Carry only improves the economics of holding exposure through short-lived volatility.
 
@@ -788,7 +788,7 @@ A caller can still flash-borrow liquidity, buy crvUSD to create an expansion opp
 
 The minimum makes timer manipulation economically self-penalizing rather than free. V3 sells the requested material amount into the price increase the actor created, so the attacker buys high, is countertraded by V3, then sells back lower while also paying pool fees. V3 captures the entry economics. This does not make manipulation cryptographically impossible: an actor with a sufficiently valuable external position may rationally pay that loss to delay normal-margin contraction. It cannot deadlock contraction because the timer never disables the exit functions; it only selects the higher early-exit margin. Genuinely distressed crvUSD can still be contracted during the timer while paying V3 that larger spread.
 
-The global timer also means a sequence of legitimate profitable expansions extends the normal-exit delay for the whole position. That is consistent with the initial anti-churn objective and is considerably simpler than tranche accounting. Later target-buffer deployment does not reset this supply timer, so it does not guarantee that newly created yield shares accrue a full carry interval. If live behavior requires separate maturity for buffer and yield exposure, governance can migrate a later implementation to bounded maturity buckets.
+The global timer also means a sequence of legitimate profitable expansions extends the normal-exit delay for the whole position. That is consistent with the initial anti-churn objective and is considerably simpler than tranche accounting. Later undeployed backing deployment does not reset this supply timer, so it does not guarantee that newly created yield shares accrue a full carry interval. If live behavior requires separate maturity for undeployed and yield exposure, governance can migrate a later implementation to bounded maturity buckets.
 
 `minExpansionAmount` should remain economically meaningful as capacity changes. Governance may express it as an absolute amount, a percentage of configured capacity, or the greater of both. The exact initial threshold remains to be selected.
 
@@ -827,7 +827,7 @@ keeperReward = min(
 )
 ```
 
-For fully deployed expansion, `grossProfit` is normalized backing asset received immediately before terminal yield deployment minus crvUSD sold, and the keeper is paid in that backing asset. For fallback expansion, it is normalized target asset received minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `accountedTargetBuffer`. `maxKeeperReward` is stored in normalized 18-decimal backing-value units and token conversion rounds down. For either keeper contraction source, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD. Direct buyback and buffer-deployment callers receive no separate percentage reward.
+For fully deployed expansion, `grossProfit` is normalized backing asset received immediately before terminal yield deployment minus crvUSD sold, and the keeper is paid in that backing asset. For fallback expansion, it is normalized target asset received minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `undeployedBacking`. `maxKeeperReward` is stored in normalized 18-decimal backing-value units and token conversion rounds down. For either keeper contraction source, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD. Direct buyback and `deployUndeployedBacking()` callers receive no separate percentage reward.
 
 The high profit-share rate supports smaller economically useful calls, while `maxKeeperReward` prevents a large dislocation from paying an excessive single reward. The cap is intentionally per call rather than split-invariant. A keeper may collect the cap more than once by executing multiple transactions, including a same-block batch, but each successful call must independently realize profit through its selected branch and leave V3 with principal plus its configured post-reward margin. Since expected entry spreads are only a few basis points and most strategy return is intended to come from holding the yield position, this is treated as bounded rent leakage rather than a solvency issue.
 
@@ -854,7 +854,7 @@ function claimYieldSurplus(uint256 maxShares)
     external
     returns (uint256 sharesTransferred);
 
-function claimTargetSurplus(uint256 maxTargetAmount)
+function claimUndeployedSurplus(uint256 maxTargetAmount)
     external
     returns (uint256 targetTransferred);
 ```
@@ -882,12 +882,12 @@ V3 should not publish fake LP balances, virtual prices, or TVL merely to resembl
 Required controls:
 
 - pause expansion;
-- pause target-buffer deployment without pausing target-only expansion;
+- pause undeployed backing deployment without pausing target-only expansion;
 - pause direct buyback;
 - pause keeper buyback;
 - global shutdown;
 - lower trade and deployment caps immediately;
-- lower the target-buffer cap and later-deployment loss limit immediately;
+- lower the undeployed backing cap and later-deployment loss limit immediately;
 - delayed increases to caps;
 - delayed target-AMM and path replacement;
 - immediate cancellation of a pending path;
@@ -937,12 +937,12 @@ event Expanded(
     uint256 yieldSharesReceived,
     uint256 grossProfit,
     uint256 keeperReward,
-    uint256 targetBuffered,
+    uint256 backingRetained,
     bool deployedToYield,
     uint256 unlockTime
 );
 
-event TargetBufferDeployed(
+event UndeployedBackingDeployed(
     address indexed caller,
     uint256 targetSpent,
     uint256 yieldSharesReceived,
@@ -987,7 +987,7 @@ event Executed(
 1. `deployedCrvUsd` never exceeds configured capacity.
 2. Expansion cannot spend more idle crvUSD than V3 owns.
 3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
-4. `accountedTargetBuffer` changes only through measured fallback retention, measured buffer spending, successful typed deployment, governance reconciliation, or surplus withdrawal.
+4. `undeployedBacking` changes only through measured fallback retention, measured spending, successful typed deployment, governance reconciliation, or surplus withdrawal.
 5. Unsolicited token transfers never increase accounted backing automatically.
 6. Keeper rewards equal the configured percentage of realized gross profit for the selected branch, clamped by `maxKeeperReward` per call and rounded down.
 7. Keeper rewards and fee claims cannot consume required principal or the configured protocol margin.
@@ -996,8 +996,8 @@ event Executed(
 10. Active paths always connect the configured endpoints.
 11. Successful downstream execution leaves no material unaccounted intermediate-token balance.
 12. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.
-13. Buffer deployment cannot consume more than available surplus or exceed its per-call loss bound.
-14. Buffer deployment never changes `deployedCrvUsd` or `lastExpansionAt`.
+13. Deployment of undeployed backing cannot consume more than available surplus or exceed its per-call loss bound.
+14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 15. Disabling expansion never disables the governance-approved contraction and offboarding paths unless global shutdown explicitly does so.
 16. A path update cannot bypass its governance delay.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
@@ -1017,11 +1017,11 @@ Any path venue can lose liquidity, pause, change behavior, or become unsafe. The
 
 ### Fallback forcing and gas starvation
 
-The fallback branch may produce a larger immediate keeper reward than the full route because it has not paid downstream conversion fees. A keeper must not be able to select that branch directly or force it by underfunding gas. The implementation needs a fixed downstream gas policy or a conservative pre-attempt gas requirement plus sufficient reserved gas to finalize target-buffer accounting. Route failure is caught only inside that controlled call boundary.
+The fallback branch may produce a larger immediate keeper reward than the full route because it has not paid downstream conversion fees. A keeper must not be able to select that branch directly or force it by underfunding gas. The implementation needs a fixed downstream gas policy or a conservative pre-attempt gas requirement plus sufficient reserved gas to finalize `undeployedBacking` accounting. Route failure is caught only inside that controlled call boundary.
 
-### Target-buffer accumulation
+### Undeployed backing accumulation
 
-The buffer preserves peg liveness but creates persistent exposure to the AMM-facing stablecoin and may remain idle without earning yield. `maxTargetBuffer`, independent pauses, permissionless bounded deployment, direct buffer contraction, and governance migration limit that exposure. Once the buffer reaches its cap, further fallback expansion must stop unless some buffer is deployed, contracted, or migrated; the cap must therefore be large enough to serve the intended liveness purpose.
+Undeployed backing preserves peg liveness but creates persistent exposure to the AMM-facing stablecoin and may remain idle without earning yield. `maxUndeployedBacking`, independent pauses, permissionless bounded deployment, direct undeployed backing contraction, and governance migration limit that exposure. Once undeployed backing reaches its cap, further fallback expansion must stop unless some undeployed backing is deployed, contracted, or migrated; the cap must therefore be large enough to serve the intended liveness purpose.
 
 ### Yield-token impairment
 
@@ -1029,7 +1029,7 @@ A yield token can lose value or become temporarily non-redeemable. V3 deliberate
 
 ### Stablecoin basis risk
 
-A USDT-facing AMM combined with an sUSDS yield position crosses USDT, DAI, USDS, and sUSDS. Governance explicitly accepts the persistent USDT buffer and sUSDS underlying as dollar-par PegKeeper backing. Transient route assets do not count after a successful call. The checks prove nominal profitability under the trust convention rather than external-market dollar value.
+A USDT-facing AMM combined with an sUSDS yield position crosses USDT, DAI, USDS, and sUSDS. Governance explicitly accepts the persistent undeployed USDT backing and sUSDS underlying as dollar-par PegKeeper backing. Transient route assets do not count after a successful call. The checks prove nominal profitability under the trust convention rather than external-market dollar value.
 
 ### Oracle and preview manipulation
 
@@ -1066,12 +1066,12 @@ The following are deliberately unresolved:
 - whether a later version may permit a tightly capped negative entry margin expected to be amortized by carry; the initial design does not;
 - initial `minDeploymentTime` and whether `minExpansionAmount` is absolute, capacity-relative, or the greater of both;
 - whether a later implementation needs tranche or bounded-bucket maturity accounting instead of the initial global timer;
-- whether target-buffer contraction should share the global expansion timer or use a less restrictive policy because the buffer earns no yield;
+- whether undeployed backing contraction should share the global expansion timer or use a less restrictive policy because undeployed backing earns no yield;
 - initial `keeperProfitShareBps` and flat `maxKeeperReward`;
-- initial `maxTargetBuffer`, `maxBufferDeployPerCall`, `maxBufferDeploymentLossBps`, and required backing reserve;
+- initial `maxUndeployedBacking`, `maxBackingDeployPerCall`, `maxBackingDeploymentLossBps`, and required backing reserve;
 - exact downstream isolated-call gas policy and minimum gas reserve;
-- whether a successful expansion should always attempt a separate capped buffer flush or leave flushing to `deployBufferedTarget()`;
-- final direct-buyback surface for selecting target-buffer versus yield-underlying payout;
+- whether a successful expansion should always attempt a separate capped deployment of undeployed backing or leave flushing to `deployUndeployedBacking()`;
+- final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
 - path length bound;
 - governance delay duration;
 - maximum per-call and rolling flow limits;
