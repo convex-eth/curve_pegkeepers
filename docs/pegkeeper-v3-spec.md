@@ -30,9 +30,11 @@ USDT and USDe are transient route assets. Successful state-changing calls should
 5. Execute only when the complete transaction is profitable after conversion costs and keeper compensation.
 6. Pay bounded keeper fees rather than an open-ended percentage of profit.
 7. Keep expansion and fallback contraction open to any keeper without a whitelist or private-submission requirement.
-8. Allow governance to replace broken or obsolete swap paths without replacing V3.
-9. Include first-class directional pauses, shutdown, and migration controls.
-10. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
+8. Expand immediately whenever the complete entry route is locally non-loss-making and satisfies the configured entry margin.
+9. Prevent routine rapid expansion/contraction churn while allowing early contraction at a sufficiently profitable distressed exit.
+10. Allow governance to replace broken or obsolete swap paths without replacing V3.
+11. Include first-class directional pauses, shutdown, and migration controls.
+12. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
 
 ## Non-goals
 
@@ -54,6 +56,8 @@ V3 is not intended to:
 - **Yield token:** the final token held after the expansion path, such as sUSDe.
 - **Expansion path:** the updatable sequence from the target asset to the yield token.
 - **Contraction path:** the updatable sequence from the yield token back to the target asset.
+- **Mature exposure:** deployed crvUSD whose configured minimum market time has elapsed.
+- **Young exposure:** deployed crvUSD still inside its minimum market-time window.
 - **Deployed crvUSD:** Factory-allocated crvUSD that V3 has sold and has not yet reacquired.
 - **Idle crvUSD:** crvUSD held by V3 and therefore available for a later expansion or Factory debt reduction.
 
@@ -94,12 +98,17 @@ deployedCrvUsd
 expansionPath
 contractionPath
 
-expansionMinProfitBps
-buybackMinProfitBps
+entryMinProfitBps
+normalExitMinProfitBps
+earlyExitMinProfitBps
 maxExecutionSlippageBps
 expansionKeeperFee
 contractionKeeperFee
 maxKeeperFee
+
+minDeploymentTime
+maturityEpochLength
+maturityBuckets
 
 maxExpansionPerCall
 maxBuybackPerCall
@@ -130,6 +139,8 @@ Idle crvUSD
 `expand()` deploys idle Factory-allocated crvUSD. It does not mint directly under the current Factory interface. A future Factory adapter may support lazy minting, but that is a separate governance and security decision.
 
 crvUSD received during contraction remains idle in V3 and is out of active circulation. It can be reused in a later expansion. Governance can lower the Factory ceiling when it wants returned idle crvUSD burned.
+
+A burn-only timer would not prevent market churn. Reacquiring crvUSD already removes it from active circulation; waiting to destroy the idle tokens changes Factory accounting but does not postpone the economic contraction. The timer must therefore gate use of the yield position for buyback, not merely the later burn transaction. Once crvUSD has been reacquired, governance may burn it immediately by lowering the Factory ceiling.
 
 ### Trusted backing convention
 
@@ -167,6 +178,8 @@ Expansion increases `deployedCrvUsd` by the crvUSD sold. Contraction decreases i
 
 Expansion is keeper-driven. V3 does not offer a separate direct upward-price quote in the initial design.
 
+Expansion has no time cooldown. It should execute immediately whenever the complete atomic route satisfies the internal output checks and leaves V3 with at least principal, capped keeper compensation, and the configured entry margin. A zero-basis-point entry margin still means local break-even after every swap cost and keeper reward; it does not permit a nominally positive AMM quote that leaves the final backing position short.
+
 ```text
 1. Verify expansion is enabled.
 2. Do not require the target AMM spot price to remain close to its EMA. A sharp upward move in crvUSD is the opportunity V3 is meant to act on.
@@ -176,9 +189,9 @@ Expansion is keeper-driven. V3 does not offer a separate direct upward-price quo
 6. Execute the full expansion path from target asset to yield token.
 7. Measure actual yield-token shares received by balance delta.
 8. Convert the received yield shares into approved underlying units and verify they satisfy both the protocol profit floor and the internally calculated execution-quality floor.
-9. Increase deployedCrvUsd.
+9. Increase deployedCrvUsd and place the deployed amount into the current maturity bucket.
 10. Pay the capped keeper reward to msg.sender from realized surplus.
-11. Emit the complete execution result.
+11. Emit the complete execution result and maturity time.
 ```
 
 A preliminary interface is:
@@ -203,14 +216,17 @@ Direct buyback provides one-sided downward liquidity.
 1. Verify direct buyback is enabled.
 2. Transfer crvUSD from the caller to V3.
 3. Bound the transaction by deployed crvUSD and the per-call buyback limit.
-4. Determine the maximum yield-token shares that may be spent while preserving the configured minimum profit.
-5. Execute the contraction path atomically from yield token to target asset.
-6. Measure actual target asset received.
-7. Verify the crvUSD received exceeds the trusted backing value of yield-token shares spent by the configured minimum profit.
-8. Transfer the target asset to the caller.
-9. Reduce deployedCrvUsd by the crvUSD reacquired.
-10. Retain the crvUSD as idle inventory.
-11. Emit the shares spent, target asset paid, and crvUSD reacquired.
+4. Determine whether the amount consumes only mature exposure or also consumes young exposure.
+5. Select the normal exit margin for mature-only contraction or the higher early exit margin if any young exposure is consumed.
+6. Determine the maximum yield-token shares that may be spent while preserving the selected margin.
+7. Execute the contraction path atomically from yield token to target asset.
+8. Measure actual target asset received.
+9. Verify the crvUSD received exceeds the trusted backing value of yield-token shares spent by the selected margin.
+10. Transfer the target asset to the caller.
+11. Consume mature exposure first, then young exposure oldest-first if permitted.
+12. Reduce deployedCrvUsd by the crvUSD reacquired.
+13. Retain the crvUSD as idle inventory.
+14. Emit the shares spent, target asset paid, crvUSD reacquired, and whether early exit was used.
 ```
 
 A preliminary interface is:
@@ -230,7 +246,12 @@ The direct quote should be previewable:
 function previewBuyback(uint256 crvUsdAmount)
     external
     view
-    returns (uint256 expectedTargetOut, uint256 maxYieldShares);
+    returns (
+        uint256 expectedTargetOut,
+        uint256 maxYieldShares,
+        uint256 requiredExitProfit,
+        bool consumesYoungExposure
+    );
 ```
 
 The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
@@ -243,12 +264,15 @@ If no direct buyback flow arrives, a keeper can contract supply through the targ
 
 ```text
 1. Verify keeper buyback is enabled.
-2. Execute the contraction path from yield token to target asset.
-3. Swap the target asset for crvUSD in the designated target AMM.
-4. Verify crvUSD received exceeds the trusted backing value of yield-token shares spent, protocol minimum profit, and capped keeper reward.
-5. Reduce deployedCrvUsd.
-6. Keep the recovered crvUSD idle.
-7. Pay the capped reward to msg.sender.
+2. Determine whether the requested contraction consumes only mature exposure or also consumes young exposure.
+3. Select the normal or early exit margin accordingly.
+4. Execute the contraction path from yield token to target asset.
+5. Swap the target asset for crvUSD in the designated target AMM.
+6. Verify crvUSD received exceeds the trusted backing value of yield-token shares spent, the selected exit margin, and capped keeper reward.
+7. Consume mature exposure first and young exposure oldest-first only when the early exit test passes.
+8. Reduce deployedCrvUsd.
+9. Keep the recovered crvUSD idle.
+10. Pay the capped reward to msg.sender.
 ```
 
 A preliminary interface is:
@@ -417,7 +441,7 @@ For expansion, V3 calculates the final minimum as:
 
 ```text
 profitFloor = sharesRequiredForTrustedAssets(
-    crvUsdSold + minimumProtocolProfit + keeperReward
+    crvUsdSold + entryMargin + keeperReward
 )
 
 executionFloor = expectedFinalShares
@@ -433,7 +457,7 @@ protocolMinShares = max(profitFloor, executionFloor)
 ```text
 trustedBackingValue(yieldSharesReceived)
 >= crvUsdSold
- + minimumProtocolProfit
+ + entryMargin
  + keeperReward
 ```
 
@@ -442,7 +466,7 @@ trustedBackingValue(yieldSharesReceived)
 ```text
 crvUsdReceived
 >= trustedBackingValue(yieldSharesSpent)
- + minimumProtocolProfit
+ + selectedExitMargin
 ```
 
 ### Keeper buyback postcondition
@@ -450,11 +474,86 @@ crvUsdReceived
 ```text
 crvUsdReceived
 >= trustedBackingValue(yieldSharesSpent)
- + minimumProtocolProfit
+ + selectedExitMargin
  + keeperReward
 ```
 
 The implementation still needs an asset-specific adapter interface and exact rounding direction. Expansion must round required shares up; surplus calculations must round backing value down.
+
+## Asymmetric timing and carry
+
+Entry and exit should not have symmetric urgency.
+
+### Entry policy
+
+Expansion should remain immediately callable with no time delay:
+
+```text
+entryMargin = crvUsdSold * entryMinProfitBps / 10_000
+
+trustedBackingValue(yieldSharesReceived)
+>= crvUsdSold + entryMargin + keeperReward
+```
+
+`entryMinProfitBps` may be set to zero. That does not socialize route loss: because the check uses final backing after all swaps, a zero entry margin still requires the crvUSD premium to cover every local route cost and the keeper reward. If the route costs two basis points, a zero-margin expansion becomes executable only when the realized crvUSD premium is at least approximately those two basis points plus keeper compensation. Adding a one-basis-point entry margin increases the required premium by another basis point.
+
+Expansion should not wait for a timer, EMA, or accumulated yield. If the complete atomic trade is acceptable now, delaying it gives away the above-peg opportunity.
+
+### Exit policy
+
+Routine contraction should consume only mature exposure and require a governance-set `normalExitMinProfitBps`. If a transaction consumes any young exposure, it must instead satisfy the larger `earlyExitMinProfitBps`:
+
+```text
+selectedExitMarginBps =
+    consumesYoungExposure
+        ? earlyExitMinProfitBps
+        : normalExitMinProfitBps
+
+earlyExitMinProfitBps > normalExitMinProfitBps >= entryMinProfitBps
+```
+
+The higher early-exit margin acts as the distress override. A sufficiently deep below-peg dislocation naturally creates enough realized buyback profit to satisfy it, allowing V3 to contract before maturity without trusting a separately manipulable spot-price trigger. Mild volatility cannot wash newly expanded exposure back and forth unless it pays the protocol's larger early-exit spread.
+
+This produces the intended asymmetry:
+
+```text
+Above peg and locally profitable:
+    expand immediately
+
+Below peg after minimum market time:
+    contract at normal exit margin
+
+Below peg before minimum market time:
+    contract only at the higher early/distress margin
+```
+
+### Carry horizon
+
+At a simple annualized stablecoin yield of `4%` to `5%`, earning one basis point takes approximately:
+
+```text
+4% APR: 21.9 hours
+5% APR: 17.5 hours
+```
+
+One full day earns approximately `1.10` to `1.37` basis points at those rates. A one-day minimum deployment time is therefore a reasonable initial reference if the objective is to let roughly one basis point of carry accrue before a routine exit.
+
+The timer must not be used as a solvency assumption. Yield can change, stop, or become impaired. Every contraction still has to pass its realized final-value condition. Carry only improves the economics of holding exposure through short-lived volatility.
+
+### Bounded maturity accounting
+
+A single global `lastExpansionAt` is unsafe. A tiny expansion could reset the timer for the entire position and block legitimate contraction.
+
+V3 should instead account for deployed amounts in fixed-duration epoch buckets:
+
+```text
+bucket = floor(block.timestamp / maturityEpochLength)
+unlockTime = bucketStart + maturityEpochLength + minDeploymentTime
+```
+
+Expansions in the same epoch merge into one bucket. The contract keeps a fixed-size ring covering the complete maturity window, so storage and worst-case settlement gas are bounded. Contraction consumes matured buckets first. If it needs young buckets, the higher early-exit margin applies to the complete transaction.
+
+The exact epoch length and ring size are implementation parameters. For a one-day minimum time, hourly epochs with a small fixed ring provide bounded gas without allowing a dust expansion to relock mature principal.
 
 ## Open keeper and flash-liquidity model
 
@@ -467,8 +566,8 @@ The execution-quality floor prevents the configured route from performing materi
 The practical V3 policy is therefore:
 
 1. Accept that open execution can leak some transient market spread.
-2. Require positive protocol profit on every completed transaction.
-3. Include the keeper reward inside the profit requirement.
+2. Require expansion to achieve local break-even after route costs and keeper reward, plus any configured entry margin.
+3. Require contraction to achieve the selected normal or early exit margin after any keeper reward.
 4. Bound transaction size and reject dust-sized reward farming.
 5. Never trust keeper-provided minimum outputs.
 
@@ -576,14 +675,16 @@ event Expanded(
     uint256 crvUsdSold,
     uint256 targetReceived,
     uint256 yieldSharesReceived,
-    uint256 keeperReward
+    uint256 keeperReward,
+    uint256 unlockTime
 );
 
 event DirectBuyback(
     address indexed caller,
     uint256 crvUsdReceived,
     uint256 targetPaid,
-    uint256 yieldSharesSpent
+    uint256 yieldSharesSpent,
+    bool earlyExit
 );
 
 event KeeperBuyback(
@@ -591,7 +692,8 @@ event KeeperBuyback(
     uint256 yieldSharesSpent,
     uint256 targetReceived,
     uint256 crvUsdReceived,
-    uint256 keeperReward
+    uint256 keeperReward,
+    bool earlyExit
 );
 
 event PathsCommitted(bytes32 expansionHash, bytes32 contractionHash, uint256 activationTime);
@@ -624,6 +726,10 @@ event Executed(
 13. Only the governance owner can execute arbitrary targets or calldata.
 14. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
 15. Trusted backing value remaining after rewards and fee claims is never below `deployedCrvUsd`.
+16. Expansion is not delayed when its complete route satisfies the entry floor.
+17. Mature exposure is never relocked by a later expansion.
+18. Contraction consuming young exposure always satisfies `earlyExitMinProfitBps`.
+19. Maturity accounting has a fixed worst-case number of buckets to settle.
 
 ## Risks
 
@@ -647,6 +753,10 @@ Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 doe
 
 Keeper swaps through the external target AMM can be surrounded by flash-liquidity trades. Internal minimums, post-trade profitability checks, and bounded size prevent protocol loss under the configured accounting but do not guarantee capture of all transient spread. This residual value leakage is accepted to preserve open keeper participation.
 
+### Exit-delay liveness
+
+A strict holding period can delay downward peg support during an actual crisis. V3 therefore does not impose an absolute lock: young exposure can be contracted when the realized exit satisfies the larger early-exit margin. Emergency governance and owner recovery remain separate last-resort paths. A global timestamp is forbidden because dust expansion could otherwise grief all contraction.
+
 ### Governance route power
 
 An updatable path can direct all future flows into a malicious venue. Typed steps, endpoint validation, delayed activation, exact approvals, and emergency cancellation limit this risk.
@@ -662,6 +772,9 @@ The following are deliberately unresolved:
 - whether any aggregate crvUSD trigger is needed beyond realized final profitability;
 - whether any separate target-asset or yield-token depeg guard is desirable despite the approved-backing-at-par convention;
 - whether V3 eventually receives lazy mint/burn authority;
+- initial `entryMinProfitBps`, `normalExitMinProfitBps`, and `earlyExitMinProfitBps`;
+- whether a later version may permit a tightly capped negative entry margin expected to be amortized by carry; the initial design does not;
+- initial `minDeploymentTime`, maturity epoch length, and fixed bucket count;
 - exact keeper fee formula and payment asset;
 - path length bound;
 - governance delay duration;

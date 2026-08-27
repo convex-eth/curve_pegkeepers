@@ -77,6 +77,10 @@ Keeper rewards are paid to `msg.sender`, have an absolute cap, and are paid only
 
 Keeper execution remains fully open. Keeper functions do not trust caller-provided minimum outputs: V3 calculates path minimums, an execution-quality floor, and the final profit requirement internally. A direct buyback user may provide a stricter personal `minTargetOut`, but zero cannot weaken the protocol floor. Open keepers can use flash liquidity around an update and may capture residual market spread; V3 accepts that limitation but requires every completed transaction to leave at least the configured protocol profit after keeper compensation.
 
+Timing is intentionally asymmetric. Expansion has no cooldown and should execute immediately whenever final backing covers principal, route costs, keeper compensation, and the configured entry margin. Routine contraction consumes only exposure that has spent a minimum time in the market. A sufficiently profitable below-peg exit may consume younger exposure under a higher early-exit margin, making realized distress—not a manipulable spot trigger—the override. The timer gates contraction rather than token destruction: once crvUSD is reacquired it is already out of circulation, so delaying its later Factory burn would not prevent market churn.
+
+At `4%` to `5%` annualized stablecoin yield, approximately one basis point accrues in `17.5` to `21.9` hours. A one-day minimum deployment time is therefore a useful initial reference, but carry is not counted as a solvency guarantee and every exit must still pass its final-value check.
+
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, and deferred decisions.
 
 ## Toolchain
