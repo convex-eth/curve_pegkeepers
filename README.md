@@ -71,6 +71,8 @@ V3 does not require the target crvUSD AMM spot price to remain close to its EMA.
 
 Keeper rewards are paid to `msg.sender`, have an absolute cap, and are paid only after profitable execution. Direct buyback users receive no separate keeper reward.
 
+Keeper execution remains fully open. Keeper functions do not trust caller-provided minimum outputs: V3 calculates path minimums, an execution-quality floor, and the final profit requirement internally. A direct buyback user may provide a stricter personal `minTargetOut`, but zero cannot weaken the protocol floor. Open keepers can use flash liquidity around an update and may capture residual market spread; V3 accepts that limitation but requires every completed transaction to leave at least the configured protocol profit after keeper compensation.
+
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, and deferred decisions.
 
 ## Toolchain

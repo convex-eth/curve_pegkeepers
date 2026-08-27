@@ -29,9 +29,10 @@ USDT and USDe are transient route assets. Successful state-changing calls should
 4. Reuse bought-back crvUSD during later expansions.
 5. Execute only when the complete transaction is profitable after conversion costs and keeper compensation.
 6. Pay bounded keeper fees rather than an open-ended percentage of profit.
-7. Allow governance to replace broken or obsolete swap paths without replacing V3.
-8. Include first-class directional pauses, shutdown, and migration controls.
-9. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
+7. Keep expansion and fallback contraction open to any keeper without a whitelist or private-submission requirement.
+8. Allow governance to replace broken or obsolete swap paths without replacing V3.
+9. Include first-class directional pauses, shutdown, and migration controls.
+10. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
 
 ## Non-goals
 
@@ -68,7 +69,7 @@ The emergency admin can immediately disable expansion, direct buyback, keeper bu
 
 ### Keeper
 
-Any account can call the expansion and fallback contraction functions. Keeper rewards are paid to `msg.sender`, are capped, and are paid only after a successful profitable transaction.
+Any account can call the expansion and fallback contraction functions. V3 does not rely on a keeper whitelist or private order flow. Keeper rewards are paid to `msg.sender`, are capped, and are paid only after a successful profitable transaction. Keeper inputs can bound the amount attempted but cannot weaken any protocol-calculated minimum output or profitability condition.
 
 ### Arbitrageur or user
 
@@ -95,6 +96,7 @@ contractionPath
 
 expansionMinProfitBps
 buybackMinProfitBps
+maxExecutionSlippageBps
 expansionKeeperFee
 contractionKeeperFee
 maxKeeperFee
@@ -149,7 +151,7 @@ Expansion is keeper-driven. V3 does not offer a separate direct upward-price quo
 5. Receive the target asset.
 6. Execute the full expansion path from target asset to yield token.
 7. Measure actual yield-token shares received by balance delta.
-8. Verify the final normalized yield-token assets received exceed crvUSD deployed, minimum protocol profit, and keeper reward.
+8. Verify the final normalized yield-token assets received satisfy both the protocol profit floor and the internally calculated execution-quality floor.
 9. Increase deployedCrvUsd.
 10. Pay the capped keeper reward to msg.sender from realized surplus.
 11. Emit the complete execution result.
@@ -159,13 +161,15 @@ A preliminary interface is:
 
 ```solidity
 function expand(
-    uint256 crvUsdAmount,
-    uint256 minTargetOut,
-    uint256 minYieldShares
-) external returns (uint256 yieldSharesReceived, uint256 keeperReward);
+    uint256 maxCrvUsdAmount
+) external returns (
+    uint256 crvUsdSold,
+    uint256 yieldSharesReceived,
+    uint256 keeperReward
+);
 ```
 
-The keeper cannot choose the target AMM, path, output token, fee receiver, or reward recipient.
+The keeper supplies only an amount cap. V3 calculates the actual amount and every intermediate and final minimum internally. A zero or dust-sized result reverts. The keeper cannot choose the target AMM, path, output token, fee receiver, reward recipient, or minimum output.
 
 ## Direct buyback lifecycle
 
@@ -207,6 +211,8 @@ function previewBuyback(uint256 crvUsdAmount)
 
 The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
 
+`minTargetOut` is retained here because the direct buyback caller receives the target asset and may require stricter personal slippage protection. The effective minimum is the greater of the user's minimum and V3's internally calculated protocol minimum. Passing zero cannot weaken V3's floor.
+
 ## Keeper buyback fallback
 
 If no direct buyback flow arrives, a keeper can contract supply through the target AMM:
@@ -225,11 +231,11 @@ A preliminary interface is:
 
 ```solidity
 function contractViaAmm(
-    uint256 maxYieldShares,
-    uint256 minTargetOut,
-    uint256 minCrvUsdOut
+    uint256 maxYieldShares
 ) external returns (uint256 crvUsdReceived, uint256 keeperReward);
 ```
+
+The keeper supplies only the maximum yield-token shares it is willing to trigger. V3 calculates target-asset and crvUSD minimum outputs internally.
 
 ## Updatable path system
 
@@ -337,14 +343,30 @@ Sandwich and execution protection should come from controls that do not reject t
 
 - governance-set maximum trade sizes;
 - a transaction deadline;
-- caller-supplied `minTargetOut`, `minYieldShares`, and `minCrvUsdOut`;
-- stricter internal minimum outputs derived from the final profitability requirement;
+- protocol-calculated intermediate minimum outputs;
+- a protocol-calculated final profit floor;
+- a protocol-calculated execution-quality floor relative to the path output visible at execution time;
+- direct-buyback user minimums that can only make execution stricter;
 - measured token-balance deltas rather than trusting venue return values;
 - exact temporary approvals reset after each step;
-- a final post-route profitability assertion;
-- private keeper transaction submission where useful.
+- a final post-route profitability assertion.
 
 Optional depeg or venue-health checks may still protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence and must not override a transaction that already proves sufficient realized final value. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
+
+For expansion, V3 calculates the final minimum as:
+
+```text
+profitFloor = sharesRequiredFor(
+    crvUsdSold + minimumProtocolProfit + keeperReward
+)
+
+executionFloor = expectedFinalShares
+    * (1 - maxExecutionSlippageBps)
+
+protocolMinShares = max(profitFloor, executionFloor)
+```
+
+`expectedFinalShares` comes from the configured target AMM quote, each typed path preview, and the final ERC-4626 `previewDeposit`. Actual shares are measured by balance delta. Share count is not compared directly with deposited underlying because an ERC-4626 share price need not equal one.
 
 ### Expansion postcondition
 
@@ -373,6 +395,28 @@ crvUsdReceivedValue
 ```
 
 The exact normalization rule for yield-token shares and treatment of an impaired route asset remain to be specified.
+
+## Open keeper and flash-liquidity model
+
+Open keepers are an explicit design choice. V3 cannot prevent an account from using flash liquidity to move the target AMM, call `expand()` or `contractViaAmm()`, and reverse the market trade afterward.
+
+The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured profit after the keeper reward. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the normalization or external token accounting itself is compromised.
+
+The execution-quality floor prevents the configured route from performing materially worse than the quote visible when V3 executes. It cannot detect a malicious keeper that moved the AMM before the V3 transaction and restores it afterward. Preventing that completely would require a trusted price reference, auction, private order flow, or keeper whitelist. Those mechanisms are outside the current open-keeper design.
+
+The practical V3 policy is therefore:
+
+1. Accept that open execution can leak some transient market spread.
+2. Require positive protocol profit on every completed transaction.
+3. Include the keeper reward inside the profit requirement.
+4. Bound transaction size and reject dust-sized reward farming.
+5. Never trust keeper-provided minimum outputs.
+
+### V2 comparison
+
+V2 is not unprotected. Its regulator checks pool spot against the pool oracle for spam-attack protection, checks the aggregate crvUSD price and other registered pools, and can disable either direction. `PegKeeperV2` also uses a 12-second action delay, adjusts only one fifth of the observed imbalance per update, and reverts unless LP-accounting profit increases with `peg unprofitable`.
+
+Those controls reduce simple one-block manipulation and prevent an immediately unprofitable V2 update. They do not prove that V2 captures all available spread or eliminate multi-transaction market manipulation. V3 keeps the economically necessary post-trade profit condition but does not copy a target-AMM spot/EMA proximity check that would suppress the upward price spike V3 is meant to monetize.
 
 ## Keeper compensation
 
@@ -518,6 +562,7 @@ event Executed(
 11. A path update cannot bypass its governance delay.
 12. Every external conversion is non-reentrant and uses measured balance deltas.
 13. Only the governance owner can execute arbitrary targets or calldata.
+14. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
 
 ## Risks
 
@@ -539,7 +584,7 @@ Spot quotes and ERC-4626 previews can be manipulated or stale. V3 relies on actu
 
 ### MEV
 
-Keeper swaps through the external target AMM can be sandwiched. Internal minimums, post-trade profitability checks, bounded size, and private transaction submission may be required.
+Keeper swaps through the external target AMM can be surrounded by flash-liquidity trades. Internal minimums, post-trade profitability checks, and bounded size prevent protocol loss under the configured accounting but do not guarantee capture of all transient spread. This residual value leakage is accepted to preserve open keeper participation.
 
 ### Governance route power
 
@@ -560,6 +605,7 @@ The following are deliberately unresolved:
 - path length bound;
 - governance delay duration;
 - maximum per-call and rolling flow limits;
+- the execution-quality benchmark used in addition to the hard profit floor;
 - exact conservative valuation of sUSDe and other supported yield tokens;
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
 - whether exact-output route adapters are needed;
