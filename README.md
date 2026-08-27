@@ -6,7 +6,7 @@ Foundry workspace for reproducing Curve's live crvUSD `PegKeeperV2`, testing pro
 
 PegKeepers are automated monetary-policy and liquidity contracts for crvUSD. Their job is to push crvUSD back toward its peg while adding liquidity to selected crvUSD/stablecoin markets.
 
-When demand makes crvUSD scarce in a supported pool, a PegKeeper can use crvUSD allocated by the ControllerFactory to add crvUSD-side liquidity. This expands circulating supply, deepens the market, and pushes the pool back toward balance. When crvUSD is abundant, the PegKeeper can remove crvUSD-side liquidity and return that crvUSD to its reserve, where it can be taken out of circulation through Factory debt accounting.
+When demand makes crvUSD scarce in a supported pool, a PegKeeper can use crvUSD allocated by the ControllerFactory to add crvUSD-side liquidity. This expands circulating supply, deepens the market, and pushes the pool back toward balance. When crvUSD is abundant, the PegKeeper can remove crvUSD-side liquidity and return that crvUSD to its idle balance, where it can be taken out of circulation through Factory debt accounting.
 
 PegKeepers therefore connect three protocol functions:
 
@@ -44,24 +44,32 @@ V2 commits a large crvUSD allocation to low-margin stablecoin LP positions. Its 
 
 ### 4. crvUSD growth does not produce comparable revenue growth
 
-When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM position. This supports the peg and expands supply, but the protocol receives ordinary LP exposure rather than building a dedicated yield-bearing reserve. crvUSD demand can grow substantially while protocol revenue grows little or not at all.
+When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM position. This supports the peg and expands supply, but the protocol receives ordinary LP exposure rather than building a dedicated yield-bearing position. crvUSD demand can grow substantially while protocol revenue grows little or not at all.
 
-## Preliminary V3 direction
+## Current V3 direction
 
-V3 should keep permissionless peg maintenance while changing what the protocol acquires when it expands crvUSD supply. The external AMM asset and the yield-bearing reserve asset are separate choices:
+The current V3 design is asymmetric:
 
-- **Target AMM asset:** the stablecoin quoted against crvUSD through the pool interface, such as USDT.
-- **Target yield token:** the asset held behind that interface to earn revenue, such as sUSDe.
+- **Above peg:** a permissionless keeper deploys idle Factory-allocated crvUSD into a designated external crvUSD/stablecoin AMM. The stablecoin proceeds are converted atomically through an approved path into the configured yield token.
+- **Below peg:** users can sell crvUSD directly to V3. V3 atomically unwinds enough yield-token shares through the reverse path and pays the user in the configured AMM-facing stablecoin.
+- **Fallback below peg:** if direct buyback flow does not arrive, a keeper can unwind the yield position and buy crvUSD through the designated external AMM.
 
-A crvUSD/USDT-facing implementation could therefore convert the USDT it earns into USDe and then sUSDe. It does not need to expose sUSDe as the paired pool coin.
+The AMM-facing asset and yield token are separate configuration choices. A USDT-facing implementation may finish in sUSDe:
 
-1. **Use a flat, Curve-compatible pricing surface.** V3 can expose the functions expected from a normal Curve AMM without using a normal invariant. From the protocol's perspective, the expansion side could sell `1 crvUSD` only when it receives at least `1 + x USDT`, where `x` is a configured number of basis points. The contraction side could spend `1 USDT` only when it receives at least `1 + x crvUSD`. These flat quotes create a no-trade band around the target price instead of continuously moving along a bonding curve.
-2. **Convert proceeds into a yield-bearing reserve.** After selling crvUSD for the target AMM asset, V3 can route that asset into a separately configured yield token such as sUSDS, sUSDe, or sfrxUSD. Yield belongs to the protocol and can be forwarded to the fee receiver.
-3. **Use sane, capped keeper fees.** Keepers should receive enough to make updates reliable, but every update should have a hard maximum reward. V3 should not pay an uncapped percentage of protocol profit.
-4. **Execute only profitable transactions.** The configured quote must leave positive value after pool or routing fees, slippage, keeper compensation, reserve conversion costs, and changes in the yield token's exchange rate. A nominal peg deviation is not enough by itself.
-5. **Retain a permissionless `update()` flow.** On the expansion side, an update can mint crvUSD within a governance-controlled limit, sell it for the target AMM asset at the configured profitable quote, and convert the proceeds into the target yield token. On the contraction side, it can redeem enough of the yield reserve, buy crvUSD only at a profitable discount, and return that crvUSD to reserves or take it out of circulation through burning or debt reduction.
+```text
+Expansion:  crvUSD -> USDT -> USDe -> sUSDe
+Contraction: sUSDe -> USDe -> USDT -> crvUSD
+```
 
-This is a design direction, not a V3 specification. Follow-up work must define the exact Curve-compatible interface, flat-price quote rules, asset-conversion route, accounting model, oracle rules, profitability test, keeper fee formula, loss handling, reserve limits, emergency controls, and migration/offboarding lifecycle.
+There is no persistent USDT or USDe buffer. Successful calls complete the configured route atomically and finish in crvUSD or the yield token, apart from bounded rounding dust.
+
+Expansion and contraction paths are separately updatable through delayed governance. Routes use typed Curve-swap and ERC-4626 deposit/redeem steps rather than caller-provided routers or arbitrary calldata.
+
+V3 does not require the target crvUSD AMM spot price to remain close to its EMA. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. Execution instead requires the final normalized yield-token assets received to exceed the crvUSD sold, protocol minimum profit, and capped keeper reward. Balance-delta accounting, internal minimum outputs, deadlines, size caps, and final profitability assertions protect execution without suppressing the intended price dislocation.
+
+Keeper rewards are paid to `msg.sender`, have an absolute cap, and are paid only after profitable execution. Direct buyback users receive no separate keeper reward.
+
+The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, and deferred decisions.
 
 ## Toolchain
 
@@ -88,6 +96,8 @@ ETH_RPC_URL=https://your-archive-rpc.example make test
 ## Source layout
 
 ```text
+docs/
+└── pegkeeper-v3-spec.md
 src/
 ├── interfaces/
 │   ├── IControllerFactory.sol

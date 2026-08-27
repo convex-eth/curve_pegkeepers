@@ -1,0 +1,538 @@
+# PegKeeper V3 specification
+
+Status: design draft
+
+This document records the current V3 direction. It is intentionally narrower than a complete implementation specification. Unresolved parameters and integration details are listed at the end rather than guessed.
+
+## Summary
+
+PegKeeper V3 is an asymmetric, protocol-owned peg module:
+
+- **Above peg:** a permissionless keeper deploys crvUSD into a designated external crvUSD/stablecoin AMM, converts the stablecoin proceeds through an approved path, and finishes in a configured yield-bearing token.
+- **Below peg:** users can sell crvUSD directly to V3. V3 atomically unwinds enough of the yield-bearing position through the reverse path and pays the user in the configured stablecoin.
+- **Fallback below peg:** a permissionless keeper can unwind the yield-bearing position and buy crvUSD through the designated external AMM if direct buyback flow does not arrive.
+
+V3 does not maintain a persistent balance of the intermediate stablecoin. For example, USDT may be the AMM-facing asset while sUSDe is the final yield token:
+
+```text
+Expansion:  crvUSD -> USDT -> USDe -> sUSDe
+Contraction: sUSDe -> USDe -> USDT -> crvUSD
+```
+
+USDT and USDe are transient route assets. Successful state-changing calls should finish with only insignificant route dust outside crvUSD and the configured yield token.
+
+## Goals
+
+1. Expand crvUSD supply when crvUSD trades above peg.
+2. Turn expansion proceeds into a productive yield-bearing position.
+3. Offer explicit buyback liquidity when crvUSD trades below peg.
+4. Reuse bought-back crvUSD during later expansions.
+5. Execute only when the complete transaction is profitable after conversion costs and keeper compensation.
+6. Pay bounded keeper fees rather than an open-ended percentage of profit.
+7. Allow governance to replace broken or obsolete swap paths without replacing V3.
+8. Include first-class directional pauses, shutdown, and migration controls.
+
+## Non-goals
+
+V3 is not intended to:
+
+- manage a conventional two-sided StableSwap LP position;
+- maintain a liquid buffer of the AMM-facing stablecoin;
+- accept public LP deposits;
+- issue an LP token in the first version;
+- expose arbitrary routers, calldata, recipients, or tokens chosen by callers;
+- guarantee that a yield token can always be redeemed atomically;
+- reuse V2's pool-balance accounting or uncapped caller-profit formula.
+
+## Terminology
+
+- **crvUSD:** the stablecoin whose supply V3 expands and contracts.
+- **Target AMM:** the external crvUSD/stablecoin pool used by keeper expansion and fallback contraction.
+- **Target asset:** the non-crvUSD coin in the target AMM, such as USDT.
+- **Yield token:** the final token held after the expansion path, such as sUSDe.
+- **Expansion path:** the updatable sequence from the target asset to the yield token.
+- **Contraction path:** the updatable sequence from the yield token back to the target asset.
+- **Deployed crvUSD:** Factory-allocated crvUSD that V3 has sold and has not yet reacquired.
+- **Idle crvUSD:** crvUSD held by V3 and therefore available for a later expansion or Factory debt reduction.
+
+## Actors
+
+### Governance
+
+Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Route changes are delayed.
+
+### Emergency admin
+
+The emergency admin can immediately disable expansion, direct buyback, keeper buyback, or all execution. It cannot install a new path or move funds to an arbitrary address.
+
+### Keeper
+
+Any account can call the expansion and fallback contraction functions. Keeper rewards are paid to `msg.sender`, are capped, and are paid only after a successful profitable transaction.
+
+### Arbitrageur or user
+
+Any account can sell crvUSD directly to V3 through the buyback function while that direction is enabled. The caller receives the target asset and pays the route gas. No additional keeper reward is paid for this direct trade.
+
+### Fee receiver
+
+The fee receiver receives only realized surplus above the amount required to support outstanding deployed crvUSD and pending obligations. Principal yield-token shares cannot be withdrawn as fees.
+
+## State model
+
+A minimal implementation needs the following state:
+
+```text
+factory
+targetAmm
+targetAsset
+yieldToken
+feeReceiver
+
+deployedCrvUsd
+expansionPath
+contractionPath
+
+expansionMinProfitBps
+buybackMinProfitBps
+expansionKeeperFee
+contractionKeeperFee
+maxKeeperFee
+
+maxExpansionPerCall
+maxBuybackPerCall
+maxDeployedCrvUsd
+
+expansionPaused
+directBuybackPaused
+keeperBuybackPaused
+shutdown
+```
+
+The exact storage representation is deferred until the implementation language and path-step bounds are selected.
+
+## Supply accounting and Factory integration
+
+The current ControllerFactory mints the configured debt-ceiling increase to V3 upfront. It does not grant V3 a permissionless lazy-mint function.
+
+The first implementation should therefore treat the Factory allocation as reusable inventory:
+
+```text
+Idle crvUSD
+    -> expansion
+Yield-token position
+    -> contraction
+Idle crvUSD
+```
+
+`expand()` deploys idle Factory-allocated crvUSD. It does not mint directly under the current Factory interface. A future Factory adapter may support lazy minting, but that is a separate governance and security decision.
+
+crvUSD received during contraction remains idle in V3 and is out of active circulation. It can be reused in a later expansion. Governance can lower the Factory ceiling when it wants returned idle crvUSD burned.
+
+The core accounting invariant is:
+
+```text
+deployedCrvUsd <= Factory allocation
+```
+
+Expansion increases `deployedCrvUsd` by the crvUSD sold. Contraction decreases it by the crvUSD reacquired, capped at the current deployed amount.
+
+## Expansion lifecycle
+
+Expansion is keeper-driven. V3 does not offer a separate direct upward-price quote in the initial design.
+
+```text
+1. Verify expansion is enabled.
+2. Do not require the target AMM spot price to remain close to its EMA. A sharp upward move in crvUSD is the opportunity V3 is meant to act on.
+3. Bound the requested amount by idle crvUSD, per-call limits, and max deployed crvUSD.
+4. Sell crvUSD into the designated target AMM.
+5. Receive the target asset.
+6. Execute the full expansion path from target asset to yield token.
+7. Measure actual yield-token shares received by balance delta.
+8. Verify the final normalized yield-token assets received exceed crvUSD deployed, minimum protocol profit, and keeper reward.
+9. Increase deployedCrvUsd.
+10. Pay the capped keeper reward to msg.sender from realized surplus.
+11. Emit the complete execution result.
+```
+
+A preliminary interface is:
+
+```solidity
+function expand(
+    uint256 crvUsdAmount,
+    uint256 minTargetOut,
+    uint256 minYieldShares
+) external returns (uint256 yieldSharesReceived, uint256 keeperReward);
+```
+
+The keeper cannot choose the target AMM, path, output token, fee receiver, or reward recipient.
+
+## Direct buyback lifecycle
+
+Direct buyback provides one-sided downward liquidity.
+
+```text
+1. Verify direct buyback is enabled.
+2. Transfer crvUSD from the caller to V3.
+3. Bound the transaction by deployed crvUSD and the per-call buyback limit.
+4. Determine the maximum yield-token shares that may be spent while preserving the configured minimum profit.
+5. Execute the contraction path atomically from yield token to target asset.
+6. Measure actual target asset received.
+7. Verify the crvUSD received exceeds the normalized yield-token assets spent by the configured minimum profit.
+8. Transfer the target asset to the caller.
+9. Reduce deployedCrvUsd by the crvUSD reacquired.
+10. Retain the crvUSD as idle inventory.
+11. Emit the shares spent, target asset paid, and crvUSD reacquired.
+```
+
+A preliminary interface is:
+
+```solidity
+function buyback(
+    uint256 crvUsdAmount,
+    uint256 minTargetOut
+) external returns (uint256 targetOut, uint256 yieldSharesSpent);
+```
+
+The entire call reverts if the contraction path cannot produce an acceptable output. V3 does not promise target-asset liquidity independently of the configured path.
+
+The direct quote should be previewable:
+
+```solidity
+function previewBuyback(uint256 crvUsdAmount)
+    external
+    view
+    returns (uint256 expectedTargetOut, uint256 maxYieldShares);
+```
+
+The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
+
+## Keeper buyback fallback
+
+If no direct buyback flow arrives, a keeper can contract supply through the target AMM:
+
+```text
+1. Verify keeper buyback is enabled.
+2. Execute the contraction path from yield token to target asset.
+3. Swap the target asset for crvUSD in the designated target AMM.
+4. Verify crvUSD received exceeds the normalized yield-token assets spent, protocol minimum profit, and capped keeper reward.
+5. Reduce deployedCrvUsd.
+6. Keep the recovered crvUSD idle.
+7. Pay the capped reward to msg.sender.
+```
+
+A preliminary interface is:
+
+```solidity
+function contractViaAmm(
+    uint256 maxYieldShares,
+    uint256 minTargetOut,
+    uint256 minCrvUsdOut
+) external returns (uint256 crvUsdReceived, uint256 keeperReward);
+```
+
+## Updatable path system
+
+The path design is adapted from Resupply's `TreasuryStableDiversification`, which stores a governance-replaceable typed target sequence, validates pool and ERC-4626 relationships, uses exact temporary approvals, and measures outputs by balance delta.[1]
+
+V3 should keep the same useful properties while narrowing the allowed operations.
+
+### Supported step types
+
+The first version should support only typed operations:
+
+```solidity
+enum StepKind {
+    CurveSwap,
+    ERC4626Deposit,
+    ERC4626Redeem
+}
+
+struct RouteStep {
+    StepKind kind;
+    address venue;
+    address tokenIn;
+    address tokenOut;
+    uint16 executionBufferBps;
+}
+```
+
+No step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter.
+
+### Separate directional paths
+
+Expansion and contraction paths are configured separately. V3 must not assume that the reverse path has the same venue, cost, liquidity, or safety parameters.
+
+Example expansion path:
+
+```text
+USDT --CurveSwap(USDT/USDe)--> USDe
+USDe --ERC4626Deposit(sUSDe)--> sUSDe
+```
+
+Example contraction path:
+
+```text
+sUSDe --ERC4626Redeem(sUSDe)--> USDe
+USDe --CurveSwap(USDe/USDT)--> USDT
+```
+
+### Path validation
+
+A path is valid only when:
+
+1. The expansion path starts with `targetAsset` and ends with `yieldToken`.
+2. The contraction path starts with `yieldToken` and ends with `targetAsset`.
+3. Every step's `tokenOut` equals the next step's `tokenIn`.
+4. A Curve step's pool contains both configured tokens.
+5. An ERC-4626 deposit step uses `vault.asset() == tokenIn` and the vault share token as `tokenOut`.
+6. An ERC-4626 redeem step uses the vault share token as `tokenIn` and `vault.asset()` as `tokenOut`.
+7. Execution-buffer parameters remain within governance-set maxima.
+8. The path length is bounded.
+9. No venue, token, or endpoint is zero.
+
+Changing the target AMM, target asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths with mismatched endpoints.
+
+### Path governance
+
+Path replacement is a privileged operation capable of directing the protocol's full conversion flow. It should use delayed two-step governance:
+
+```solidity
+function commitPaths(
+    RouteStep[] calldata newExpansionPath,
+    RouteStep[] calldata newContractionPath
+) external;
+
+function applyPaths() external;
+function cancelPendingPaths() external;
+```
+
+`commitPaths` validates and stores the pending configuration hash and activation time. `applyPaths` validates again before replacing both active paths atomically.
+
+The emergency admin may disable a path immediately but cannot apply a new one.
+
+### Path execution
+
+For every step:
+
+1. Record the output-token balance before execution.
+2. Approve only the exact input amount.
+3. Execute the typed venue call.
+4. Reset the approval to zero.
+5. Compute output from the balance delta.
+6. Enforce the step's minimum output.
+7. Feed the measured output into the next step.
+
+Successful expansion and contraction calls must consume the entire routed input except for bounded rounding dust.
+
+## Profitability and execution controls
+
+Realized profitability is the primary execution gate. V3 should not copy V2-style spot/EMA proximity checks onto the target crvUSD AMM: a sudden crvUSD price spike creates the exact expansion opportunity V3 should capture. Requiring spot to remain close to EMA would suppress the intended trade.
+
+Expansion therefore succeeds only when the final normalized assets represented by the yield-token shares received are greater than the crvUSD sold by at least the configured protocol margin and keeper reward. Intermediate USDT or USDe quotes are not sufficient; the check uses the end of the atomic path.
+
+Contraction applies the inverse test: the crvUSD reacquired must exceed the normalized assets consumed from the yield-token position by the configured margin and any keeper reward.
+
+Sandwich and execution protection should come from controls that do not reject the desired crvUSD dislocation:
+
+- governance-set maximum trade sizes;
+- a transaction deadline;
+- caller-supplied `minTargetOut`, `minYieldShares`, and `minCrvUsdOut`;
+- stricter internal minimum outputs derived from the final profitability requirement;
+- measured token-balance deltas rather than trusting venue return values;
+- exact temporary approvals reset after each step;
+- a final post-route profitability assertion;
+- private keeper transaction submission where useful.
+
+Optional depeg or venue-health checks may still protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence and must not override a transaction that already proves sufficient realized final value. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
+
+### Expansion postcondition
+
+```text
+conservativeValue(yieldSharesReceived)
+>= crvUsdSold
+ + minimumProtocolProfit
+ + keeperReward
+```
+
+### Direct buyback postcondition
+
+```text
+crvUsdReceivedValue
+>= conservativeValue(yieldSharesSpent)
+ + minimumProtocolProfit
+```
+
+### Keeper buyback postcondition
+
+```text
+crvUsdReceivedValue
+>= conservativeValue(yieldSharesSpent)
+ + minimumProtocolProfit
+ + keeperReward
+```
+
+The exact normalization rule for yield-token shares and treatment of an impaired route asset remain to be specified.
+
+## Keeper compensation
+
+Keeper compensation follows these rules:
+
+1. The reward has an absolute governance-set maximum.
+2. The reward is paid only after a successful profitable state transition.
+3. The reward is paid to `msg.sender`.
+4. Callers cannot supply an arbitrary beneficiary.
+5. The reward cannot consume principal needed to support deployed crvUSD.
+6. Direct buyback callers receive no separate keeper reward.
+
+Whether the reward is fixed, gas-aware, or tiered below the cap remains open.
+
+## Fee receiver and surplus
+
+Yield-token appreciation and execution spread create protocol surplus. Fee withdrawal must not reduce the conservative value supporting outstanding deployed crvUSD.
+
+A withdrawal function should calculate the maximum withdrawable yield-token shares from current conservative value and transfer no more than that amount to the fee receiver.
+
+```solidity
+function claimSurplus(uint256 maxShares)
+    external
+    returns (uint256 sharesTransferred);
+```
+
+This function is permissionless to call but always pays the configured fee receiver.
+
+## Curve compatibility
+
+V3 is asymmetric. The first version does not need a full StableSwap invariant or LP token.
+
+The direct buyback side may expose Curve-style two-coin methods where useful for routing:
+
+```solidity
+function coins(uint256 index) external view returns (address);
+function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256);
+function exchange(int128 i, int128 j, uint256 dx, uint256 minDy) external returns (uint256);
+```
+
+Only the crvUSD-to-target-asset direction is directly executable. Upward expansion remains keeper-driven through the external target AMM. Unsupported directions must return no quote or revert consistently; exact router compatibility requires targeted integration testing before this surface is finalized.
+
+V3 should not publish fake LP balances, virtual prices, or TVL merely to resemble StableSwap.
+
+## Governance and emergency controls
+
+Required controls:
+
+- pause expansion;
+- pause direct buyback;
+- pause keeper buyback;
+- global shutdown;
+- lower trade and deployment caps immediately;
+- delayed increases to caps;
+- delayed target-AMM and path replacement;
+- immediate cancellation of a pending path;
+- fee-receiver update;
+- first-class migration of the yield-token position;
+- approval revocation for retired venues;
+- expansion-disabled contraction-only offboarding mode.
+
+Shutdown should stop new expansion while preserving a controlled path for reacquiring crvUSD and reducing deployed exposure.
+
+## Events
+
+At minimum:
+
+```solidity
+event Expanded(
+    address indexed keeper,
+    uint256 crvUsdSold,
+    uint256 targetReceived,
+    uint256 yieldSharesReceived,
+    uint256 keeperReward
+);
+
+event DirectBuyback(
+    address indexed caller,
+    uint256 crvUsdReceived,
+    uint256 targetPaid,
+    uint256 yieldSharesSpent
+);
+
+event KeeperBuyback(
+    address indexed keeper,
+    uint256 yieldSharesSpent,
+    uint256 targetReceived,
+    uint256 crvUsdReceived,
+    uint256 keeperReward
+);
+
+event PathsCommitted(bytes32 expansionHash, bytes32 contractionHash, uint256 activationTime);
+event PathsApplied(bytes32 expansionHash, bytes32 contractionHash);
+event PathsCancelled();
+event DirectionPaused(uint8 indexed direction, bool paused);
+event SurplusClaimed(uint256 yieldShares);
+```
+
+## Invariants
+
+1. `deployedCrvUsd` never exceeds configured capacity.
+2. Expansion cannot spend more idle crvUSD than V3 owns.
+3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
+4. Keeper rewards never exceed the absolute cap.
+5. Keeper rewards and fee claims cannot consume required principal.
+6. Caller-supplied minimums can only make execution stricter.
+7. Callers cannot choose routes, venues, output recipients, or reward recipients.
+8. Active paths always connect the configured endpoints.
+9. Successful route execution leaves no material intermediate-token balance.
+10. Disabling expansion never disables the governance-approved contraction and offboarding path unless global shutdown explicitly does so.
+11. A path update cannot bypass its governance delay.
+12. Every external conversion is non-reentrant and uses measured balance deltas.
+
+## Risks
+
+### Route and venue failure
+
+Any path venue can lose liquidity, pause, change behavior, or become unsafe. Atomic execution prevents partial state changes, while path governance and directional pauses provide recovery.
+
+### Yield-token impairment
+
+A yield token can lose value or become temporarily non-redeemable. V3 must stop using nominal or stale share value and may need to disable direct buyback until a safe contraction path exists.
+
+### Stablecoin basis risk
+
+A USDT-facing AMM combined with an sUSDe yield position crosses USDT, USDe, and sUSDe. The complete path must be profitable in conservative value, not merely in nominal token units.
+
+### Oracle and preview manipulation
+
+Spot quotes and ERC-4626 previews can be manipulated or stale. V3 relies on actual balance deltas, conservative normalization, final profitability assertions, deadlines, and transaction-size caps. Manipulation may cause a revert or denial of service, but must not allow an unprofitable completed trade.
+
+### MEV
+
+Keeper swaps through the external target AMM can be sandwiched. Internal minimums, post-trade profitability checks, bounded size, and private transaction submission may be required.
+
+### Governance route power
+
+An updatable path can direct all future flows into a malicious venue. Typed steps, endpoint validation, delayed activation, exact approvals, and emergency cancellation limit this risk.
+
+## Deferred decisions
+
+The following are deliberately unresolved:
+
+- whether any aggregate crvUSD trigger is needed beyond realized final profitability;
+- whether any separate target-asset or yield-token depeg guard is needed beyond realized final-value checks;
+- whether V3 eventually receives lazy mint/burn authority;
+- exact keeper fee formula and payment asset;
+- path length bound;
+- governance delay duration;
+- maximum per-call and rolling flow limits;
+- exact conservative valuation of sUSDe and other supported yield tokens;
+- whether the direct buyback interface should be registered in Curve routing infrastructure;
+- whether exact-output route adapters are needed;
+- how surplus is separated between yield and execution spread;
+- whether V3 supports one yield token permanently or permits delayed endpoint migration;
+- the final shutdown and migration transaction sequence.
+
+## Sources
+
+[1] https://github.com/resupplyfi/resupply/blob/3fcd20e8ce6bda0225b1f7424f8e25e76884020d/src/dao/TreasuryStableDiversification.sol — Resupply TreasuryStableDiversification path configuration
+    > "function setTargets(Target[] calldata newTargets) external onlyOwner {"
+    > "inputToken.forceApprove(target.swapPool, inputAmount);
+        ICurveStableSwapPool(target.swapPool).exchange(assetIndex, targetIndex, inputAmount, minOut);
+        inputToken.forceApprove(target.swapPool, 0);"
