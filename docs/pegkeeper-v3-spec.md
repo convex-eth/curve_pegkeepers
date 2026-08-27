@@ -31,6 +31,7 @@ USDT and USDe are transient route assets. Successful state-changing calls should
 6. Pay bounded keeper fees rather than an open-ended percentage of profit.
 7. Allow governance to replace broken or obsolete swap paths without replacing V3.
 8. Include first-class directional pauses, shutdown, and migration controls.
+9. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
 
 ## Non-goals
 
@@ -59,7 +60,7 @@ V3 is not intended to:
 
 ### Governance
 
-Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Route changes are delayed.
+Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Route changes are delayed. The governance owner can also make an arbitrary external call through `execute()` when a typed path or normal migration flow is insufficient.
 
 ### Emergency admin
 
@@ -256,7 +257,7 @@ struct RouteStep {
 }
 ```
 
-No step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter.
+No normal route step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter. This restriction applies to permissionless execution paths, not the governance owner's separate `execute()` escape hatch.
 
 ### Separate directional paths
 
@@ -431,9 +432,35 @@ Required controls:
 - fee-receiver update;
 - first-class migration of the yield-token position;
 - approval revocation for retired venues;
+- owner-only arbitrary external execution for urgent recovery;
 - expansion-disabled contraction-only offboarding mode.
 
 Shutdown should stop new expansion while preserving a controlled path for reacquiring crvUSD and reducing deployed exposure.
+
+## Owner execute escape hatch
+
+The governance owner must be able to call an arbitrary target with arbitrary calldata:
+
+```solidity
+function execute(address target, uint256 value, bytes calldata data)
+    external
+    onlyOwner
+    returns (bytes memory result);
+```
+
+This function exists for failures that the typed routes and normal migration functions cannot handle quickly enough. Examples include:
+
+- loss of confidence in the current yield token or one of its underlying stablecoins;
+- a vault, pool, or route changing behavior;
+- an urgent migration to a replacement token or venue;
+- recovery of tokens or approvals not anticipated by the original implementation;
+- interacting with a one-off rescue contract approved by the DAO.
+
+`execute()` performs a normal external `call`, not `delegatecall`. It bubbles the target's revert data and returns the target's return data. It has no target allowlist because an allowlist would defeat its role as a general recovery mechanism.
+
+The owner is expected to be the same DAO or governance executor that already controls crvUSD minting, debt capacity, and protocol configuration. Within that governance trust model, `execute()` does not add a new trusted actor or materially expand the DAO's ultimate authority. It does increase the immediate blast radius of an owner compromise or governance mistake at this contract, so it must never be callable by keepers, public operators, or the emergency admin.
+
+Governance should pause affected directions before using `execute()` where practical. If the call moves principal or changes token composition, normal execution remains paused until accounting and active paths match the post-recovery state.
 
 ## Events
 
@@ -468,6 +495,12 @@ event PathsApplied(bytes32 expansionHash, bytes32 contractionHash);
 event PathsCancelled();
 event DirectionPaused(uint8 indexed direction, bool paused);
 event SurplusClaimed(uint256 yieldShares);
+event Executed(
+    address indexed target,
+    uint256 value,
+    bytes4 indexed selector,
+    bytes32 dataHash
+);
 ```
 
 ## Invariants
@@ -484,6 +517,7 @@ event SurplusClaimed(uint256 yieldShares);
 10. Disabling expansion never disables the governance-approved contraction and offboarding path unless global shutdown explicitly does so.
 11. A path update cannot bypass its governance delay.
 12. Every external conversion is non-reentrant and uses measured balance deltas.
+13. Only the governance owner can execute arbitrary targets or calldata.
 
 ## Risks
 
@@ -510,6 +544,10 @@ Keeper swaps through the external target AMM can be sandwiched. Internal minimum
 ### Governance route power
 
 An updatable path can direct all future flows into a malicious venue. Typed steps, endpoint validation, delayed activation, exact approvals, and emergency cancellation limit this risk.
+
+### Governance execute power
+
+The owner can intentionally bypass typed routes and move or approve assets through `execute()`. This is an explicit trust assumption, not a permissionless surface. A compromised owner can drain V3, but the designated DAO already controls crvUSD minting and the protocol configuration that determines V3's capacity. Ownership must not be delegated to a weaker hot-key or keeper role.
 
 ## Deferred decisions
 

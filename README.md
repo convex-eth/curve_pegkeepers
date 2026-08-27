@@ -65,6 +65,8 @@ There is no persistent USDT or USDe buffer. Successful calls complete the config
 
 Expansion and contraction paths are separately updatable through delayed governance. Routes use typed Curve-swap and ERC-4626 deposit/redeem steps rather than caller-provided routers or arbitrary calldata.
 
+The governance owner also has a separate unrestricted `execute(target, value, calldata)` escape hatch. It can move or convert assets through a one-off recovery path if a configured venue breaks or governance loses confidence in the held yield token or an underlying stablecoin. This power belongs only to the DAO owner, not keepers or the emergency admin. The DAO already controls crvUSD minting and protocol configuration, so the function does not introduce a new trusted actor; it makes that existing governance authority directly usable for urgent recovery.
+
 V3 does not require the target crvUSD AMM spot price to remain close to its EMA. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. Execution instead requires the final normalized yield-token assets received to exceed the crvUSD sold, protocol minimum profit, and capped keeper reward. Balance-delta accounting, internal minimum outputs, deadlines, size caps, and final profitability assertions protect execution without suppressing the intended price dislocation.
 
 Keeper rewards are paid to `msg.sender`, have an absolute cap, and are paid only after profitable execution. Direct buyback users receive no separate keeper reward.
