@@ -377,6 +377,40 @@ Sandwich and execution protection should come from controls that do not reject t
 
 When deriving intermediate `minOut` values, V3 may normalize governance-approved stablecoin route assets to one-dollar units and apply a governance-set maximum loss for the specific step or complete route. That lets the contract calculate useful minimums without an external dollar oracle. Actual outputs are still measured by balance delta, and the final trusted-backing-value postcondition remains authoritative.
 
+### DAO fee recapture
+
+Route analysis must distinguish PegKeeper-local profitability from consolidated DAO economics.
+
+At Ethereum block `25,844,317`, Curve 3pool had a `1.5` basis-point swap fee and `admin_fee = 100%`.[7] The full swap fee accrues as admin balances rather than remaining in LP virtual price. A 3pool swap made by V3 therefore reduces the assets received by V3, but the fee is captured by the Curve DAO fee system instead of external LPs.
+
+This makes a route such as:
+
+```text
+USDC or USDT
+-> DAI through 3pool
+-> USDS through the canonical exact converter
+-> sUSDS deposit
+```
+
+more attractive at the consolidated protocol level than its gross output haircut suggests. The DAI-to-USDS conversion and USDS-to-sUSDS deposit do not add percentage swap fees, so most of the explicit route fee is recycled to the DAO.
+
+V3 must nevertheless enforce its hard profitability condition using only assets actually received by V3. Unclaimed 3pool admin fees are not held by the PegKeeper, are not atomically available as backing, and cannot be counted toward `trustedBackingValue(yieldPosition)`. Otherwise V3 could pass a consolidated-profit test while leaving its own backing position short.
+
+The two views are therefore:
+
+```text
+PegKeeper-local profit
+    = trusted backing received
+    - crvUSD deployed
+    - keeper reward
+
+DAO-consolidated profit
+    = PegKeeper-local profit
+    + attributable DAO admin-fee accrual
+```
+
+The first is the onchain safety invariant. The second is an offchain route-selection and governance metric. Routes that return equivalent backing to V3 should prefer fees accruing to the DAO over fees retained by external LPs, but fee recapture must never weaken V3's `minOut` or final backing floor. Pool fee ownership is configuration-dependent and must be rechecked before governance installs or updates a route.
+
 Optional depeg or venue-health checks may still protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence and must not override a transaction that already proves sufficient realized final value. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
 
 For expansion, V3 calculates the final minimum as:
@@ -652,3 +686,8 @@ The following are deliberately unresolved:
     > "if debt_ceiling > old_debt_residual:
         to_mint: uint256 = debt_ceiling - old_debt_residual
         STABLECOIN.mint(addr, to_mint)"
+[7] https://etherscan.io/address/0xbEbc44782C7dB0a1A60Cb6fE97d0b483032FF1C7 — Curve 3pool live fee configuration
+    > "Ethereum block: 25844317
+Curve 3pool: 0xbEbc44782C7dB0a1A60Cb6fE97d0b483032FF1C7
+fee()(uint256)=1500000 [1.5e6]
+admin_fee()(uint256)=10000000000 [1e10]"
