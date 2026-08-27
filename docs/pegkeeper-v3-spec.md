@@ -28,7 +28,7 @@ USDT and USDe are transient route assets. Successful state-changing calls should
 3. Offer explicit buyback liquidity when crvUSD trades below peg.
 4. Reuse bought-back crvUSD during later expansions.
 5. Execute only when the complete transaction is profitable after conversion costs and keeper compensation.
-6. Pay keepers a governance-set percentage of realized profit, clamped by an absolute per-call maximum.
+6. Pay keepers a governance-set percentage of realized profit, clamped by a maximum reward rate on action notional so splitting cannot bypass the bound.
 7. Keep expansion and fallback contraction open to any keeper without a whitelist or private-submission requirement.
 8. Expand immediately whenever the complete entry route is locally non-loss-making and satisfies the configured entry margin.
 9. Prevent routine rapid expansion/contraction churn while allowing early contraction at a sufficiently profitable distressed exit.
@@ -105,7 +105,7 @@ normalExitMinProfitBps
 earlyExitMinProfitBps
 maxExecutionSlippageBps
 keeperProfitShareBps
-maxKeeperReward
+maxKeeperRewardBps
 
 minDeploymentTime
 minExpansionAmount
@@ -190,7 +190,7 @@ Expansion has no time cooldown. It should execute immediately whenever the compl
 6. Execute the configured conversion steps from target asset to backing asset.
 7. Measure the actual backing-asset balance delta and normalize it to 18-decimal accounting units.
 8. Calculate gross entry profit as normalized backing asset received minus crvUSD sold.
-9. Calculate the keeper reward as the configured percentage of gross entry profit, clamped by `maxKeeperReward`, and transfer it to `msg.sender` in the backing asset.
+9. Calculate the keeper reward as the configured percentage of gross entry profit, clamped by `maxKeeperRewardBps` of crvUSD sold, and transfer it to `msg.sender` in the backing asset.
 10. Deploy all remaining backing asset through the configured terminal yield step.
 11. Measure actual yield-token shares received by balance delta.
 12. Convert the received yield shares into approved underlying units and verify that the remaining position satisfies both the protocol net-profit floor and the internally calculated execution-quality floor.
@@ -286,7 +286,7 @@ If no direct buyback flow arrives, a keeper can contract supply through the targ
 5. Execute the contraction path from yield token to target asset.
 6. Swap the target asset for crvUSD in the designated target AMM.
 7. Calculate gross exit profit as crvUSD received minus the trusted backing value of yield-token shares spent.
-8. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperReward`, and pay it to `msg.sender` in crvUSD.
+8. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperRewardBps` of trusted backing value spent, and pay it to `msg.sender` in crvUSD.
 9. Verify the net crvUSD retained after the reward exceeds the trusted backing value spent by the selected exit margin.
 10. Reduce deployedCrvUsd by the net crvUSD retained, capped at the deployed amount.
 11. Keep the remaining recovered crvUSD idle.
@@ -508,7 +508,7 @@ grossEntryProfit = normalize(backingAssetOut) - crvUsdSold
 
 keeperRewardValue = min(
     floor(grossEntryProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
+    floor(crvUsdSold * maxKeeperRewardBps / 10_000)
 )
 
 keeperRewardTokens = denormalizeDown(keeperRewardValue)
@@ -557,7 +557,11 @@ grossExitProfit
 
 keeperReward = min(
     floor(grossExitProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
+    floor(
+        trustedBackingValue(yieldSharesSpent)
+        * maxKeeperRewardBps
+        / 10_000
+    )
 )
 
 crvUsdReceived - keeperReward
@@ -671,16 +675,25 @@ Those controls reduce simple one-block manipulation and prevent an immediately u
 
 ## Keeper compensation
 
-Keeper compensation is a percentage of realized gross profit, clamped by an absolute per-call maximum:
+Keeper compensation is a percentage of realized gross profit, clamped by a maximum basis-point rate on action notional:
 
 ```text
 keeperReward = min(
     floor(grossProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
+    floor(actionNotional * maxKeeperRewardBps / 10_000)
 )
 ```
 
-For expansion, `grossProfit` is normalized backing asset received immediately before the terminal yield deployment minus crvUSD sold. The keeper is paid in that backing asset before the remaining balance is deployed. For keeper fallback contraction, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD. Direct buyback callers receive no separate reward.
+For expansion, `grossProfit` is normalized backing asset received immediately before the terminal yield deployment minus crvUSD sold, and `actionNotional` is crvUSD sold. The keeper is paid in that backing asset before the remaining balance is deployed. For keeper fallback contraction, `grossProfit` is crvUSD received minus trusted backing value spent, `actionNotional` is that trusted backing value, and the keeper is paid in crvUSD. Direct buyback callers receive no separate reward.
+
+This cap is split-invariant. For any set of calls `i`, with gross profits `P_i`, notionals `N_i`, profit-share rate `s`, and notional reward cap `c`:
+
+```text
+sum(min(s * P_i, c * N_i))
+<= min(s * sum(P_i), c * sum(N_i))
+```
+
+Splitting one expansion into multiple transactions, including transactions batched in one block, cannot increase total compensation above the same profit-share and notional-rate bounds applied to aggregate activity. Protocol-calculated maximum sizing remains useful for peg effectiveness and gas efficiency, but reward safety no longer depends on preventing split execution.
 
 The reward rules are:
 
@@ -689,12 +702,10 @@ The reward rules are:
 3. The reward is paid only after the route has produced positive gross profit and the complete state transition can satisfy the post-reward protocol margin.
 4. The reward is paid to `msg.sender`; callers cannot supply an arbitrary beneficiary.
 5. Decimal conversion rounds the reward down.
-6. The absolute cap limits any single reward.
+6. `maxKeeperRewardBps` limits compensation relative to action notional and cannot be bypassed by splitting notional across calls.
 7. The reward cannot consume principal or the configured protocol margin.
 
-No fixed stipend is paid. A keeper decides whether its percentage reward is worth its gas and execution risk.
-
-`maxKeeperReward` is a per-call cap, not automatically an aggregate cap across a block or market event. Protocol-selected maximum sizing removes voluntary under-sizing, so a second call is useful only if the first call's governance bounds leave another profitable action. If governance requires a hard aggregate reward budget, V3 must additionally track a per-block or per-epoch allowance; that restriction may conflict with immediate repeated expansion and is deferred.
+No fixed stipend is paid. A keeper decides whether its percentage reward is worth its gas and execution risk. If governance also requires a hard dollar-denominated budget, it must be cumulative over a block or epoch rather than reset per call; such a budget can exhaust and suppress otherwise useful immediate execution, so it is not part of the minimal design.
 
 ## Fee receiver and surplus
 
@@ -823,7 +834,7 @@ event Executed(
 1. `deployedCrvUsd` never exceeds configured capacity.
 2. Expansion cannot spend more idle crvUSD than V3 owns.
 3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
-4. Keeper rewards equal the configured percentage of realized gross profit, clamped by the absolute cap and rounded down.
+4. Keeper rewards equal the configured percentage of realized gross profit, clamped by `maxKeeperRewardBps` of action notional and rounded down.
 5. Keeper rewards and fee claims cannot consume required principal or the configured protocol margin.
 6. Caller-supplied minimums can only make execution stricter.
 7. Callers cannot choose routes, venues, output recipients, or reward recipients.
@@ -889,8 +900,8 @@ The following are deliberately unresolved:
 - whether a later version may permit a tightly capped negative entry margin expected to be amortized by carry; the initial design does not;
 - initial `minDeploymentTime` and whether `minExpansionAmount` is absolute, capacity-relative, or the greater of both;
 - whether a later implementation needs tranche or bounded-bucket maturity accounting instead of the initial global timer;
-- initial `keeperProfitShareBps` and `maxKeeperReward`;
-- whether keeper rewards need an aggregate per-block or per-epoch budget in addition to protocol-selected sizing and the per-call cap;
+- initial `keeperProfitShareBps` and `maxKeeperRewardBps`;
+- whether keeper rewards need an additional aggregate dollar budget per block or epoch;
 - binary-search iteration count, amount granularity, and maximum quote-gas budget;
 - path length bound;
 - governance delay duration;
