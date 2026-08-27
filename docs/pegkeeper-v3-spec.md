@@ -131,13 +131,37 @@ Idle crvUSD
 
 crvUSD received during contraction remains idle in V3 and is out of active circulation. It can be reused in a later expansion. Governance can lower the Factory ceiling when it wants returned idle crvUSD burned.
 
+### Trusted backing convention
+
+The current ControllerFactory does not inspect or mark to market assets held by a debt-ceiling recipient. It mints the allocation to the approved PegKeeper address and, when lowering the ceiling, burns only crvUSD currently held by that address.[2] Solvency therefore already depends on governance admitting a PegKeeper whose deployed assets are acceptable backing.
+
+V3 makes that trust assumption explicit and narrow:
+
+- governance approves the AMM-facing stablecoin, yield token, vault underlying, and typed conversion paths;
+- one normalized unit of an approved backing stablecoin is accounted as one dollar and one crvUSD unit;
+- yield-token shares are not treated as one dollar each; they are converted into units of the approved underlying through the configured vault or adapter;
+- only the configured backing position counts toward V3 principal and surplus accounting;
+- unsolicited tokens and arbitrary assets sent to V3 do not count as backing.
+
+For an ERC-4626-style sUSDe position:
+
+```text
+trustedBackingValue(sUSDe shares)
+    = normalizeTo1e18(convertToAssets(sUSDe shares))
+```
+
+The returned USDe units are then trusted at par because USDe and the sUSDe position were approved by governance as PegKeeper backing. No target-AMM spot price is used to value the final position.
+
+This is a protocol accounting convention, not proof that every approved stablecoin can always be sold for one dollar. If an approved backing asset depegs, freezes, or becomes non-redeemable, V3 can remain nominally solvent under its configured accounting while being economically impaired. Governance must pause affected routes and use path migration or owner `execute()` to move the position.
+
 The core accounting invariant is:
 
 ```text
 deployedCrvUsd <= Factory allocation
+deployedCrvUsd <= trustedBackingValue(yieldPosition)
 ```
 
-Expansion increases `deployedCrvUsd` by the crvUSD sold. Contraction decreases it by the crvUSD reacquired, capped at the current deployed amount.
+Expansion increases `deployedCrvUsd` by the crvUSD sold. Contraction decreases it by the crvUSD reacquired, capped at the current deployed amount. Idle crvUSD backs itself; the trusted backing value of the yield position must cover the portion currently deployed into the market after keeper rewards and fee claims.
 
 ## Expansion lifecycle
 
@@ -151,7 +175,7 @@ Expansion is keeper-driven. V3 does not offer a separate direct upward-price quo
 5. Receive the target asset.
 6. Execute the full expansion path from target asset to yield token.
 7. Measure actual yield-token shares received by balance delta.
-8. Verify the final normalized yield-token assets received satisfy both the protocol profit floor and the internally calculated execution-quality floor.
+8. Convert the received yield shares into approved underlying units and verify they satisfy both the protocol profit floor and the internally calculated execution-quality floor.
 9. Increase deployedCrvUsd.
 10. Pay the capped keeper reward to msg.sender from realized surplus.
 11. Emit the complete execution result.
@@ -182,7 +206,7 @@ Direct buyback provides one-sided downward liquidity.
 4. Determine the maximum yield-token shares that may be spent while preserving the configured minimum profit.
 5. Execute the contraction path atomically from yield token to target asset.
 6. Measure actual target asset received.
-7. Verify the crvUSD received exceeds the normalized yield-token assets spent by the configured minimum profit.
+7. Verify the crvUSD received exceeds the trusted backing value of yield-token shares spent by the configured minimum profit.
 8. Transfer the target asset to the caller.
 9. Reduce deployedCrvUsd by the crvUSD reacquired.
 10. Retain the crvUSD as idle inventory.
@@ -221,7 +245,7 @@ If no direct buyback flow arrives, a keeper can contract supply through the targ
 1. Verify keeper buyback is enabled.
 2. Execute the contraction path from yield token to target asset.
 3. Swap the target asset for crvUSD in the designated target AMM.
-4. Verify crvUSD received exceeds the normalized yield-token assets spent, protocol minimum profit, and capped keeper reward.
+4. Verify crvUSD received exceeds the trusted backing value of yield-token shares spent, protocol minimum profit, and capped keeper reward.
 5. Reduce deployedCrvUsd.
 6. Keep the recovered crvUSD idle.
 7. Pay the capped reward to msg.sender.
@@ -333,11 +357,11 @@ Successful expansion and contraction calls must consume the entire routed input 
 
 ## Profitability and execution controls
 
-Realized profitability is the primary execution gate. V3 should not copy V2-style spot/EMA proximity checks onto the target crvUSD AMM: a sudden crvUSD price spike creates the exact expansion opportunity V3 should capture. Requiring spot to remain close to EMA would suppress the intended trade.
+Realized profitability under the trusted-backing convention is the primary execution gate. V3 should not copy V2-style spot/EMA proximity checks onto the target crvUSD AMM: a sudden crvUSD price spike creates the exact expansion opportunity V3 should capture. Requiring spot to remain close to EMA would suppress the intended trade.
 
-Expansion therefore succeeds only when the final normalized assets represented by the yield-token shares received are greater than the crvUSD sold by at least the configured protocol margin and keeper reward. Intermediate USDT or USDe quotes are not sufficient; the check uses the end of the atomic path.
+Expansion therefore succeeds only when the approved underlying units represented by the final yield-token shares received are greater than the crvUSD sold by at least the configured protocol margin and keeper reward. Intermediate USDT or USDe quotes are not sufficient; the check uses the end of the atomic path. The approved underlying unit is treated as one dollar without consulting the target AMM spot.
 
-Contraction applies the inverse test: the crvUSD reacquired must exceed the normalized assets consumed from the yield-token position by the configured margin and any keeper reward.
+Contraction applies the inverse test: the crvUSD reacquired must exceed the trusted backing value consumed from the yield-token position by the configured margin and any keeper reward.
 
 Sandwich and execution protection should come from controls that do not reject the desired crvUSD dislocation:
 
@@ -351,12 +375,14 @@ Sandwich and execution protection should come from controls that do not reject t
 - exact temporary approvals reset after each step;
 - a final post-route profitability assertion.
 
+When deriving intermediate `minOut` values, V3 may normalize governance-approved stablecoin route assets to one-dollar units and apply a governance-set maximum loss for the specific step or complete route. That lets the contract calculate useful minimums without an external dollar oracle. Actual outputs are still measured by balance delta, and the final trusted-backing-value postcondition remains authoritative.
+
 Optional depeg or venue-health checks may still protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence and must not override a transaction that already proves sufficient realized final value. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
 
 For expansion, V3 calculates the final minimum as:
 
 ```text
-profitFloor = sharesRequiredFor(
+profitFloor = sharesRequiredForTrustedAssets(
     crvUsdSold + minimumProtocolProfit + keeperReward
 )
 
@@ -366,12 +392,12 @@ executionFloor = expectedFinalShares
 protocolMinShares = max(profitFloor, executionFloor)
 ```
 
-`expectedFinalShares` comes from the configured target AMM quote, each typed path preview, and the final ERC-4626 `previewDeposit`. Actual shares are measured by balance delta. Share count is not compared directly with deposited underlying because an ERC-4626 share price need not equal one.
+`expectedFinalShares` comes from the configured target AMM quote, each typed path preview, and the final ERC-4626 `previewDeposit`. Actual shares are measured by balance delta. Share count is not compared directly with deposited underlying because an ERC-4626 share price need not equal one. `sharesRequiredForTrustedAssets` converts the required approved-underlying units into shares through the configured vault or adapter; it does not derive a dollar price from the crvUSD target AMM.
 
 ### Expansion postcondition
 
 ```text
-conservativeValue(yieldSharesReceived)
+trustedBackingValue(yieldSharesReceived)
 >= crvUsdSold
  + minimumProtocolProfit
  + keeperReward
@@ -380,27 +406,27 @@ conservativeValue(yieldSharesReceived)
 ### Direct buyback postcondition
 
 ```text
-crvUsdReceivedValue
->= conservativeValue(yieldSharesSpent)
+crvUsdReceived
+>= trustedBackingValue(yieldSharesSpent)
  + minimumProtocolProfit
 ```
 
 ### Keeper buyback postcondition
 
 ```text
-crvUsdReceivedValue
->= conservativeValue(yieldSharesSpent)
+crvUsdReceived
+>= trustedBackingValue(yieldSharesSpent)
  + minimumProtocolProfit
  + keeperReward
 ```
 
-The exact normalization rule for yield-token shares and treatment of an impaired route asset remain to be specified.
+The implementation still needs an asset-specific adapter interface and exact rounding direction. Expansion must round required shares up; surplus calculations must round backing value down.
 
 ## Open keeper and flash-liquidity model
 
 Open keepers are an explicit design choice. V3 cannot prevent an account from using flash liquidity to move the target AMM, call `expand()` or `contractViaAmm()`, and reverse the market trade afterward.
 
-The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured profit after the keeper reward. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the normalization or external token accounting itself is compromised.
+The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the configured vault or adapter accounting itself is compromised. A real depeg of an approved backing asset is governance collateral risk rather than target-AMM price manipulation.
 
 The execution-quality floor prevents the configured route from performing materially worse than the quote visible when V3 executes. It cannot detect a malicious keeper that moved the AMM before the V3 transaction and restores it afterward. Preventing that completely would require a trusted price reference, auction, private order flow, or keeper whitelist. Those mechanisms are outside the current open-keeper design.
 
@@ -433,9 +459,9 @@ Whether the reward is fixed, gas-aware, or tiered below the cap remains open.
 
 ## Fee receiver and surplus
 
-Yield-token appreciation and execution spread create protocol surplus. Fee withdrawal must not reduce the conservative value supporting outstanding deployed crvUSD.
+Yield-token appreciation and execution spread create protocol surplus. Fee withdrawal must not reduce the trusted backing value supporting outstanding deployed crvUSD.
 
-A withdrawal function should calculate the maximum withdrawable yield-token shares from current conservative value and transfer no more than that amount to the fee receiver.
+A withdrawal function should calculate the maximum withdrawable yield-token shares from current trusted backing value, rounding principal requirements against the fee receiver, and transfer no more than that amount.
 
 ```solidity
 function claimSurplus(uint256 maxShares)
@@ -563,6 +589,7 @@ event Executed(
 12. Every external conversion is non-reentrant and uses measured balance deltas.
 13. Only the governance owner can execute arbitrary targets or calldata.
 14. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
+15. Trusted backing value remaining after rewards and fee claims is never below `deployedCrvUsd`.
 
 ## Risks
 
@@ -572,15 +599,15 @@ Any path venue can lose liquidity, pause, change behavior, or become unsafe. Ato
 
 ### Yield-token impairment
 
-A yield token can lose value or become temporarily non-redeemable. V3 must stop using nominal or stale share value and may need to disable direct buyback until a safe contraction path exists.
+A yield token can lose value or become temporarily non-redeemable. V3 deliberately trusts approved backing at par for protocol accounting, so the minimum-profit check does not detect an economic depeg by itself. Governance must pause affected execution and migrate or recover the position; the owner execute escape hatch exists partly for this case.
 
 ### Stablecoin basis risk
 
-A USDT-facing AMM combined with an sUSDe yield position crosses USDT, USDe, and sUSDe. The complete path must be profitable in conservative value, not merely in nominal token units.
+A USDT-facing AMM combined with an sUSDe yield position crosses USDT, USDe, and sUSDe. Governance explicitly accepts those approved assets as dollar-par PegKeeper backing. The route still must satisfy actual balance-delta and share-conversion checks, but those checks prove nominal profitability under the trust convention rather than external-market dollar value.
 
 ### Oracle and preview manipulation
 
-Spot quotes and ERC-4626 previews can be manipulated or stale. V3 relies on actual balance deltas, conservative normalization, final profitability assertions, deadlines, and transaction-size caps. Manipulation may cause a revert or denial of service, but must not allow an unprofitable completed trade.
+Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the configured backing adapter, final nominal-profit assertions, deadlines, and transaction-size caps. Governance is responsible for approving a vault or adapter whose share-to-underlying accounting is acceptable for backing.
 
 ### MEV
 
@@ -599,14 +626,14 @@ The owner can intentionally bypass typed routes and move or approve assets throu
 The following are deliberately unresolved:
 
 - whether any aggregate crvUSD trigger is needed beyond realized final profitability;
-- whether any separate target-asset or yield-token depeg guard is needed beyond realized final-value checks;
+- whether any separate target-asset or yield-token depeg guard is desirable despite the approved-backing-at-par convention;
 - whether V3 eventually receives lazy mint/burn authority;
 - exact keeper fee formula and payment asset;
 - path length bound;
 - governance delay duration;
 - maximum per-call and rolling flow limits;
 - the execution-quality benchmark used in addition to the hard profit floor;
-- exact conservative valuation of sUSDe and other supported yield tokens;
+- exact adapter interface and rounding rules for converting supported yield shares into trusted underlying units;
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
 - whether exact-output route adapters are needed;
 - how surplus is separated between yield and execution spread;
@@ -620,3 +647,8 @@ The following are deliberately unresolved:
     > "inputToken.forceApprove(target.swapPool, inputAmount);
         ICurveStableSwapPool(target.swapPool).exchange(assetIndex, targetIndex, inputAmount, minOut);
         inputToken.forceApprove(target.swapPool, 0);"
+[2] https://github.com/curvefi/curve-stablecoin/blob/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a/curve_stablecoin/ControllerFactory.vy — Curve ControllerFactory debt-ceiling allocation
+    > "diff: uint256 = min(old_debt_residual - debt_ceiling, STABLECOIN.balanceOf(addr))"
+    > "if debt_ceiling > old_debt_residual:
+        to_mint: uint256 = debt_ceiling - old_debt_residual
+        STABLECOIN.mint(addr, to_mint)"
