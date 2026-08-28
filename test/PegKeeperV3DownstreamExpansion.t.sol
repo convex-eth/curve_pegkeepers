@@ -135,6 +135,81 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         vm.stopPrank();
     }
 
+    function test_previewExpansionPredictsConfiguredDownstreamRoute() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
+
+        uint256 targetReceived = targetPool.get_dy(1, 0, MIN_EXPANSION);
+        uint256 backingReceived = targetReceived * TARGET_MULTIPLIER;
+        uint256 grossProfit = backingReceived - MIN_EXPANSION;
+        uint256 expectedReward = grossProfit * 3_000 / 10_000;
+        uint256 expectedYield = backingReceived - expectedReward;
+
+        (
+            uint256 targetOut,
+            uint256 backingOut,
+            uint256 previewGrossProfit,
+            uint256 keeperReward,
+            uint256 yieldOut,
+            bool expectedToDeploy
+        ) = previewer.previewExpansion(MIN_EXPANSION);
+
+        assertEq(targetOut, targetReceived);
+        assertEq(backingOut, backingReceived);
+        assertEq(previewGrossProfit, grossProfit);
+        assertEq(keeperReward, expectedReward);
+        assertEq(yieldOut, expectedYield);
+        assertTrue(expectedToDeploy);
+    }
+
+    function test_previewExpansionIsAdvisoryWhenRouteQuoteChanges() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
+
+        (,,,,, bool expectedToDeploy) = previewer.previewExpansion(MIN_EXPANSION);
+        assertTrue(expectedToDeploy);
+
+        targetToDaiPool.setPrices(900_000, 900_000);
+        vm.prank(keeper);
+        (,, uint256 yieldReceived,, bool deployed) = pegKeeper.expand(MIN_EXPANSION);
+
+        assertEq(yieldReceived, 0);
+        assertFalse(deployed);
+        assertGt(pegKeeper.undeployed_backing(), 0);
+    }
+
+    function test_previewExpansionSelectsFallbackWhenQuotedRouteLossIsTooHigh() public {
+        targetPool.setPrices(1_100_000, 1_100_000);
+        targetToDaiPool.setPrices(950_000, 950_000);
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        uint256 expectedTarget = targetPool.get_dy(1, 0, MIN_EXPANSION);
+        uint256 expectedGrossProfit = expectedTarget * TARGET_MULTIPLIER - MIN_EXPANSION;
+        uint256 expectedReward = 20e6;
+        (
+            uint256 targetOut,
+            uint256 backingOut,
+            uint256 grossProfit,
+            uint256 keeperReward,
+            uint256 yieldOut,
+            bool expectedToDeploy
+        ) = pegKeeper.previewExpansion(MIN_EXPANSION);
+
+        assertEq(targetOut, expectedTarget);
+        assertEq(backingOut, 0);
+        assertEq(grossProfit, expectedGrossProfit);
+        assertEq(keeperReward, expectedReward);
+        assertEq(yieldOut, 0);
+        assertFalse(expectedToDeploy);
+
+        vm.prank(keeper);
+        (, uint256 retained,, uint256 realizedReward, bool deployed) =
+            pegKeeper.expand(MIN_EXPANSION);
+        assertEq(retained + realizedReward, targetOut);
+        assertEq(realizedReward, keeperReward);
+        assertFalse(deployed);
+    }
+
     function test_expansionRoutesNewTargetToYieldAndPaysOneBackingReward() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
         vm.warp(1_800_000_000);

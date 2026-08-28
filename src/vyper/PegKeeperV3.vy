@@ -537,24 +537,29 @@ def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, 
 
 @internal
 @view
+def _preview_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
+    if _step.kind == STEP_CURVE_SWAP:
+        return CurveRoutePool(_step.venue).get_dy(
+            _step.pool_index_in,
+            _step.pool_index_out,
+            _amount_in,
+        )
+    elif _step.kind == STEP_DAI_USDS_CONVERTER:
+        return _amount_in
+    elif _step.kind == STEP_ERC4626_DEPOSIT:
+        return ERC4626Route(_step.venue).previewDeposit(_amount_in)
+    else:
+        return ERC4626Route(_step.venue).previewRedeem(_amount_in)
+
+
+@internal
+@view
 def _preview_contraction_path(_yield_token_amount: uint256) -> uint256:
     amount_out: uint256 = _yield_token_amount
     for i in range(MAX_ROUTE_STEPS):
         if i >= len(self.contraction_path):
             break
-        step: RouteStep = self.contraction_path[i]
-        if step.kind == STEP_CURVE_SWAP:
-            amount_out = CurveRoutePool(step.venue).get_dy(
-                step.pool_index_in,
-                step.pool_index_out,
-                amount_out,
-            )
-        elif step.kind == STEP_DAI_USDS_CONVERTER:
-            pass
-        elif step.kind == STEP_ERC4626_DEPOSIT:
-            amount_out = ERC4626Route(step.venue).previewDeposit(amount_out)
-        else:
-            amount_out = ERC4626Route(step.venue).previewRedeem(amount_out)
+        amount_out = self._preview_route_step(self.contraction_path[i], amount_out)
     return amount_out
 
 
@@ -582,6 +587,129 @@ def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uin
     if keeper_reward > self.max_keeper_reward:
         keeper_reward = self.max_keeper_reward
     return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
+
+
+@internal
+@view
+def _preview_expansion_route(
+    _target_amount: uint256,
+    _crv_usd_amount: uint256,
+) -> (uint256, uint256, uint256, uint256, bool):
+    path_length: uint256 = len(self.expansion_path)
+    if path_length == 0:
+        return 0, 0, 0, 0, False
+
+    amount_out: uint256 = _target_amount
+    backing_asset_out: uint256 = 0
+    gross_profit: uint256 = 0
+    keeper_reward: uint256 = 0
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= path_length:
+            break
+        step: RouteStep = self.expansion_path[i]
+        if i == path_length - 1:
+            backing_asset_out = amount_out
+            backing_value: uint256 = backing_asset_out * BACKING_MULTIPLIER
+            if backing_value > _crv_usd_amount:
+                gross_profit = backing_value - _crv_usd_amount
+            keeper_reward_value: uint256 = (
+                gross_profit * self.keeper_profit_share_bps / BPS
+            )
+            if keeper_reward_value > self.max_keeper_reward:
+                keeper_reward_value = self.max_keeper_reward
+            keeper_reward = keeper_reward_value / BACKING_MULTIPLIER
+            if keeper_reward > backing_asset_out:
+                return backing_asset_out, gross_profit, keeper_reward, 0, False
+            amount_out = backing_asset_out - keeper_reward
+        amount_out = self._preview_route_step(step, amount_out)
+
+    yield_token_out: uint256 = amount_out
+    if yield_token_out == 0:
+        return backing_asset_out, gross_profit, keeper_reward, 0, False
+
+    trusted_yield_value: uint256 = (
+        YIELD_TOKEN.convertToAssets(yield_token_out) * BACKING_MULTIPLIER
+    )
+    target_value: uint256 = self._normalize_target(_target_amount)
+    retained_route_value: uint256 = (
+        trusted_yield_value + keeper_reward * BACKING_MULTIPLIER
+    )
+    conversion_cost: uint256 = 0
+    if target_value > retained_route_value:
+        conversion_cost = target_value - retained_route_value
+    if conversion_cost > target_value * self.expansion_max_route_loss_bps / BPS:
+        return backing_asset_out, gross_profit, keeper_reward, yield_token_out, False
+
+    entry_margin: uint256 = _crv_usd_amount * self.entry_min_profit_ppm / PPM
+    if trusted_yield_value < _crv_usd_amount + entry_margin:
+        return backing_asset_out, gross_profit, keeper_reward, yield_token_out, False
+    return backing_asset_out, gross_profit, keeper_reward, yield_token_out, True
+
+
+@external
+@view
+def previewExpansion(
+    _crv_usd_amount: uint256,
+) -> (uint256, uint256, uint256, uint256, uint256, bool):
+    assert _crv_usd_amount >= self.min_expansion_amount, "expansion too small"
+    assert _crv_usd_amount <= CRV_USD.balanceOf(self), "insufficient idle"
+
+    deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
+    assert deployed_after <= self.max_deployed_crvusd, "max deployed"
+    assert deployed_after <= FACTORY.debt_ceiling(self), "factory allocation"
+
+    expected_target_out: uint256 = self.target_amm.get_dy(
+        convert(self.target_amm_crvusd_index, int128),
+        convert(self.target_amm_target_index, int128),
+        _crv_usd_amount,
+    )
+    expected_backing_out: uint256 = 0
+    expected_gross_profit: uint256 = 0
+    expected_keeper_reward: uint256 = 0
+    expected_yield_token: uint256 = 0
+    expected_to_deploy: bool = False
+    (
+        expected_backing_out,
+        expected_gross_profit,
+        expected_keeper_reward,
+        expected_yield_token,
+        expected_to_deploy,
+    ) = self._preview_expansion_route(expected_target_out, _crv_usd_amount)
+    if expected_to_deploy:
+        return (
+            expected_target_out,
+            expected_backing_out,
+            expected_gross_profit,
+            expected_keeper_reward,
+            expected_yield_token,
+            True,
+        )
+
+    target_value: uint256 = self._normalize_target(expected_target_out)
+    expected_gross_profit = 0
+    if target_value > _crv_usd_amount:
+        expected_gross_profit = target_value - _crv_usd_amount
+    keeper_reward_value: uint256 = (
+        expected_gross_profit * self.keeper_profit_share_bps / BPS
+    )
+    if keeper_reward_value > self.max_keeper_reward:
+        keeper_reward_value = self.max_keeper_reward
+    expected_keeper_reward = keeper_reward_value / TARGET_MULTIPLIER
+    assert expected_keeper_reward <= expected_target_out, "reward exceeds backing"
+
+    expected_target_retained: uint256 = expected_target_out - expected_keeper_reward
+    entry_margin: uint256 = _crv_usd_amount * self.entry_min_profit_ppm / PPM
+    assert self._normalize_target(expected_target_retained) >= (
+        _crv_usd_amount + entry_margin
+    ), "entry margin"
+    return (
+        expected_target_out,
+        0,
+        expected_gross_profit,
+        expected_keeper_reward,
+        0,
+        False,
+    )
 
 
 @external

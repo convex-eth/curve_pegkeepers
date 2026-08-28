@@ -304,7 +304,9 @@ function previewExpansion(uint256 crvUsdAmount)
     );
 ```
 
-The preview is advisory. A downstream quote can become stale or the route can revert during execution; the state-changing call selects the branch from actual call success and realized balance deltas.
+The preview is advisory. It enforces the same requested-amount, idle-inventory, local-capacity, and Factory-allocation bounds as `expand()`, but it remains callable while execution is paused so keepers and governance can inspect the configured economics. `expectedTargetOut` is the current target-AMM quote. When the configured downstream quotes satisfy route-loss and final-entry-margin checks, `expectedBackingAssetOut` is the gross backing amount immediately before the terminal step, `expectedKeeperReward` is in backing-asset native units, `expectedYieldToken` is the terminal quote after that reward, and `expectedToDeploy` is true. Otherwise the return describes the target-only fallback: `expectedBackingAssetOut` and `expectedYieldToken` are zero, profit is target-denominated, reward is in target-asset native units, and `expectedToDeploy` is false. A route quote call itself may revert rather than manufacture a fallback estimate.
+
+A downstream quote can become stale or the route can revert during execution; the state-changing call therefore selects the branch only from actual call success and realized balance deltas. Preview output never supplies execution minima and cannot weaken any onchain check.
 
 For a completed downstream attempt, the keeper reward is calculated from the measured backing asset present immediately before the terminal yield-acquisition step. The reward is transferred in backing-asset native units before that final step. The route-loss check excludes that deliberate reward from conversion loss while still requiring the final yield position alone to preserve principal plus the entry margin:
 

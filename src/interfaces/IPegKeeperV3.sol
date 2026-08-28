@@ -159,6 +159,17 @@ interface IPegKeeperV3 {
     function expansion_path_step(uint256 index) external view returns (RouteStep memory);
     function contraction_path_step(uint256 index) external view returns (RouteStep memory);
     function available_expansion() external view returns (uint256);
+    function previewExpansion(uint256 crvUsdAmount)
+        external
+        view
+        returns (
+            uint256 expectedTargetOut,
+            uint256 expectedBackingAssetOut,
+            uint256 expectedGrossProfit,
+            uint256 expectedKeeperReward,
+            uint256 expectedYieldToken,
+            bool expectedToDeploy
+        );
     function expand(uint256 crvUsdAmount)
         external
         returns (

@@ -164,6 +164,59 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(pegKeeper.fallback_settlement_gas_reserve(), 100_000);
     }
 
+    function test_previewExpansionPredictsFallbackWithoutChangingState() public {
+        IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        uint256 expectedTarget = pool.get_dy(1, 0, MIN_EXPANSION);
+        uint256 expectedGrossProfit = expectedTarget * 1e12 - MIN_EXPANSION;
+        uint256 expectedReward = (expectedGrossProfit * 3_000 / 10_000) / 1e12;
+        (
+            uint256 targetOut,
+            uint256 backingOut,
+            uint256 grossProfit,
+            uint256 keeperReward,
+            uint256 yieldOut,
+            bool expectedToDeploy
+        ) = previewer.previewExpansion(MIN_EXPANSION);
+
+        assertEq(targetOut, expectedTarget);
+        assertEq(backingOut, 0);
+        assertEq(grossProfit, expectedGrossProfit);
+        assertEq(keeperReward, expectedReward);
+        assertEq(yieldOut, 0);
+        assertFalse(expectedToDeploy);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.last_expansion_at(), 0);
+
+        _enableExpansion(0);
+        vm.prank(keeper);
+        (, uint256 retained,, uint256 realizedReward, bool deployed) =
+            pegKeeper.expand(MIN_EXPANSION);
+        assertEq(retained + realizedReward, targetOut);
+        assertEq(realizedReward, keeperReward);
+        assertFalse(deployed);
+    }
+
+    function test_previewExpansionRejectsTheStateChangingAmountBounds() public {
+        IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
+
+        vm.expectRevert("expansion too small");
+        previewer.previewExpansion(MIN_EXPANSION - 1);
+
+        vm.expectRevert("insufficient idle");
+        previewer.previewExpansion(MIN_EXPANSION);
+
+        crvUsd.mint(address(pegKeeper), MAX_DEPLOYED + 1);
+        factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED + 1);
+        vm.expectRevert("max deployed");
+        previewer.previewExpansion(MAX_DEPLOYED + 1);
+
+        factory.setDebtCeiling(address(pegKeeper), MIN_EXPANSION - 1);
+        vm.expectRevert("factory allocation");
+        previewer.previewExpansion(MIN_EXPANSION);
+    }
+
     function test_rotatedTargetAmmExecutesBothDirectionsWithDiscoveredIndices() public {
         ExpansionPool replacement = new ExpansionPool(crvUsd, targetAsset);
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
