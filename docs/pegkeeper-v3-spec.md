@@ -1195,7 +1195,7 @@ Required controls:
 - pause keeper buyback;
 - lower `maxDeployedCrvUsd` to stop further exposure growth;
 - governance updates to `maxDeployedCrvUsd`;
-- atomic governance replacement of the target AMM and paths while preserving fixed token endpoints;
+- governance replacement of the target AMM and atomic replacement of both paths while preserving fixed token endpoints;
 - direct per-PegKeeper `feeReceiver` update independent of any regulator receiver;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, `targetAmmExecutionBufferBps`, `minDownstreamAttemptGas`, and `fallbackSettlementGasReserve`;
 - approval revocation for retired venues;
@@ -1203,6 +1203,39 @@ Required controls:
 - expansion pause for contraction-only slow wind-down.
 
 Setting `expansionPaused = true` is the complete slow-wind-down switch. It blocks new crvUSD sales and crvUSD surplus claims because both increase externalized exposure, but it does not disable direct buyback or either keeper contraction path. Reacquired crvUSD remains idle and governance may lower the Factory ceiling to burn it. V3 does not need a separate global-shutdown state or a prescribed migration state machine.
+
+The target AMM is a replaceable venue while its token endpoints remain fixed:
+
+```solidity
+function set_target_amm(address newTargetAmm, uint256 executionBufferBps) external;
+```
+
+The owner-only call requires the replacement's two `coins()` entries to be exactly `crvUSD` and `targetAsset`, discovers either valid index order, bounds the target-AMM execution buffer to `10_000 bps`, and updates the venue, indices, and buffer atomically. It cannot change either token. Expansion and undeployed-backing contraction both read the current venue and discovered indices. The directional typed paths do not store or depend on the target-AMM address, so replacing this fixed-pair venue separately from `setPaths()` cannot create a token-endpoint mismatch; a governance proposal may still invoke both setters in one execution when changing the whole venue bundle.
+
+The implemented mutable policy surface is one atomic owner call rather than eight independent setters:
+
+```solidity
+function set_policy(
+    uint256 entryMinProfitPpm,
+    uint256 normalExitMinProfitPpm,
+    uint256 earlyExitMinProfitPpm,
+    uint256 keeperProfitShareBps,
+    uint256 maxKeeperReward,
+    uint256 minDeploymentTime,
+    uint256 minExpansionAmount,
+    uint256 maxDeployedCrvUsd
+) external;
+```
+
+It requires `earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm`, bounds every margin to at most `1_000_000 ppm`, bounds the keeper share to `10_000 bps`, and rejects zero minimum expansion or zero configured exposure capacity. Zero entry margin, zero keeper compensation, and zero maturity delay remain valid governance policies. Governance may lower `maxDeployedCrvUsd` below current exposure to stop growth immediately; this does not rewrite existing exposure and does not disable contraction.
+
+Governance and the distinct pause-only emergency role can be rotated atomically:
+
+```solidity
+function set_roles(address newAdmin, address newEmergencyAdmin) external;
+```
+
+The call rejects zero or overlapping roles and takes effect immediately under the DAO's existing governance delay. Venue approvals are exact and normally reset to zero in the same conversion. If a non-standard venue leaves an approval requiring manual cleanup, the owner can revoke it through the existing bounded `execute()` escape hatch; no redundant approval-management surface is required.
 
 ## Owner execute escape hatch
 
@@ -1287,6 +1320,13 @@ event ExpansionConfigUpdated(
     uint256 minDownstreamAttemptGas,
     uint256 fallbackSettlementGasReserve
 );
+event TargetAmmUpdated(
+    address indexed oldTargetAmm,
+    address indexed newTargetAmm,
+    uint256 crvUsdIndex,
+    uint256 targetIndex,
+    uint256 executionBufferBps
+);
 event DirectionPaused(uint256 indexed direction, bool paused);
 event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 event SurplusClaimed(
@@ -1305,7 +1345,7 @@ event Executed(
 
 ## Invariants
 
-1. `deployedCrvUsd` includes both AMM-sold crvUSD and crvUSD paid to the FeeSplitter, and never exceeds Factory allocation or configured capacity.
+1. Expansion and surplus claims cannot increase `deployedCrvUsd` above the then-current Factory allocation or configured capacity. Governance may lower either ceiling below existing exposure without rewriting `deployedCrvUsd`; while that condition persists, exposure growth remains blocked and contraction paths remain available to reduce it.
 2. Expansion and surplus claims cannot spend more eligible idle crvUSD than V3 owns.
 3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
 4. `undeployedBacking` changes only through measured fallback retention, measured spending, successful typed deployment, or governance reconciliation.

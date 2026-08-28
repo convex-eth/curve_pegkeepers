@@ -21,6 +21,13 @@ interface IPegKeeperV3 {
         uint256 minDownstreamAttemptGas,
         uint256 fallbackSettlementGasReserve
     );
+    event TargetAmmUpdated(
+        address indexed oldTargetAmm,
+        address indexed newTargetAmm,
+        uint256 crvUsdIndex,
+        uint256 targetIndex,
+        uint256 executionBufferBps
+    );
     event Expanded(
         address indexed keeper,
         uint256 crvUsdSold,
@@ -53,6 +60,19 @@ interface IPegKeeperV3 {
         uint256 deployedCrvUsdAfter
     );
     event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
+    event PolicyUpdated(
+        uint256 entryMinProfitPpm,
+        uint256 normalExitMinProfitPpm,
+        uint256 earlyExitMinProfitPpm,
+        uint256 keeperProfitShareBps,
+        uint256 maxKeeperReward,
+        uint256 minDeploymentTime,
+        uint256 minExpansionAmount,
+        uint256 maxDeployedCrvUsd
+    );
+    event RolesUpdated(
+        address indexed oldAdmin, address indexed newAdmin, address indexed newEmergencyAdmin
+    );
     event PathsUpdated(
         bytes32 indexed expansionPathHash,
         bytes32 indexed contractionPathHash,
@@ -67,7 +87,7 @@ interface IPegKeeperV3 {
     );
 
     function version() external view returns (string memory);
-    function MAX_ROUTE_STEPS() external pure returns (uint256);
+    function MAX_ROUTE_STEPS() external view returns (uint256);
 
     function factory() external view returns (address);
     function crv_usd() external view returns (address);
@@ -110,12 +130,24 @@ interface IPegKeeperV3 {
     function all_execution_paused() external view returns (bool);
 
     function set_direction_paused(uint256 direction, bool paused) external;
+    function set_target_amm(address newTargetAmm, uint256 executionBufferBps) external;
     function set_expansion_config(
         uint256 targetAmmExecutionBufferBps,
         uint256 minDownstreamAttemptGas,
         uint256 fallbackSettlementGasReserve
     ) external;
     function set_fee_receiver(address newFeeReceiver) external;
+    function set_policy(
+        uint256 entryMinProfitPpm,
+        uint256 normalExitMinProfitPpm,
+        uint256 earlyExitMinProfitPpm,
+        uint256 keeperProfitShareBps,
+        uint256 maxKeeperReward,
+        uint256 minDeploymentTime,
+        uint256 minExpansionAmount,
+        uint256 maxDeployedCrvUsd
+    ) external;
+    function set_roles(address newAdmin, address newEmergencyAdmin) external;
     function setPaths(
         RouteStep[] calldata expansionSteps,
         uint256 expansionMaxRouteLossBps,

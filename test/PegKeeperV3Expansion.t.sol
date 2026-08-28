@@ -164,6 +164,30 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(pegKeeper.fallback_settlement_gas_reserve(), 100_000);
     }
 
+    function test_rotatedTargetAmmExecutesBothDirectionsWithDiscoveredIndices() public {
+        ExpansionPool replacement = new ExpansionPool(crvUsd, targetAsset);
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        vm.prank(governance);
+        pegKeeper.set_target_amm(address(replacement), 0);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        assertEq(crvUsd.balanceOf(address(replacement)), MIN_EXPANSION);
+        assertEq(crvUsd.balanceOf(address(pool)), 0);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        vm.prank(keeper);
+        pegKeeper.contractUndeployedBacking(1_000e6);
+
+        assertEq(targetAsset.balanceOf(address(replacement)), 1_000e6);
+        assertEq(targetAsset.balanceOf(address(pool)), 0);
+        assertLt(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+    }
+
     function test_availableExpansionUsesIdleFactoryAndConfiguredBounds() public {
         crvUsd.mint(address(pegKeeper), 20_000_000e18);
         factory.setDebtCeiling(address(pegKeeper), 18_000_000e18);
@@ -344,6 +368,29 @@ contract PegKeeperV3ExpansionTest is Test {
         vm.prank(keeper);
         vm.expectRevert("max deployed");
         pegKeeper.expand(amount);
+    }
+
+    function test_loweringCapacityBelowExposureStopsGrowthWithoutBlockingWindDown() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+
+        vm.prank(governance);
+        pegKeeper.set_policy(
+            50, 1_000, 5_000, 3_000, 20e18, 2 days, MIN_EXPANSION, MIN_EXPANSION - 1
+        );
+        assertEq(pegKeeper.available_expansion(), 0);
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        vm.prank(keeper);
+        pegKeeper.contractUndeployedBacking(1_000e6);
+
+        assertLt(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
     }
 
     function test_onlyAdminCanConfigureExpansion() public {

@@ -72,6 +72,13 @@ event ExpansionConfigUpdated:
     min_downstream_attempt_gas: uint256
     fallback_settlement_gas_reserve: uint256
 
+event TargetAmmUpdated:
+    old_target_amm: indexed(address)
+    new_target_amm: indexed(address)
+    crv_usd_index: uint256
+    target_index: uint256
+    execution_buffer_bps: uint256
+
 event Expanded:
     keeper: indexed(address)
     crv_usd_sold: uint256
@@ -110,6 +117,21 @@ event FeeReceiverUpdated:
     old_receiver: indexed(address)
     new_receiver: indexed(address)
 
+event PolicyUpdated:
+    entry_min_profit_ppm: uint256
+    normal_exit_min_profit_ppm: uint256
+    early_exit_min_profit_ppm: uint256
+    keeper_profit_share_bps: uint256
+    max_keeper_reward: uint256
+    min_deployment_time: uint256
+    min_expansion_amount: uint256
+    max_deployed_crvusd: uint256
+
+event RolesUpdated:
+    old_admin: indexed(address)
+    new_admin: indexed(address)
+    new_emergency_admin: indexed(address)
+
 event PathsUpdated:
     expansion_path_hash: indexed(bytes32)
     contraction_path_hash: indexed(bytes32)
@@ -142,7 +164,7 @@ DIRECTION_ALL: constant(uint256) = 5
 
 FACTORY: immutable(ControllerFactory)
 CRV_USD: immutable(ERC20)
-TARGET_AMM: immutable(TwoCoinPool)
+target_amm: public(TwoCoinPool)
 TARGET_ASSET: immutable(ERC20)
 BACKING_ASSET: immutable(ERC20)
 YIELD_TOKEN: immutable(YieldToken)
@@ -234,7 +256,7 @@ def __init__(
 
     FACTORY = _factory
     CRV_USD = ERC20(crv_usd)
-    TARGET_AMM = _target_amm
+    self.target_amm = _target_amm
     TARGET_ASSET = _target_asset
     BACKING_ASSET = _backing_asset
     YIELD_TOKEN = _yield_token
@@ -273,12 +295,6 @@ def factory() -> address:
 @pure
 def crv_usd() -> address:
     return CRV_USD.address
-
-
-@external
-@pure
-def target_amm() -> address:
-    return TARGET_AMM.address
 
 
 @external
@@ -502,7 +518,7 @@ def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, 
 
     target_index: int128 = convert(self.target_amm_target_index, int128)
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
-    expected_crv_usd: uint256 = TARGET_AMM.get_dy(
+    expected_crv_usd: uint256 = self.target_amm.get_dy(
         target_index,
         crv_usd_index,
         _target_amount,
@@ -569,6 +585,39 @@ def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uin
 
 
 @external
+def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256):
+    assert msg.sender == self.admin, "not admin"
+    assert _new_target_amm.address != empty(address), "target amm=0"
+    assert _execution_buffer_bps <= BPS, "buffer too high"
+
+    coin_0: address = _new_target_amm.coins(0)
+    coin_1: address = _new_target_amm.coins(1)
+    crv_usd_index: uint256 = 0
+    target_index: uint256 = 0
+    if coin_0 == CRV_USD.address and coin_1 == TARGET_ASSET.address:
+        crv_usd_index = 0
+        target_index = 1
+    elif coin_0 == TARGET_ASSET.address and coin_1 == CRV_USD.address:
+        crv_usd_index = 1
+        target_index = 0
+    else:
+        raise "bad target pair"
+
+    old_target_amm: address = self.target_amm.address
+    self.target_amm = _new_target_amm
+    self.target_amm_crvusd_index = crv_usd_index
+    self.target_amm_target_index = target_index
+    self.target_amm_execution_buffer_bps = _execution_buffer_bps
+    log TargetAmmUpdated(
+        old_target_amm,
+        _new_target_amm.address,
+        crv_usd_index,
+        target_index,
+        _execution_buffer_bps,
+    )
+
+
+@external
 def set_expansion_config(
     _target_amm_execution_buffer_bps: uint256,
     _min_downstream_attempt_gas: uint256,
@@ -606,7 +655,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
     target_index: int128 = convert(self.target_amm_target_index, int128)
-    target_quote: uint256 = TARGET_AMM.get_dy(
+    target_quote: uint256 = self.target_amm.get_dy(
         crv_usd_index,
         target_index,
         _crv_usd_amount,
@@ -616,14 +665,14 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     ) / BPS
 
     target_before: uint256 = TARGET_ASSET.balanceOf(self)
-    CRV_USD.approve(TARGET_AMM.address, _crv_usd_amount)
-    TARGET_AMM.exchange(
+    CRV_USD.approve(self.target_amm.address, _crv_usd_amount)
+    self.target_amm.exchange(
         crv_usd_index,
         target_index,
         _crv_usd_amount,
         target_minimum,
     )
-    CRV_USD.approve(TARGET_AMM.address, 0)
+    CRV_USD.approve(self.target_amm.address, 0)
 
     crv_usd_after: uint256 = CRV_USD.balanceOf(self)
     assert crv_usd_before >= crv_usd_after, "bad crvUSD delta"
@@ -756,7 +805,7 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
 
     target_index: int128 = convert(self.target_amm_target_index, int128)
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
-    crv_usd_quote: uint256 = TARGET_AMM.get_dy(
+    crv_usd_quote: uint256 = self.target_amm.get_dy(
         target_index,
         crv_usd_index,
         _target_amount,
@@ -766,14 +815,14 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     ) / BPS
 
     crv_usd_before: uint256 = CRV_USD.balanceOf(self)
-    TARGET_ASSET.approve(TARGET_AMM.address, _target_amount)
-    TARGET_AMM.exchange(
+    TARGET_ASSET.approve(self.target_amm.address, _target_amount)
+    self.target_amm.exchange(
         target_index,
         crv_usd_index,
         _target_amount,
         crv_usd_minimum,
     )
-    TARGET_ASSET.approve(TARGET_AMM.address, 0)
+    TARGET_ASSET.approve(self.target_amm.address, 0)
 
     target_after: uint256 = TARGET_ASSET.balanceOf(self)
     assert target_before >= target_after, "bad target spend"
@@ -1275,6 +1324,59 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         early_exit,
     )
     return yield_token_spent, crv_usd_received, keeper_reward
+
+
+@external
+def set_policy(
+    _entry_min_profit_ppm: uint256,
+    _normal_exit_min_profit_ppm: uint256,
+    _early_exit_min_profit_ppm: uint256,
+    _keeper_profit_share_bps: uint256,
+    _max_keeper_reward: uint256,
+    _min_deployment_time: uint256,
+    _min_expansion_amount: uint256,
+    _max_deployed_crvusd: uint256,
+):
+    assert msg.sender == self.admin, "not admin"
+    assert _early_exit_min_profit_ppm <= PPM, "margin ppm"
+    assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm, "normal below entry"
+    assert _early_exit_min_profit_ppm > _normal_exit_min_profit_ppm, "early not higher"
+    assert _keeper_profit_share_bps <= BPS, "keeper share"
+    assert _min_expansion_amount > 0, "min expansion=0"
+    assert _max_deployed_crvusd > 0, "max deployed=0"
+
+    self.entry_min_profit_ppm = _entry_min_profit_ppm
+    self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
+    self.early_exit_min_profit_ppm = _early_exit_min_profit_ppm
+    self.keeper_profit_share_bps = _keeper_profit_share_bps
+    self.max_keeper_reward = _max_keeper_reward
+    self.min_deployment_time = _min_deployment_time
+    self.min_expansion_amount = _min_expansion_amount
+    self.max_deployed_crvusd = _max_deployed_crvusd
+
+    log PolicyUpdated(
+        _entry_min_profit_ppm,
+        _normal_exit_min_profit_ppm,
+        _early_exit_min_profit_ppm,
+        _keeper_profit_share_bps,
+        _max_keeper_reward,
+        _min_deployment_time,
+        _min_expansion_amount,
+        _max_deployed_crvusd,
+    )
+
+
+@external
+def set_roles(_new_admin: address, _new_emergency_admin: address):
+    assert msg.sender == self.admin, "not admin"
+    assert _new_admin != empty(address), "admin=0"
+    assert _new_emergency_admin != empty(address), "emergency admin=0"
+    assert _new_admin != _new_emergency_admin, "roles overlap"
+
+    old_admin: address = self.admin
+    self.admin = _new_admin
+    self.emergency_admin = _new_emergency_admin
+    log RolesUpdated(old_admin, _new_admin, _new_emergency_admin)
 
 
 @external
