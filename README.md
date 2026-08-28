@@ -124,7 +124,9 @@ The production implementation is proceeding in verified Vyper `0.3.10` slices. T
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The verified `PegKeeperV3` deployed runtime is `21,387` bytes, leaving `3,189` bytes below the EIP-170 limit of `24,576`; `PegKeeperV3RuntimeSizeTest` and `forge build --sizes` enforce and report that bound.
+
+Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
 ```bash
 git submodule update --init --recursive
@@ -174,6 +176,7 @@ test/
 ├── PegKeeperV3Policy.t.sol
 ├── PegKeeperV3RoutesFork.t.sol
 ├── PegKeeperV3Routes.t.sol
+├── PegKeeperV3RuntimeSize.t.sol
 ├── PegKeeperV3SurplusFork.t.sol
 ├── PegKeeperV3Surplus.t.sol
 ├── PegKeeperV3UndeployedContractionFork.t.sol
@@ -219,6 +222,10 @@ Exercises the first economic V3 branch against a deterministic two-coin pool. It
 ### `PegKeeperV3PolicyTest`
 
 Verifies the atomic governance policy surface, margin ordering and ppm bounds, keeper-share and exposure limits, zero-reward and zero-delay policies, validated target-AMM rotation with either pair order, immediate role rotation, distinct emergency authority, event fields, and rejection of unauthorized, zero-address, bad-pair, excessive-buffer, or overlapping-role updates.
+
+### `PegKeeperV3RuntimeSizeTest`
+
+Loads the compiled deployed bytecode and fails if `PegKeeperV3` exceeds the `24,576`-byte EIP-170 runtime limit.
 
 ### `PegKeeperV3ExpansionForkTest`
 

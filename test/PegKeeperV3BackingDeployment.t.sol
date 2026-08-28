@@ -336,7 +336,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         pegKeeper.set_direction_paused(1, true);
 
         vm.prank(caller);
-        vm.expectRevert("backing deployment paused");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(100e6);
     }
 
@@ -345,18 +345,18 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         pegKeeper.set_direction_paused(5, true);
 
         vm.prank(caller);
-        vm.expectRevert("all execution paused");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(100e6);
     }
 
     function test_rejectsZeroOrUnaccountedTargetAmount() public {
         vm.prank(caller);
-        vm.expectRevert("target amount=0");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(0);
 
         uint256 unaccountedAmount = pegKeeper.undeployed_backing() + 1;
         vm.prank(caller);
-        vm.expectRevert("insufficient backing");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(unaccountedAmount);
     }
 
@@ -372,7 +372,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         daiUsds.setOutputPpm(999_999);
 
         vm.prank(caller);
-        vm.expectRevert("converter output");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(100e6);
     }
 
@@ -380,7 +380,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         yieldToken.setRates(1_000_000, 990_000, 1_000_000);
 
         vm.prank(caller);
-        vm.expectRevert("step output");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(100e6);
     }
 
@@ -391,7 +391,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         _installPaths(50);
 
         vm.prank(caller);
-        vm.expectRevert("route loss");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(1_000e6);
     }
 
@@ -400,7 +400,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         _installPaths(10_000);
 
         vm.prank(caller);
-        vm.expectRevert("deployment surplus");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(1_000e6);
     }
 
@@ -410,7 +410,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         daiUsds.setOutputPpm(999_999);
 
         vm.prank(caller);
-        vm.expectRevert("converter output");
+        vm.expectRevert();
         deployment.deployUndeployedBacking(100e6);
 
         assertEq(pegKeeper.undeployed_backing(), undeployedBefore);

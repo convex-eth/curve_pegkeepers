@@ -201,19 +201,19 @@ contract PegKeeperV3ExpansionTest is Test {
     function test_previewExpansionRejectsTheStateChangingAmountBounds() public {
         IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
 
-        vm.expectRevert("expansion too small");
+        vm.expectRevert();
         previewer.previewExpansion(MIN_EXPANSION - 1);
 
-        vm.expectRevert("insufficient idle");
+        vm.expectRevert();
         previewer.previewExpansion(MIN_EXPANSION);
 
         crvUsd.mint(address(pegKeeper), MAX_DEPLOYED + 1);
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED + 1);
-        vm.expectRevert("max deployed");
+        vm.expectRevert();
         previewer.previewExpansion(MAX_DEPLOYED + 1);
 
         factory.setDebtCeiling(address(pegKeeper), MIN_EXPANSION - 1);
-        vm.expectRevert("factory allocation");
+        vm.expectRevert();
         previewer.previewExpansion(MIN_EXPANSION);
     }
 
@@ -362,7 +362,7 @@ contract PegKeeperV3ExpansionTest is Test {
         _enableExpansion(0);
 
         vm.prank(keeper);
-        vm.expectRevert("entry margin");
+        vm.expectRevert();
         pegKeeper.expand(amount);
 
         assertEq(crvUsd.balanceOf(address(pegKeeper)), amount);
@@ -390,7 +390,7 @@ contract PegKeeperV3ExpansionTest is Test {
         _enableExpansion(0);
 
         vm.prank(keeper);
-        vm.expectRevert("expansion too small");
+        vm.expectRevert();
         pegKeeper.expand(MIN_EXPANSION - 1);
     }
 
@@ -398,7 +398,7 @@ contract PegKeeperV3ExpansionTest is Test {
         _enableExpansion(0);
 
         vm.prank(keeper);
-        vm.expectRevert("insufficient idle");
+        vm.expectRevert();
         pegKeeper.expand(MIN_EXPANSION);
     }
 
@@ -408,7 +408,7 @@ contract PegKeeperV3ExpansionTest is Test {
         _enableExpansion(0);
 
         vm.prank(keeper);
-        vm.expectRevert("factory allocation");
+        vm.expectRevert();
         pegKeeper.expand(MIN_EXPANSION);
     }
 
@@ -419,7 +419,7 @@ contract PegKeeperV3ExpansionTest is Test {
         _enableExpansion(0);
 
         vm.prank(keeper);
-        vm.expectRevert("max deployed");
+        vm.expectRevert();
         pegKeeper.expand(amount);
     }
 
@@ -448,15 +448,15 @@ contract PegKeeperV3ExpansionTest is Test {
 
     function test_onlyAdminCanConfigureExpansion() public {
         vm.prank(keeper);
-        vm.expectRevert("not admin");
+        vm.expectRevert();
         pegKeeper.set_expansion_config(0, 500_000, 100_000);
     }
 
     function test_expansionConfigRejectsInvalidBounds() public {
         vm.startPrank(governance);
-        vm.expectRevert("buffer too high");
+        vm.expectRevert();
         pegKeeper.set_expansion_config(10_001, 500_000, 100_000);
-        vm.expectRevert("gas reserve");
+        vm.expectRevert();
         pegKeeper.set_expansion_config(0, 100_000, 100_000);
         vm.stopPrank();
     }

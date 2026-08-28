@@ -67,22 +67,30 @@ contract PegKeeperV3PolicyTest is Test {
         assertEq(pegKeeper.min_deployment_time(), 0);
     }
 
-    function test_policyRejectsUnauthorizedCaller() public {
+    function test_policyRejectsUnauthorizedCallerWithBareVyperRevert() public {
         vm.prank(makeAddr("keeper"));
-        vm.expectRevert("not admin");
-        pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        (bool success, bytes memory revertData) = address(pegKeeper)
+            .call(
+                abi.encodeCall(
+                    IPegKeeperV3.set_policy,
+                    (25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18)
+                )
+            );
+
+        assertFalse(success);
+        assertEq(revertData.length, 0);
     }
 
     function test_policyRejectsInvalidMarginOrderingAndBounds() public {
         vm.startPrank(governance);
 
-        vm.expectRevert("normal below entry");
+        vm.expectRevert();
         pegKeeper.set_policy(751, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
 
-        vm.expectRevert("early not higher");
+        vm.expectRevert();
         pegKeeper.set_policy(25, 750, 750, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
 
-        vm.expectRevert("margin ppm");
+        vm.expectRevert();
         pegKeeper.set_policy(25, 750, 1_000_001, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
 
         vm.stopPrank();
@@ -91,13 +99,13 @@ contract PegKeeperV3PolicyTest is Test {
     function test_policyRejectsInvalidRewardAndExposureBounds() public {
         vm.startPrank(governance);
 
-        vm.expectRevert("keeper share");
+        vm.expectRevert();
         pegKeeper.set_policy(25, 750, 7_500, 10_001, 12e18, 3 days, 50_000e18, 10_000_000e18);
 
-        vm.expectRevert("min expansion=0");
+        vm.expectRevert();
         pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 0, 10_000_000e18);
 
-        vm.expectRevert("max deployed=0");
+        vm.expectRevert();
         pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 0);
 
         vm.stopPrank();
@@ -122,17 +130,17 @@ contract PegKeeperV3PolicyTest is Test {
         MockTwoCoinPool wrongPair = new MockTwoCoinPool(address(backingAsset), address(targetAsset));
 
         vm.prank(makeAddr("keeper"));
-        vm.expectRevert("not admin");
+        vm.expectRevert();
         pegKeeper.set_target_amm(address(replacement), 7);
 
         vm.startPrank(governance);
-        vm.expectRevert("target amm=0");
+        vm.expectRevert();
         pegKeeper.set_target_amm(address(0), 7);
 
-        vm.expectRevert("buffer too high");
+        vm.expectRevert();
         pegKeeper.set_target_amm(address(replacement), 10_001);
 
-        vm.expectRevert("bad target pair");
+        vm.expectRevert();
         pegKeeper.set_target_amm(address(wrongPair), 7);
         vm.stopPrank();
 
@@ -154,7 +162,7 @@ contract PegKeeperV3PolicyTest is Test {
         assertEq(pegKeeper.emergency_admin(), newEmergencyAdmin);
 
         vm.prank(governance);
-        vm.expectRevert("not admin");
+        vm.expectRevert();
         pegKeeper.set_fee_receiver(makeAddr("oldAdminReceiver"));
 
         vm.prank(newAdmin);
@@ -165,7 +173,7 @@ contract PegKeeperV3PolicyTest is Test {
         assertTrue(pegKeeper.direct_buyback_paused());
 
         vm.prank(emergencyAdmin);
-        vm.expectRevert("not authorized");
+        vm.expectRevert();
         pegKeeper.set_direction_paused(3, true);
     }
 
@@ -174,17 +182,17 @@ contract PegKeeperV3PolicyTest is Test {
         address newEmergencyAdmin = makeAddr("newEmergencyAdmin");
 
         vm.prank(makeAddr("keeper"));
-        vm.expectRevert("not admin");
+        vm.expectRevert();
         pegKeeper.set_roles(newAdmin, newEmergencyAdmin);
 
         vm.startPrank(governance);
-        vm.expectRevert("admin=0");
+        vm.expectRevert();
         pegKeeper.set_roles(address(0), newEmergencyAdmin);
 
-        vm.expectRevert("emergency admin=0");
+        vm.expectRevert();
         pegKeeper.set_roles(newAdmin, address(0));
 
-        vm.expectRevert("roles overlap");
+        vm.expectRevert();
         pegKeeper.set_roles(newAdmin, newAdmin);
         vm.stopPrank();
     }

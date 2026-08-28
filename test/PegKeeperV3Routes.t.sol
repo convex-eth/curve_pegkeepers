@@ -98,7 +98,7 @@ contract PegKeeperV3RoutesTest is Test {
 
     function test_onlyGovernanceCanSetPaths() public {
         vm.prank(keeper);
-        vm.expectRevert("not admin");
+        vm.expectRevert();
         routes.setPaths(_expansionPath(), 25, _contractionPath());
     }
 
@@ -153,7 +153,7 @@ contract PegKeeperV3RoutesTest is Test {
         IPegKeeperV3.RouteStep[] memory empty = new IPegKeeperV3.RouteStep[](0);
 
         vm.prank(governance);
-        vm.expectRevert("empty expansion path");
+        vm.expectRevert();
         routes.setPaths(empty, 25, _contractionPath());
     }
 
@@ -162,7 +162,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[0].tokenIn = address(dai);
 
         vm.prank(governance);
-        vm.expectRevert("expansion start");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -171,7 +171,7 @@ contract PegKeeperV3RoutesTest is Test {
         contraction[contraction.length - 1].tokenOut = address(dai);
 
         vm.prank(governance);
-        vm.expectRevert("contraction end");
+        vm.expectRevert();
         routes.setPaths(_expansionPath(), 25, contraction);
     }
 
@@ -180,7 +180,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[1].tokenIn = address(targetAsset);
 
         vm.prank(governance);
-        vm.expectRevert("path discontinuity");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -190,7 +190,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[0].poolIndexOut = 0;
 
         vm.prank(governance);
-        vm.expectRevert("curve tokenIn");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -199,7 +199,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[1].executionBufferBps = 1;
 
         vm.prank(governance);
-        vm.expectRevert("converter buffer");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -208,7 +208,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[0].executionBufferBps = 10_001;
 
         vm.prank(governance);
-        vm.expectRevert("step buffer too high");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -217,7 +217,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[0].kind = 4;
 
         vm.prank(governance);
-        vm.expectRevert("unknown step");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -236,7 +236,7 @@ contract PegKeeperV3RoutesTest is Test {
         expansion[1].tokenOut = address(dai);
 
         vm.prank(governance);
-        vm.expectRevert("terminal backing");
+        vm.expectRevert();
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
@@ -246,13 +246,13 @@ contract PegKeeperV3RoutesTest is Test {
         contraction[1].tokenIn = address(dai);
 
         vm.prank(governance);
-        vm.expectRevert("initial backing");
+        vm.expectRevert();
         routes.setPaths(_expansionPath(), 25, contraction);
     }
 
     function test_expansionRouteLossCannotExceedDenominator() public {
         vm.prank(governance);
-        vm.expectRevert("route loss too high");
+        vm.expectRevert();
         routes.setPaths(_expansionPath(), 10_001, _contractionPath());
     }
 
@@ -264,7 +264,7 @@ contract PegKeeperV3RoutesTest is Test {
         contraction[1].executionBufferBps = 1;
 
         vm.prank(governance);
-        vm.expectRevert("converter buffer");
+        vm.expectRevert();
         routes.setPaths(expansion, 50, contraction);
 
         assertEq(routes.expansion_max_route_loss_bps(), 25);

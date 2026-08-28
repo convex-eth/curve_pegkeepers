@@ -218,30 +218,30 @@ def __init__(
     _emergency_admin: address,
     _max_deployed_crvusd: uint256,
 ):
-    assert _factory.address != empty(address), "factory=0"
-    assert _target_amm.address != empty(address), "target amm=0"
-    assert _target_asset.address != empty(address), "target asset=0"
-    assert _backing_asset.address != empty(address), "backing asset=0"
-    assert _yield_token.address != empty(address), "yield token=0"
-    assert _fee_receiver != empty(address), "fee receiver=0"
-    assert _admin != empty(address), "admin=0"
-    assert _emergency_admin != empty(address), "emergency admin=0"
-    assert _admin != _emergency_admin, "roles overlap"
-    assert _max_deployed_crvusd > 0, "max deployed=0"
+    assert _factory.address != empty(address)
+    assert _target_amm.address != empty(address)
+    assert _target_asset.address != empty(address)
+    assert _backing_asset.address != empty(address)
+    assert _yield_token.address != empty(address)
+    assert _fee_receiver != empty(address)
+    assert _admin != empty(address)
+    assert _emergency_admin != empty(address)
+    assert _admin != _emergency_admin
+    assert _max_deployed_crvusd > 0
 
     crv_usd: address = _factory.stablecoin()
-    assert crv_usd != empty(address), "crvUSD=0"
-    assert crv_usd != _target_asset.address, "identical pair"
-    assert _yield_token.asset() == _backing_asset.address, "yield asset mismatch"
-    assert _yield_token.convertToAssets(0) == 0, "bad asset conversion"
-    assert _yield_token.convertToShares(0) == 0, "bad share conversion"
+    assert crv_usd != empty(address)
+    assert crv_usd != _target_asset.address
+    assert _yield_token.asset() == _backing_asset.address
+    assert _yield_token.convertToAssets(0) == 0
+    assert _yield_token.convertToShares(0) == 0
 
     crv_decimals: uint256 = ERC20(crv_usd).decimals()
     target_decimals: uint256 = _target_asset.decimals()
     backing_decimals: uint256 = _backing_asset.decimals()
-    assert crv_decimals == 18, "crvUSD decimals"
-    assert target_decimals <= 18, "target decimals>18"
-    assert backing_decimals <= 18, "backing decimals>18"
+    assert crv_decimals == 18
+    assert target_decimals <= 18
+    assert backing_decimals <= 18
 
     coin_0: address = _target_amm.coins(0)
     coin_1: address = _target_amm.coins(1)
@@ -252,7 +252,7 @@ def __init__(
         self.target_amm_crvusd_index = 1
         self.target_amm_target_index = 0
     else:
-        raise "bad target pair"
+        raise
 
     FACTORY = _factory
     CRV_USD = ERC20(crv_usd)
@@ -320,7 +320,7 @@ def yield_token() -> address:
 def coins(_index: uint256) -> address:
     if _index == 0:
         return CRV_USD.address
-    assert _index == 1, "coin index"
+    assert _index == 1
     return YIELD_TOKEN.address
 
 
@@ -395,12 +395,12 @@ def _is_early_exit() -> bool:
 @internal
 @view
 def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
-    assert _crv_usd_amount > 0, "crvUSD amount=0"
+    assert _crv_usd_amount > 0
     deployed_before: uint256 = self.deployed_crvusd
-    assert _crv_usd_amount <= deployed_before, "exposure amount"
+    assert _crv_usd_amount <= deployed_before
 
     accounted_before: uint256 = self.accounted_yield_token_units
-    assert YIELD_TOKEN.balanceOf(self) >= accounted_before, "insufficient yield balance"
+    assert YIELD_TOKEN.balanceOf(self) >= accounted_before
 
     early_exit: bool = self._is_early_exit()
     exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
@@ -413,29 +413,29 @@ def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
         + (_crv_usd_amount % denominator) * PPM / denominator
     )
     payout_assets: uint256 = payout_budget / BACKING_MULTIPLIER
-    assert payout_assets > 1, "payout too small"
+    assert payout_assets > 1
 
     yield_token_out: uint256 = YIELD_TOKEN.convertToShares(payout_assets - 1)
-    assert yield_token_out > 0, "payout too small"
-    assert yield_token_out <= accounted_before, "insufficient yield"
+    assert yield_token_out > 0
+    assert yield_token_out <= accounted_before
 
     trusted_before: uint256 = self._trusted_yield_value(accounted_before)
     trusted_after: uint256 = self._trusted_yield_value(accounted_before - yield_token_out)
-    assert trusted_before >= trusted_after, "yield value increased"
+    assert trusted_before >= trusted_after
     trusted_value_removed: uint256 = trusted_before - trusted_after
     required_exit_profit: uint256 = (
         trusted_value_removed / PPM * exit_margin_ppm
         + (trusted_value_removed % PPM) * exit_margin_ppm / PPM
     )
-    assert _crv_usd_amount >= trusted_value_removed, "exit margin"
-    assert _crv_usd_amount - trusted_value_removed >= required_exit_profit, "exit margin"
+    assert _crv_usd_amount >= trusted_value_removed
+    assert _crv_usd_amount - trusted_value_removed >= required_exit_profit
 
     trusted_total_before: uint256 = self._trusted_backing_value()
-    assert trusted_total_before >= trusted_value_removed, "insufficient backing"
+    assert trusted_total_before >= trusted_value_removed
     assert (
         trusted_total_before - trusted_value_removed
         >= deployed_before - _crv_usd_amount
-    ), "insufficient backing"
+    )
 
     return yield_token_out, required_exit_profit, early_exit
 
@@ -449,14 +449,14 @@ def previewBuyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
 @external
 @nonreentrant("lock")
 def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.direct_buyback_paused, "direct buyback paused"
+    assert not self.all_execution_paused
+    assert not self.direct_buyback_paused
 
     expected_yield_token_out: uint256 = 0
     ignored_exit_profit: uint256 = 0
     early_exit: bool = False
     expected_yield_token_out, ignored_exit_profit, early_exit = self._preview_buyback(_crv_usd_amount)
-    assert expected_yield_token_out >= _min_yield_token_out, "min yield out"
+    assert expected_yield_token_out >= _min_yield_token_out
 
     accounted_before: uint256 = self.accounted_yield_token_units
     deployed_before: uint256 = self.deployed_crvusd
@@ -469,26 +469,26 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
     CRV_USD.transferFrom(msg.sender, self, _crv_usd_amount)
     crv_usd_after: uint256 = CRV_USD.balanceOf(self)
     caller_crv_usd_after: uint256 = CRV_USD.balanceOf(msg.sender)
-    assert crv_usd_after >= crv_usd_before, "bad crvUSD receipt"
+    assert crv_usd_after >= crv_usd_before
     crv_usd_received: uint256 = crv_usd_after - crv_usd_before
-    assert crv_usd_received == _crv_usd_amount, "bad crvUSD receipt"
-    assert caller_crv_usd_before >= caller_crv_usd_after, "bad crvUSD spend"
-    assert caller_crv_usd_before - caller_crv_usd_after == _crv_usd_amount, "bad crvUSD spend"
+    assert crv_usd_received == _crv_usd_amount
+    assert caller_crv_usd_before >= caller_crv_usd_after
+    assert caller_crv_usd_before - caller_crv_usd_after == _crv_usd_amount
 
     ERC20(YIELD_TOKEN.address).transfer(msg.sender, expected_yield_token_out)
     yield_token_after: uint256 = YIELD_TOKEN.balanceOf(self)
     caller_yield_after: uint256 = YIELD_TOKEN.balanceOf(msg.sender)
-    assert yield_token_before >= yield_token_after, "bad yield spend"
+    assert yield_token_before >= yield_token_after
     yield_token_spent: uint256 = yield_token_before - yield_token_after
-    assert yield_token_spent == expected_yield_token_out, "bad yield spend"
-    assert caller_yield_after >= caller_yield_before, "bad yield receipt"
+    assert yield_token_spent == expected_yield_token_out
+    assert caller_yield_after >= caller_yield_before
     yield_token_received: uint256 = caller_yield_after - caller_yield_before
-    assert yield_token_received == expected_yield_token_out, "bad yield receipt"
-    assert yield_token_received >= _min_yield_token_out, "min yield out"
+    assert yield_token_received == expected_yield_token_out
+    assert yield_token_received >= _min_yield_token_out
 
     accounted_after: uint256 = accounted_before - yield_token_spent
     trusted_yield_after: uint256 = self._trusted_yield_value(accounted_after)
-    assert trusted_yield_before >= trusted_yield_after, "yield value increased"
+    assert trusted_yield_before >= trusted_yield_after
     trusted_value_removed: uint256 = trusted_yield_before - trusted_yield_after
 
     exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
@@ -498,13 +498,13 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
         trusted_value_removed / PPM * exit_margin_ppm
         + (trusted_value_removed % PPM) * exit_margin_ppm / PPM
     )
-    assert crv_usd_received >= trusted_value_removed, "exit margin"
-    assert crv_usd_received - trusted_value_removed >= required_exit_profit, "exit margin"
+    assert crv_usd_received >= trusted_value_removed
+    assert crv_usd_received - trusted_value_removed >= required_exit_profit
 
     deployed_after: uint256 = deployed_before - crv_usd_received
     self.accounted_yield_token_units = accounted_after
     self.deployed_crvusd = deployed_after
-    assert self._trusted_backing_value() >= deployed_after, "insufficient backing"
+    assert self._trusted_backing_value() >= deployed_after
 
     log DirectBuyback(msg.sender, crv_usd_received, yield_token_received, early_exit)
     return yield_token_received
@@ -513,8 +513,8 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
 @external
 @view
 def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, uint256, bool):
-    assert _target_amount > 0, "target amount=0"
-    assert _target_amount <= self.undeployed_backing, "insufficient backing"
+    assert _target_amount > 0
+    assert _target_amount <= self.undeployed_backing
 
     target_index: int128 = convert(self.target_amm_target_index, int128)
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
@@ -566,9 +566,9 @@ def _preview_contraction_path(_yield_token_amount: uint256) -> uint256:
 @external
 @view
 def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uint256, bool):
-    assert _yield_token_amount > 0, "yield amount=0"
-    assert _yield_token_amount <= self.accounted_yield_token_units, "insufficient yield"
-    assert len(self.contraction_path) > 0, "empty contraction path"
+    assert _yield_token_amount > 0
+    assert _yield_token_amount <= self.accounted_yield_token_units
+    assert len(self.contraction_path) > 0
 
     trusted_value_before: uint256 = self._trusted_yield_value(
         self.accounted_yield_token_units
@@ -577,7 +577,7 @@ def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uin
         self.accounted_yield_token_units - _yield_token_amount
     )
     trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
-    assert trusted_value_removed <= self.deployed_crvusd, "exposure amount"
+    assert trusted_value_removed <= self.deployed_crvusd
 
     expected_crv_usd: uint256 = self._preview_contraction_path(_yield_token_amount)
     gross_profit: uint256 = 0
@@ -651,12 +651,12 @@ def _preview_expansion_route(
 def previewExpansion(
     _crv_usd_amount: uint256,
 ) -> (uint256, uint256, uint256, uint256, uint256, bool):
-    assert _crv_usd_amount >= self.min_expansion_amount, "expansion too small"
-    assert _crv_usd_amount <= CRV_USD.balanceOf(self), "insufficient idle"
+    assert _crv_usd_amount >= self.min_expansion_amount
+    assert _crv_usd_amount <= CRV_USD.balanceOf(self)
 
     deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
-    assert deployed_after <= self.max_deployed_crvusd, "max deployed"
-    assert deployed_after <= FACTORY.debt_ceiling(self), "factory allocation"
+    assert deployed_after <= self.max_deployed_crvusd
+    assert deployed_after <= FACTORY.debt_ceiling(self)
 
     expected_target_out: uint256 = self.target_amm.get_dy(
         convert(self.target_amm_crvusd_index, int128),
@@ -695,13 +695,13 @@ def previewExpansion(
     if keeper_reward_value > self.max_keeper_reward:
         keeper_reward_value = self.max_keeper_reward
     expected_keeper_reward = keeper_reward_value / TARGET_MULTIPLIER
-    assert expected_keeper_reward <= expected_target_out, "reward exceeds backing"
+    assert expected_keeper_reward <= expected_target_out
 
     expected_target_retained: uint256 = expected_target_out - expected_keeper_reward
     entry_margin: uint256 = _crv_usd_amount * self.entry_min_profit_ppm / PPM
     assert self._normalize_target(expected_target_retained) >= (
         _crv_usd_amount + entry_margin
-    ), "entry margin"
+    )
     return (
         expected_target_out,
         0,
@@ -714,9 +714,9 @@ def previewExpansion(
 
 @external
 def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256):
-    assert msg.sender == self.admin, "not admin"
-    assert _new_target_amm.address != empty(address), "target amm=0"
-    assert _execution_buffer_bps <= BPS, "buffer too high"
+    assert msg.sender == self.admin
+    assert _new_target_amm.address != empty(address)
+    assert _execution_buffer_bps <= BPS
 
     coin_0: address = _new_target_amm.coins(0)
     coin_1: address = _new_target_amm.coins(1)
@@ -729,7 +729,7 @@ def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256)
         crv_usd_index = 1
         target_index = 0
     else:
-        raise "bad target pair"
+        raise
 
     old_target_amm: address = self.target_amm.address
     self.target_amm = _new_target_amm
@@ -751,10 +751,10 @@ def set_expansion_config(
     _min_downstream_attempt_gas: uint256,
     _fallback_settlement_gas_reserve: uint256,
 ):
-    assert msg.sender == self.admin, "not admin"
-    assert _target_amm_execution_buffer_bps <= BPS, "buffer too high"
-    assert _fallback_settlement_gas_reserve > 0, "gas reserve"
-    assert _min_downstream_attempt_gas > _fallback_settlement_gas_reserve, "gas reserve"
+    assert msg.sender == self.admin
+    assert _target_amm_execution_buffer_bps <= BPS
+    assert _fallback_settlement_gas_reserve > 0
+    assert _min_downstream_attempt_gas > _fallback_settlement_gas_reserve
 
     self.target_amm_execution_buffer_bps = _target_amm_execution_buffer_bps
     self.min_downstream_attempt_gas = _min_downstream_attempt_gas
@@ -770,16 +770,16 @@ def set_expansion_config(
 @external
 @nonreentrant("lock")
 def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, bool):
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.expansion_paused, "expansion paused"
-    assert _crv_usd_amount >= self.min_expansion_amount, "expansion too small"
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
+    assert _crv_usd_amount >= self.min_expansion_amount
 
     crv_usd_before: uint256 = CRV_USD.balanceOf(self)
-    assert _crv_usd_amount <= crv_usd_before, "insufficient idle"
+    assert _crv_usd_amount <= crv_usd_before
 
     deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
-    assert deployed_after <= self.max_deployed_crvusd, "max deployed"
-    assert deployed_after <= FACTORY.debt_ceiling(self), "factory allocation"
+    assert deployed_after <= self.max_deployed_crvusd
+    assert deployed_after <= FACTORY.debt_ceiling(self)
 
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
     target_index: int128 = convert(self.target_amm_target_index, int128)
@@ -803,21 +803,21 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     CRV_USD.approve(self.target_amm.address, 0)
 
     crv_usd_after: uint256 = CRV_USD.balanceOf(self)
-    assert crv_usd_before >= crv_usd_after, "bad crvUSD delta"
+    assert crv_usd_before >= crv_usd_after
     crv_usd_sold: uint256 = crv_usd_before - crv_usd_after
-    assert crv_usd_sold == _crv_usd_amount, "bad crvUSD spend"
+    assert crv_usd_sold == _crv_usd_amount
 
     target_after_swap: uint256 = TARGET_ASSET.balanceOf(self)
-    assert target_after_swap >= target_before, "bad target delta"
+    assert target_after_swap >= target_before
     target_received: uint256 = target_after_swap - target_before
-    assert target_received >= target_minimum, "target minimum"
+    assert target_received >= target_minimum
 
     downstream_succeeded: bool = False
     downstream_response: Bytes[128] = empty(Bytes[128])
     yield_balance_before_attempt: uint256 = YIELD_TOKEN.balanceOf(self)
     if len(self.expansion_path) > 0:
         available_attempt_gas: uint256 = msg.gas
-        assert available_attempt_gas >= self.min_downstream_attempt_gas, "downstream gas"
+        assert available_attempt_gas >= self.min_downstream_attempt_gas
         forwarded_gas: uint256 = available_attempt_gas - self.fallback_settlement_gas_reserve
         downstream_succeeded, downstream_response = raw_call(
             self,
@@ -843,19 +843,19 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         )
 
         target_after_attempt: uint256 = TARGET_ASSET.balanceOf(self)
-        assert target_after_swap >= target_after_attempt, "bad target spend"
-        assert target_after_swap - target_after_attempt == target_received, "bad target spend"
-        assert target_after_attempt == target_before, "bad retained target"
+        assert target_after_swap >= target_after_attempt
+        assert target_after_swap - target_after_attempt == target_received
+        assert target_after_attempt == target_before
         yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
-        assert yield_balance_after >= yield_balance_before_attempt, "bad yield output"
-        assert yield_token_received > 0, "yield output=0"
-        assert yield_balance_after - yield_balance_before_attempt == yield_token_received, "bad yield output"
+        assert yield_balance_after >= yield_balance_before_attempt
+        assert yield_token_received > 0
+        assert yield_balance_after - yield_balance_before_attempt == yield_token_received
 
         self.accounted_yield_token_units += yield_token_received
         self.deployed_crvusd = deployed_after
         self.last_expansion_at = block.timestamp
-        assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
-        assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+        assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units
+        assert self._trusted_backing_value() >= self.deployed_crvusd
 
         log Expanded(
             msg.sender,
@@ -885,24 +885,24 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         keeper_balance_before: uint256 = TARGET_ASSET.balanceOf(msg.sender)
         TARGET_ASSET.transfer(msg.sender, keeper_reward)
         keeper_balance_after: uint256 = TARGET_ASSET.balanceOf(msg.sender)
-        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
-        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+        assert keeper_balance_after >= keeper_balance_before
+        assert keeper_balance_after - keeper_balance_before == keeper_reward
 
     target_after_reward: uint256 = TARGET_ASSET.balanceOf(self)
-    assert target_after_swap >= target_after_reward, "bad reward spend"
-    assert target_after_swap - target_after_reward == keeper_reward, "bad reward spend"
-    assert target_after_reward >= target_before, "bad retained delta"
+    assert target_after_swap >= target_after_reward
+    assert target_after_swap - target_after_reward == keeper_reward
+    assert target_after_reward >= target_before
     target_retained: uint256 = target_after_reward - target_before
 
     entry_margin: uint256 = crv_usd_sold * self.entry_min_profit_ppm / PPM
-    assert self._normalize_target(target_retained) >= crv_usd_sold + entry_margin, "entry margin"
+    assert self._normalize_target(target_retained) >= crv_usd_sold + entry_margin
 
     self.undeployed_backing += target_retained
     self.deployed_crvusd = deployed_after
     self.last_expansion_at = block.timestamp
 
-    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
-    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing
+    assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log Expanded(
         msg.sender,
@@ -923,13 +923,13 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 @external
 @nonreentrant("lock")
 def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uint256):
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.undeployed_contraction_paused, "contraction paused"
-    assert _target_amount > 0, "target amount=0"
-    assert _target_amount <= self.undeployed_backing, "insufficient backing"
+    assert not self.all_execution_paused
+    assert not self.undeployed_contraction_paused
+    assert _target_amount > 0
+    assert _target_amount <= self.undeployed_backing
 
     target_before: uint256 = TARGET_ASSET.balanceOf(self)
-    assert target_before >= self.undeployed_backing, "target accounting"
+    assert target_before >= self.undeployed_backing
 
     target_index: int128 = convert(self.target_amm_target_index, int128)
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
@@ -953,14 +953,14 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     TARGET_ASSET.approve(self.target_amm.address, 0)
 
     target_after: uint256 = TARGET_ASSET.balanceOf(self)
-    assert target_before >= target_after, "bad target spend"
+    assert target_before >= target_after
     target_spent: uint256 = target_before - target_after
-    assert target_spent == _target_amount, "bad target spend"
+    assert target_spent == _target_amount
 
     crv_usd_after_swap: uint256 = CRV_USD.balanceOf(self)
-    assert crv_usd_after_swap >= crv_usd_before, "bad crvUSD delta"
+    assert crv_usd_after_swap >= crv_usd_before
     crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
-    assert crv_usd_received >= crv_usd_minimum, "crvUSD minimum"
+    assert crv_usd_received >= crv_usd_minimum
 
     target_value: uint256 = self._normalize_target(target_spent)
     gross_profit: uint256 = 0
@@ -975,13 +975,13 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
         keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
         CRV_USD.transfer(msg.sender, keeper_reward)
         keeper_balance_after: uint256 = CRV_USD.balanceOf(msg.sender)
-        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
-        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+        assert keeper_balance_after >= keeper_balance_before
+        assert keeper_balance_after - keeper_balance_before == keeper_reward
 
     crv_usd_after_reward: uint256 = CRV_USD.balanceOf(self)
-    assert crv_usd_after_swap >= crv_usd_after_reward, "bad reward spend"
-    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward, "bad reward spend"
-    assert crv_usd_after_reward >= crv_usd_before, "bad retained crvUSD"
+    assert crv_usd_after_swap >= crv_usd_after_reward
+    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward
+    assert crv_usd_after_reward >= crv_usd_before
     net_crv_usd: uint256 = crv_usd_after_reward - crv_usd_before
 
     early_exit: bool = self._is_early_exit()
@@ -989,7 +989,7 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     if early_exit:
         exit_margin_ppm = self.early_exit_min_profit_ppm
     exit_margin: uint256 = target_value * exit_margin_ppm / PPM
-    assert net_crv_usd >= target_value + exit_margin, "exit margin"
+    assert net_crv_usd >= target_value + exit_margin
 
     self.undeployed_backing -= target_spent
     exposure_reduction: uint256 = net_crv_usd
@@ -997,8 +997,8 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
         exposure_reduction = self.deployed_crvusd
     self.deployed_crvusd -= exposure_reduction
 
-    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
-    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing
+    assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log KeeperBuyback(
         msg.sender,
@@ -1017,8 +1017,8 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
 @external
 @nonreentrant("lock")
 def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.expansion_paused, "expansion paused"
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
 
     trusted_backing: uint256 = self._trusted_backing_value()
     surplus: uint256 = 0
@@ -1044,7 +1044,7 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
         crv_usd_transferred = allocation_remaining
     if crv_usd_transferred > local_capacity_remaining:
         crv_usd_transferred = local_capacity_remaining
-    assert crv_usd_transferred > 0, "no surplus claim"
+    assert crv_usd_transferred > 0
 
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
@@ -1053,14 +1053,14 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
     CRV_USD.transfer(self.fee_receiver, crv_usd_transferred)
     crv_usd_balance_after: uint256 = CRV_USD.balanceOf(self)
     receiver_balance_after: uint256 = CRV_USD.balanceOf(self.fee_receiver)
-    assert crv_usd_balance_before >= crv_usd_balance_after, "bad fee spend"
-    assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred, "bad fee spend"
-    assert receiver_balance_after >= receiver_balance_before, "bad fee receipt"
-    assert receiver_balance_after - receiver_balance_before == crv_usd_transferred, "bad fee receipt"
+    assert crv_usd_balance_before >= crv_usd_balance_after
+    assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
+    assert receiver_balance_after >= receiver_balance_before
+    assert receiver_balance_after - receiver_balance_before == crv_usd_transferred
 
-    assert deployed_crv_usd_after <= allocation, "factory allocation"
-    assert deployed_crv_usd_after <= self.max_deployed_crvusd, "max deployed"
-    assert self._trusted_backing_value() >= deployed_crv_usd_after, "insufficient backing"
+    assert deployed_crv_usd_after <= allocation
+    assert deployed_crv_usd_after <= self.max_deployed_crvusd
+    assert self._trusted_backing_value() >= deployed_crv_usd_after
 
     log SurplusClaimed(
         msg.sender,
@@ -1074,23 +1074,23 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
 @internal
 @view
 def _validate_route_step(_step: RouteStep):
-    assert _step.venue != empty(address), "route venue=0"
-    assert _step.token_in != empty(address), "route tokenIn=0"
-    assert _step.token_out != empty(address), "route tokenOut=0"
-    assert _step.execution_buffer_bps <= BPS, "step buffer too high"
+    assert _step.venue != empty(address)
+    assert _step.token_in != empty(address)
+    assert _step.token_out != empty(address)
+    assert _step.execution_buffer_bps <= BPS
 
     if _step.kind == STEP_CURVE_SWAP:
-        assert _step.pool_index_in >= 0 and _step.pool_index_out >= 0, "curve index"
-        assert _step.pool_index_in != _step.pool_index_out, "curve index"
+        assert _step.pool_index_in >= 0 and _step.pool_index_out >= 0
+        assert _step.pool_index_in != _step.pool_index_out
         assert CurveRoutePool(_step.venue).coins(
             convert(_step.pool_index_in, uint256)
-        ) == _step.token_in, "curve tokenIn"
+        ) == _step.token_in
         assert CurveRoutePool(_step.venue).coins(
             convert(_step.pool_index_out, uint256)
-        ) == _step.token_out, "curve tokenOut"
+        ) == _step.token_out
     elif _step.kind == STEP_DAI_USDS_CONVERTER:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "converter index"
-        assert _step.execution_buffer_bps == 0, "converter buffer"
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
+        assert _step.execution_buffer_bps == 0
         dai: address = DaiUsds(_step.venue).dai()
         usds: address = DaiUsds(_step.venue).usds()
         valid_direction: bool = (
@@ -1098,17 +1098,17 @@ def _validate_route_step(_step: RouteStep):
         ) or (
             _step.token_in == usds and _step.token_out == dai
         )
-        assert valid_direction, "converter pair"
+        assert valid_direction
     elif _step.kind == STEP_ERC4626_DEPOSIT:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "vault index"
-        assert _step.venue == _step.token_out, "vault tokenOut"
-        assert YieldToken(_step.venue).asset() == _step.token_in, "vault asset"
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
+        assert _step.venue == _step.token_out
+        assert YieldToken(_step.venue).asset() == _step.token_in
     elif _step.kind == STEP_ERC4626_REDEEM:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "vault index"
-        assert _step.venue == _step.token_in, "vault tokenIn"
-        assert YieldToken(_step.venue).asset() == _step.token_out, "vault asset"
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
+        assert _step.venue == _step.token_in
+        assert YieldToken(_step.venue).asset() == _step.token_out
     else:
-        raise "unknown step"
+        raise
 
 
 @internal
@@ -1118,7 +1118,7 @@ def _validate_route_continuity(_steps: DynArray[RouteStep, 16]):
         if i >= len(_steps):
             break
         if i > 0:
-            assert _steps[i - 1].token_out == _steps[i].token_in, "path discontinuity"
+            assert _steps[i - 1].token_out == _steps[i].token_in
         self._validate_route_step(_steps[i])
 
 
@@ -1128,20 +1128,20 @@ def setPaths(
     _expansion_max_route_loss_bps: uint256,
     _contraction_steps: DynArray[RouteStep, 16],
 ):
-    assert msg.sender == self.admin, "not admin"
-    assert len(_expansion_steps) > 0, "empty expansion path"
-    assert len(_contraction_steps) > 0, "empty contraction path"
-    assert _expansion_max_route_loss_bps <= BPS, "route loss too high"
+    assert msg.sender == self.admin
+    assert len(_expansion_steps) > 0
+    assert len(_contraction_steps) > 0
+    assert _expansion_max_route_loss_bps <= BPS
 
-    assert _expansion_steps[0].token_in == TARGET_ASSET.address, "expansion start"
+    assert _expansion_steps[0].token_in == TARGET_ASSET.address
     expansion_last: RouteStep = _expansion_steps[len(_expansion_steps) - 1]
-    assert expansion_last.token_out == YIELD_TOKEN.address, "expansion end"
-    assert expansion_last.token_in == BACKING_ASSET.address, "terminal backing"
+    assert expansion_last.token_out == YIELD_TOKEN.address
+    assert expansion_last.token_in == BACKING_ASSET.address
 
-    assert _contraction_steps[0].token_in == YIELD_TOKEN.address, "contraction start"
-    assert _contraction_steps[0].token_out == BACKING_ASSET.address, "initial backing"
+    assert _contraction_steps[0].token_in == YIELD_TOKEN.address
+    assert _contraction_steps[0].token_out == BACKING_ASSET.address
     contraction_last: RouteStep = _contraction_steps[len(_contraction_steps) - 1]
-    assert contraction_last.token_out == CRV_USD.address, "contraction end"
+    assert contraction_last.token_out == CRV_USD.address
 
     self._validate_route_continuity(_expansion_steps)
     self._validate_route_continuity(_contraction_steps)
@@ -1171,14 +1171,14 @@ def contraction_path_length() -> uint256:
 @external
 @view
 def expansion_path_step(_index: uint256) -> RouteStep:
-    assert _index < len(self.expansion_path), "path index"
+    assert _index < len(self.expansion_path)
     return self.expansion_path[_index]
 
 
 @external
 @view
 def contraction_path_step(_index: uint256) -> RouteStep:
-    assert _index < len(self.contraction_path), "path index"
+    assert _index < len(self.contraction_path)
     return self.contraction_path[_index]
 
 
@@ -1225,14 +1225,14 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
     token_in.approve(_step.venue, 0)
     input_balance_after: uint256 = token_in.balanceOf(self)
     output_balance_after: uint256 = token_out.balanceOf(self)
-    assert input_balance_before >= input_balance_after, "bad step spend"
-    assert input_balance_before - input_balance_after == _amount_in, "bad step spend"
-    assert output_balance_after >= output_balance_before, "bad step output"
+    assert input_balance_before >= input_balance_after
+    assert input_balance_before - input_balance_after == _amount_in
+    assert output_balance_after >= output_balance_before
     amount_out: uint256 = output_balance_after - output_balance_before
     if _step.kind == STEP_DAI_USDS_CONVERTER:
-        assert amount_out == minimum_output, "converter output"
+        assert amount_out == minimum_output
     else:
-        assert amount_out >= minimum_output, "step output"
+        assert amount_out >= minimum_output
     return amount_out
 
 
@@ -1260,8 +1260,8 @@ def executeExpansionPath(
     _crv_usd_sold: uint256,
     _keeper: address,
 ) -> (uint256, uint256, uint256, uint256):
-    assert msg.sender == self, "not self"
-    assert len(self.expansion_path) > 0, "empty expansion path"
+    assert msg.sender == self
+    assert len(self.expansion_path) > 0
 
     amount_in: uint256 = _target_amount
     backing_asset_received: uint256 = 0
@@ -1281,18 +1281,18 @@ def executeExpansionPath(
             if keeper_reward_value > self.max_keeper_reward:
                 keeper_reward_value = self.max_keeper_reward
             keeper_reward = keeper_reward_value / BACKING_MULTIPLIER
-            assert keeper_reward <= backing_asset_received, "reward exceeds backing"
+            assert keeper_reward <= backing_asset_received
             if keeper_reward > 0:
                 keeper_balance_before: uint256 = BACKING_ASSET.balanceOf(_keeper)
                 BACKING_ASSET.transfer(_keeper, keeper_reward)
                 keeper_balance_after: uint256 = BACKING_ASSET.balanceOf(_keeper)
-                assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
-                assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+                assert keeper_balance_after >= keeper_balance_before
+                assert keeper_balance_after - keeper_balance_before == keeper_reward
             amount_in = backing_asset_received - keeper_reward
         amount_in = self._execute_route_step(step, amount_in)
 
     yield_token_received: uint256 = amount_in
-    assert yield_token_received > 0, "yield output=0"
+    assert yield_token_received > 0
     trusted_yield_received: uint256 = (
         YIELD_TOKEN.convertToAssets(yield_token_received) * BACKING_MULTIPLIER
     )
@@ -1303,20 +1303,20 @@ def executeExpansionPath(
         conversion_cost = target_value - route_retained_value
     assert conversion_cost <= (
         target_value * self.expansion_max_route_loss_bps / BPS
-    ), "route loss"
+    )
     entry_margin: uint256 = _crv_usd_sold * self.entry_min_profit_ppm / PPM
-    assert trusted_yield_received >= _crv_usd_sold + entry_margin, "entry margin"
+    assert trusted_yield_received >= _crv_usd_sold + entry_margin
     return backing_asset_received, yield_token_received, gross_profit, keeper_reward
 
 
 @external
 @nonreentrant("lock")
 def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.backing_deployment_paused, "backing deployment paused"
-    assert _target_amount > 0, "target amount=0"
-    assert _target_amount <= self.undeployed_backing, "insufficient backing"
-    assert len(self.expansion_path) > 0, "empty expansion path"
+    assert not self.all_execution_paused
+    assert not self.backing_deployment_paused
+    assert _target_amount > 0
+    assert _target_amount <= self.undeployed_backing
+    assert len(self.expansion_path) > 0
 
     trusted_backing_before: uint256 = self._trusted_backing_value()
     available_deployment_surplus: uint256 = 0
@@ -1325,18 +1325,18 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 
     target_balance_before: uint256 = TARGET_ASSET.balanceOf(self)
     yield_balance_before: uint256 = YIELD_TOKEN.balanceOf(self)
-    assert target_balance_before >= self.undeployed_backing, "target accounting"
+    assert target_balance_before >= self.undeployed_backing
 
     self._execute_route(_target_amount, True)
 
     target_balance_after: uint256 = TARGET_ASSET.balanceOf(self)
     yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
-    assert target_balance_before >= target_balance_after, "bad target spend"
+    assert target_balance_before >= target_balance_after
     target_spent: uint256 = target_balance_before - target_balance_after
-    assert target_spent == _target_amount, "bad target spend"
-    assert yield_balance_after >= yield_balance_before, "bad yield output"
+    assert target_spent == _target_amount
+    assert yield_balance_after >= yield_balance_before
     yield_token_received: uint256 = yield_balance_after - yield_balance_before
-    assert yield_token_received > 0, "yield output=0"
+    assert yield_token_received > 0
 
     target_value_spent: uint256 = target_spent * TARGET_MULTIPLIER
     trusted_value_received: uint256 = (
@@ -1347,14 +1347,14 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
         conversion_cost = target_value_spent - trusted_value_received
     assert conversion_cost <= (
         target_value_spent * self.expansion_max_route_loss_bps / BPS
-    ), "route loss"
-    assert conversion_cost <= available_deployment_surplus, "deployment surplus"
+    )
+    assert conversion_cost <= available_deployment_surplus
 
     self.undeployed_backing -= target_spent
     self.accounted_yield_token_units += yield_token_received
-    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
-    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
-    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing
+    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units
+    assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log UndeployedBackingDeployed(
         msg.sender,
@@ -1369,11 +1369,11 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 @external
 @nonreentrant("lock")
 def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
-    assert not self.all_execution_paused, "all execution paused"
-    assert not self.yield_contraction_paused, "yield contraction paused"
-    assert _yield_token_amount > 0, "yield amount=0"
-    assert _yield_token_amount <= self.accounted_yield_token_units, "insufficient yield"
-    assert len(self.contraction_path) > 0, "empty contraction path"
+    assert not self.all_execution_paused
+    assert not self.yield_contraction_paused
+    assert _yield_token_amount > 0
+    assert _yield_token_amount <= self.accounted_yield_token_units
+    assert len(self.contraction_path) > 0
 
     accounted_before: uint256 = self.accounted_yield_token_units
     trusted_value_before: uint256 = self._trusted_yield_value(accounted_before)
@@ -1381,29 +1381,29 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         accounted_before - _yield_token_amount
     )
     quoted_value_removed: uint256 = trusted_value_before - quoted_value_after
-    assert quoted_value_removed <= self.deployed_crvusd, "exposure amount"
+    assert quoted_value_removed <= self.deployed_crvusd
 
     yield_balance_before: uint256 = YIELD_TOKEN.balanceOf(self)
     crv_usd_before: uint256 = CRV_USD.balanceOf(self)
-    assert yield_balance_before >= accounted_before, "yield accounting"
+    assert yield_balance_before >= accounted_before
 
     route_output: uint256 = self._execute_route(_yield_token_amount, False)
 
     yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
     crv_usd_after_swap: uint256 = CRV_USD.balanceOf(self)
-    assert yield_balance_before >= yield_balance_after, "bad yield spend"
+    assert yield_balance_before >= yield_balance_after
     yield_token_spent: uint256 = yield_balance_before - yield_balance_after
-    assert yield_token_spent == _yield_token_amount, "bad yield spend"
-    assert crv_usd_after_swap >= crv_usd_before, "bad crvUSD delta"
+    assert yield_token_spent == _yield_token_amount
+    assert crv_usd_after_swap >= crv_usd_before
     crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
-    assert crv_usd_received == route_output, "bad crvUSD output"
+    assert crv_usd_received == route_output
 
     trusted_value_after: uint256 = self._trusted_yield_value(
         accounted_before - yield_token_spent
     )
-    assert trusted_value_before >= trusted_value_after, "bad yield value"
+    assert trusted_value_before >= trusted_value_after
     trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
-    assert trusted_value_removed <= self.deployed_crvusd, "exposure amount"
+    assert trusted_value_removed <= self.deployed_crvusd
 
     gross_profit: uint256 = 0
     if crv_usd_received > trusted_value_removed:
@@ -1416,13 +1416,13 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
         CRV_USD.transfer(msg.sender, keeper_reward)
         keeper_balance_after: uint256 = CRV_USD.balanceOf(msg.sender)
-        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
-        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+        assert keeper_balance_after >= keeper_balance_before
+        assert keeper_balance_after - keeper_balance_before == keeper_reward
 
     crv_usd_after_reward: uint256 = CRV_USD.balanceOf(self)
-    assert crv_usd_after_swap >= crv_usd_after_reward, "bad reward spend"
-    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward, "bad reward spend"
-    assert crv_usd_after_reward >= crv_usd_before, "bad retained crvUSD"
+    assert crv_usd_after_swap >= crv_usd_after_reward
+    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward
+    assert crv_usd_after_reward >= crv_usd_before
     net_crv_usd: uint256 = crv_usd_after_reward - crv_usd_before
 
     early_exit: bool = self._is_early_exit()
@@ -1430,7 +1430,7 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
     if early_exit:
         exit_margin_ppm = self.early_exit_min_profit_ppm
     exit_margin: uint256 = trusted_value_removed * exit_margin_ppm / PPM
-    assert net_crv_usd >= trusted_value_removed + exit_margin, "exit margin"
+    assert net_crv_usd >= trusted_value_removed + exit_margin
 
     self.accounted_yield_token_units = accounted_before - yield_token_spent
     exposure_reduction: uint256 = net_crv_usd
@@ -1438,8 +1438,8 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         exposure_reduction = self.deployed_crvusd
     self.deployed_crvusd -= exposure_reduction
 
-    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
-    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units
+    assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log KeeperBuyback(
         msg.sender,
@@ -1465,13 +1465,13 @@ def set_policy(
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
-    assert msg.sender == self.admin, "not admin"
-    assert _early_exit_min_profit_ppm <= PPM, "margin ppm"
-    assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm, "normal below entry"
-    assert _early_exit_min_profit_ppm > _normal_exit_min_profit_ppm, "early not higher"
-    assert _keeper_profit_share_bps <= BPS, "keeper share"
-    assert _min_expansion_amount > 0, "min expansion=0"
-    assert _max_deployed_crvusd > 0, "max deployed=0"
+    assert msg.sender == self.admin
+    assert _early_exit_min_profit_ppm <= PPM
+    assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm
+    assert _early_exit_min_profit_ppm > _normal_exit_min_profit_ppm
+    assert _keeper_profit_share_bps <= BPS
+    assert _min_expansion_amount > 0
+    assert _max_deployed_crvusd > 0
 
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
@@ -1496,10 +1496,10 @@ def set_policy(
 
 @external
 def set_roles(_new_admin: address, _new_emergency_admin: address):
-    assert msg.sender == self.admin, "not admin"
-    assert _new_admin != empty(address), "admin=0"
-    assert _new_emergency_admin != empty(address), "emergency admin=0"
-    assert _new_admin != _new_emergency_admin, "roles overlap"
+    assert msg.sender == self.admin
+    assert _new_admin != empty(address)
+    assert _new_emergency_admin != empty(address)
+    assert _new_admin != _new_emergency_admin
 
     old_admin: address = self.admin
     self.admin = _new_admin
@@ -1509,8 +1509,8 @@ def set_roles(_new_admin: address, _new_emergency_admin: address):
 
 @external
 def set_fee_receiver(_new_fee_receiver: address):
-    assert msg.sender == self.admin, "not admin"
-    assert _new_fee_receiver != empty(address), "fee receiver=0"
+    assert msg.sender == self.admin
+    assert _new_fee_receiver != empty(address)
     old_fee_receiver: address = self.fee_receiver
     self.fee_receiver = _new_fee_receiver
     log FeeReceiverUpdated(old_fee_receiver, _new_fee_receiver)
@@ -1518,14 +1518,14 @@ def set_fee_receiver(_new_fee_receiver: address):
 
 @external
 def set_direction_paused(_direction: uint256, _paused: bool):
-    assert msg.sender == self.admin or msg.sender == self.emergency_admin, "not authorized"
+    assert msg.sender == self.admin or msg.sender == self.emergency_admin
     if msg.sender == self.emergency_admin:
-        assert _paused, "emergency cannot unpause"
+        assert _paused
 
     if _direction == DIRECTION_EXPANSION:
         if not _paused:
-            assert self.min_downstream_attempt_gas > 0, "downstream gas unset"
-            assert self.fallback_settlement_gas_reserve > 0, "fallback gas unset"
+            assert self.min_downstream_attempt_gas > 0
+            assert self.fallback_settlement_gas_reserve > 0
         self.expansion_paused = _paused
     elif _direction == DIRECTION_BACKING_DEPLOYMENT:
         self.backing_deployment_paused = _paused
@@ -1538,7 +1538,7 @@ def set_direction_paused(_direction: uint256, _paused: bool):
     elif _direction == DIRECTION_ALL:
         self.all_execution_paused = _paused
     else:
-        raise "bad direction"
+        raise
 
     log DirectionPaused(_direction, _paused)
 
@@ -1547,8 +1547,8 @@ def set_direction_paused(_direction: uint256, _paused: bool):
 @payable
 @nonreentrant("lock")
 def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[65535]:
-    assert msg.sender == self.admin, "not admin"
-    assert _target != empty(address), "target=0"
+    assert msg.sender == self.admin
+    assert _target != empty(address)
 
     result: Bytes[65535] = raw_call(
         _target,
@@ -1566,4 +1566,4 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
 @external
 @payable
 def __default__():
-    assert len(msg.data) == 0, "unknown selector"
+    assert len(msg.data) == 0

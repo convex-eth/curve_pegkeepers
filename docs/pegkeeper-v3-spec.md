@@ -127,7 +127,9 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its first verified foundation pins the fixed endpoints, initial parameters, accounting counters, governance roles, and pause state described here. Route encoding and lifecycle storage are added only with the corresponding executable tests.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The complete runtime is `21,387` bytes, `3,189` bytes below the EIP-170 limit, and an executable artifact-size test prevents regression above that limit.
+
+Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
 `targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires the final yield token to expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `yieldToken.asset() == backingAsset` at construction. It does not require the yield token itself to accept `deposit()` or `withdraw()`. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
 

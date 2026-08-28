@@ -11,7 +11,7 @@ optimizer_runs = 200
 
 [vyper]
 path = ".venv/bin/vyper"
-optimize = "gas"
+optimize = "codesize"
 
 [fmt]
 line_length = 100
