@@ -951,14 +951,19 @@ claimValue = min(maxTrustedValue, protocolSurplus)
 2. If claim value remains, transfer sUSDS shares whose trusted value is
    no greater than the remainder, rounding the share amount down.
 3. Leave any terminal rounding dust in V3.
-4. Recompute trusted backing and require trustedBackingValue >= deployedCrvUsd.
+4. Recompute trusted backing from actual post-transfer balances.
+5. Require both:
+   - trustedBackingBefore - trustedBackingAfter <= claimValue;
+   - trustedBackingAfter >= deployedCrvUsd.
 ```
 
 USDT goes first because it is idle, earns no vault carry, and can be removed without a vault call. The remaining sUSDS keeps earning while it supports outstanding principal. This mirrors direct buyback's source order, but a surplus claim transfers sUSDS shares directly rather than redeeming them because the fee receiver—not the V3 core—owns fee conversion policy.
 
-Share calculations must use the trusted value of the **remaining** post-transfer share balance rather than assuming `convertToAssets(totalShares - sharesTransferred) + convertToAssets(sharesTransferred) == convertToAssets(totalShares)`. ERC-4626 floor rounding need not be additive. The candidate share amount is rounded down, the actual share delta is measured, and `trustedValue` in `SurplusClaimed` is the observed `trustedBackingBefore - trustedBackingAfter`; the final principal check catches any remaining rounding edge.
+Share calculations must use the trusted value of the **remaining** post-transfer share balance rather than assuming `convertToAssets(totalShares - sharesTransferred) + convertToAssets(sharesTransferred) == convertToAssets(totalShares)`. ERC-4626 floor rounding need not be additive. The candidate share amount is rounded down, the actual share delta is measured, and `trustedValue` in `SurplusClaimed` is the observed `trustedBackingBefore - trustedBackingAfter`; the final value-cap and principal checks catch any remaining rounding edge.
 
 The initial `feeReceiver` should be Curve's current `FeeCollector`, not the crvUSD mint-market `FeeSplitter`. V2's `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting them inside the PegKeeper.[8] The current `FeeCollector` is designed to collect arbitrary ERC-20 fee assets and has crvUSD as its target token.[9] Its current CowSwap burner creates sell orders for each supplied fee token into that target, so USDT and sUSDS can remain source assets when V3 claims profit.[11]
+
+Fee conversion is asynchronous and epoch-gated. A caller must later include each received source token in `FeeCollector.collect()`, and a token can remain in the collector or burner until a viable CowSwap order executes. V3 treats transfer to the configured receiver as fee settlement; it does not depend on or account for the later conversion outcome.[9][11]
 
 At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose `fee_receiver()` was the `FeeCollector` at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`. The collector's live `target()` was crvUSD and its `burner()` was the generic CowSwap burner at `0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b`.[9][11]
 
