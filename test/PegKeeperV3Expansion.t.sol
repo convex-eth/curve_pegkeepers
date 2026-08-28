@@ -75,6 +75,8 @@ contract ExpansionPool {
     ExpansionToken public immutable targetAsset;
     uint256 public quotePricePpm = 1_000_100;
     uint256 public executionPricePpm = 1_000_100;
+    uint256 public reverseQuotePricePpm = 1_010_000;
+    uint256 public reverseExecutionPricePpm = 1_010_000;
 
     constructor(ExpansionToken crvUsd_, ExpansionToken targetAsset_) {
         crvUsd = crvUsd_;
@@ -92,20 +94,33 @@ contract ExpansionPool {
         executionPricePpm = executionPricePpm_;
     }
 
+    function setReversePrices(uint256 quotePricePpm_, uint256 executionPricePpm_) external {
+        reverseQuotePricePpm = quotePricePpm_;
+        reverseExecutionPricePpm = executionPricePpm_;
+    }
+
     function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256) {
-        require(i == 1 && j == 0, "indices");
-        return dx * quotePricePpm / (PPM * 1e12);
+        if (i == 1 && j == 0) return dx * quotePricePpm / (PPM * 1e12);
+        require(i == 0 && j == 1, "indices");
+        return dx * reverseQuotePricePpm * 1e12 / PPM;
     }
 
     function exchange(int128 i, int128 j, uint256 dx, uint256 minDy)
         external
         returns (uint256 amountOut)
     {
-        require(i == 1 && j == 0, "indices");
-        amountOut = dx * executionPricePpm / (PPM * 1e12);
-        require(amountOut >= minDy, "slippage");
-        require(crvUsd.transferFrom(msg.sender, address(this), dx), "transfer");
-        targetAsset.mint(msg.sender, amountOut);
+        if (i == 1 && j == 0) {
+            amountOut = dx * executionPricePpm / (PPM * 1e12);
+            require(amountOut >= minDy, "slippage");
+            require(crvUsd.transferFrom(msg.sender, address(this), dx), "transfer");
+            targetAsset.mint(msg.sender, amountOut);
+        } else {
+            require(i == 0 && j == 1, "indices");
+            amountOut = dx * reverseExecutionPricePpm * 1e12 / PPM;
+            require(amountOut >= minDy, "slippage");
+            require(targetAsset.transferFrom(msg.sender, address(this), dx), "transfer");
+            crvUsd.mint(msg.sender, amountOut);
+        }
     }
 }
 
@@ -205,6 +220,62 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(pegKeeper.trusted_backing_value(), expectedRetained * TARGET_MULTIPLIER);
         assertEq(pegKeeper.protocol_surplus(), expectedRetained * TARGET_MULTIPLIER - amount);
         assertEq(crvUsd.allowance(address(pegKeeper), address(pool)), 0);
+    }
+
+    function test_expansionExcludesPreExistingTargetDonationFromAccounting() public {
+        uint256 amount = MIN_EXPANSION;
+        uint256 donation = 1_234e6;
+        targetAsset.mint(address(pegKeeper), donation);
+        crvUsd.mint(address(pegKeeper), amount);
+        _enableExpansion(0);
+
+        uint256 expectedTarget = pool.get_dy(1, 0, amount);
+        uint256 grossProfit = expectedTarget * TARGET_MULTIPLIER - amount;
+        uint256 expectedReward = grossProfit * 3_000 / 10_000 / TARGET_MULTIPLIER;
+        uint256 expectedRetained = expectedTarget - expectedReward;
+
+        vm.prank(keeper);
+        pegKeeper.expand(amount);
+
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), donation + expectedRetained);
+        assertEq(pegKeeper.undeployed_backing(), expectedRetained);
+        assertEq(pegKeeper.trusted_backing_value(), expectedRetained * TARGET_MULTIPLIER);
+    }
+
+    function test_expansionCapsTargetDenominatedReward() public {
+        uint256 amount = MIN_EXPANSION;
+        crvUsd.mint(address(pegKeeper), amount);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+
+        uint256 expectedTarget = pool.get_dy(1, 0, amount);
+        uint256 expectedReward = 20e6;
+
+        vm.prank(keeper);
+        (,,, uint256 reward,) = pegKeeper.expand(amount);
+
+        assertEq(reward, expectedReward);
+        assertEq(targetAsset.balanceOf(keeper), expectedReward);
+        assertEq(pegKeeper.undeployed_backing(), expectedTarget - expectedReward);
+    }
+
+    function test_expansionRoundsTargetRewardDownToNativeUnits() public {
+        uint256 amount = MIN_EXPANSION + 1;
+        crvUsd.mint(address(pegKeeper), amount);
+        _enableExpansion(0);
+
+        uint256 expectedTarget = pool.get_dy(1, 0, amount);
+        uint256 grossProfit = expectedTarget * TARGET_MULTIPLIER - amount;
+        uint256 expectedRewardValue = grossProfit * 3_000 / 10_000;
+        uint256 expectedReward = expectedRewardValue / TARGET_MULTIPLIER;
+        assertGt(expectedRewardValue % TARGET_MULTIPLIER, 0);
+
+        vm.prank(keeper);
+        (,,, uint256 reward,) = pegKeeper.expand(amount);
+
+        assertEq(reward, expectedReward);
+        assertEq(targetAsset.balanceOf(keeper), expectedReward);
+        assertEq(pegKeeper.undeployed_backing(), expectedTarget - expectedReward);
     }
 
     function test_expansionRevertsAndRollsBackWithoutRetainedMargin() public {

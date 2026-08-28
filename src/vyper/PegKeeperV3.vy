@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: foundation controls plus fixed target-AMM fallback expansion.
+@dev Incremental implementation: foundation, measured target-only expansion, and fixed-AMM undeployed-backing contraction.
 """
 
 interface ERC20:
@@ -55,6 +55,16 @@ event Expanded:
     backing_retained: uint256
     deployed_to_yield: bool
     unlock_time: uint256
+
+event KeeperBuyback:
+    keeper: indexed(address)
+    backing_token: address
+    backing_spent: uint256
+    yield_token_spent: uint256
+    crv_usd_received: uint256
+    gross_profit: uint256
+    keeper_reward: uint256
+    early_exit: bool
 
 
 version: public(constant(String[8])) = "3.0.0"
@@ -290,6 +300,37 @@ def available_expansion() -> uint256:
     return available
 
 
+@internal
+@view
+def _is_early_exit() -> bool:
+    return self.deployed_crvusd > 0 and block.timestamp < self.last_expansion_at + self.min_deployment_time
+
+
+@external
+@view
+def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, uint256, bool):
+    assert _target_amount > 0, "target amount=0"
+    assert _target_amount <= self.undeployed_backing, "insufficient backing"
+
+    target_index: int128 = convert(self.target_amm_target_index, int128)
+    crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
+    expected_crv_usd: uint256 = TARGET_AMM.get_dy(
+        target_index,
+        crv_usd_index,
+        _target_amount,
+    )
+    target_value: uint256 = self._normalize_target(_target_amount)
+    gross_profit: uint256 = 0
+    if expected_crv_usd > target_value:
+        gross_profit = expected_crv_usd - target_value
+
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    if keeper_reward > self.max_keeper_reward:
+        keeper_reward = self.max_keeper_reward
+
+    return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
+
+
 @external
 def set_expansion_config(
     _target_amm_execution_buffer_bps: uint256,
@@ -404,6 +445,100 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     )
 
     return crv_usd_sold, target_retained, 0, keeper_reward, False
+
+
+@external
+@nonreentrant("lock")
+def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uint256):
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.undeployed_contraction_paused, "contraction paused"
+    assert _target_amount > 0, "target amount=0"
+    assert _target_amount <= self.undeployed_backing, "insufficient backing"
+
+    target_before: uint256 = TARGET_ASSET.balanceOf(self)
+    assert target_before >= self.undeployed_backing, "target accounting"
+
+    target_index: int128 = convert(self.target_amm_target_index, int128)
+    crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
+    crv_usd_quote: uint256 = TARGET_AMM.get_dy(
+        target_index,
+        crv_usd_index,
+        _target_amount,
+    )
+    crv_usd_minimum: uint256 = crv_usd_quote * (
+        BPS - self.target_amm_execution_buffer_bps
+    ) / BPS
+
+    crv_usd_before: uint256 = CRV_USD.balanceOf(self)
+    TARGET_ASSET.approve(TARGET_AMM.address, _target_amount)
+    TARGET_AMM.exchange(
+        target_index,
+        crv_usd_index,
+        _target_amount,
+        crv_usd_minimum,
+    )
+    TARGET_ASSET.approve(TARGET_AMM.address, 0)
+
+    target_after: uint256 = TARGET_ASSET.balanceOf(self)
+    assert target_before >= target_after, "bad target spend"
+    target_spent: uint256 = target_before - target_after
+    assert target_spent == _target_amount, "bad target spend"
+
+    crv_usd_after_swap: uint256 = CRV_USD.balanceOf(self)
+    assert crv_usd_after_swap >= crv_usd_before, "bad crvUSD delta"
+    crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
+    assert crv_usd_received >= crv_usd_minimum, "crvUSD minimum"
+
+    target_value: uint256 = self._normalize_target(target_spent)
+    gross_profit: uint256 = 0
+    if crv_usd_received > target_value:
+        gross_profit = crv_usd_received - target_value
+
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    if keeper_reward > self.max_keeper_reward:
+        keeper_reward = self.max_keeper_reward
+
+    if keeper_reward > 0:
+        keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
+        CRV_USD.transfer(msg.sender, keeper_reward)
+        keeper_balance_after: uint256 = CRV_USD.balanceOf(msg.sender)
+        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
+        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+
+    crv_usd_after_reward: uint256 = CRV_USD.balanceOf(self)
+    assert crv_usd_after_swap >= crv_usd_after_reward, "bad reward spend"
+    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward, "bad reward spend"
+    assert crv_usd_after_reward >= crv_usd_before, "bad retained crvUSD"
+    net_crv_usd: uint256 = crv_usd_after_reward - crv_usd_before
+
+    early_exit: bool = self._is_early_exit()
+    exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
+    if early_exit:
+        exit_margin_ppm = self.early_exit_min_profit_ppm
+    exit_margin: uint256 = target_value * exit_margin_ppm / PPM
+    assert net_crv_usd >= target_value + exit_margin, "exit margin"
+
+    self.undeployed_backing -= target_spent
+    exposure_reduction: uint256 = net_crv_usd
+    if exposure_reduction > self.deployed_crvusd:
+        exposure_reduction = self.deployed_crvusd
+    self.deployed_crvusd -= exposure_reduction
+
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
+    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+
+    log KeeperBuyback(
+        msg.sender,
+        TARGET_ASSET.address,
+        target_spent,
+        0,
+        crv_usd_received,
+        gross_profit,
+        keeper_reward,
+        early_exit,
+    )
+
+    return target_spent, crv_usd_received, keeper_reward
 
 
 @external

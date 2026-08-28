@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It now also deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records the retained target asset as `undeployedBacking`. This first economic branch is intentionally target-only: typed downstream yield deployment, buyback, contraction, and surplus settlement remain for later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can now reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Typed downstream yield deployment, yield-backed buyback and contraction, and surplus settlement remain for later verified slices.
 
 ## Toolchain
 
@@ -164,7 +164,9 @@ test/
 ├── PegKeeperLifecycle.t.sol
 ├── PegKeeperV3ExpansionFork.t.sol
 ├── PegKeeperV3Expansion.t.sol
-└── PegKeeperV3Foundation.t.sol
+├── PegKeeperV3Foundation.t.sol
+├── PegKeeperV3UndeployedContractionFork.t.sol
+└── PegKeeperV3UndeployedContraction.t.sol
 ```
 
 `PegKeeperV2.vy` and `PegKeeperOffboarding.vy` were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline). `PegKeeperV3.vy` is the new implementation developed in this repository. All three pin Vyper `0.3.10`.
@@ -204,6 +206,14 @@ Exercises the first economic V3 branch against a deterministic two-coin pool. It
 ### `PegKeeperV3ExpansionForkTest`
 
 Deploys V3 against the live USDT/crvUSD pool and ControllerFactory at block `25,837,866`, allocates `1,000,000 crvUSD` through the real Factory, creates an above-peg opportunity by buying crvUSD with USDT, and executes a `100,000 crvUSD` fallback expansion. It verifies the live pool's `int128` quote/exchange ABI, crvUSD spending, no-return USDT reward transfer, retained USDT accounting, and the final backing invariant.
+
+### `PegKeeperV3UndeployedContractionTest`
+
+Exercises the fixed-AMM reverse path against deterministic local tokens. It verifies preview output, early and mature margin selection, protocol quote floors, exact accounted target spending, crvUSD-denominated percentage and flat-cap rewards, net exposure reduction, allowance reset, event fields, exclusion of unsolicited target donations, and complete rollback when early-exit economics are insufficient.
+
+### `PegKeeperV3UndeployedContractionForkTest`
+
+Creates a target-only USDT backing position through the live target AMM, then pushes crvUSD below peg and contracts `50,000 USDT` through the reverse pool direction. It verifies the no-return USDT approval path, measured crvUSD output and reward, early-exit margin, accounted-backing reduction, deployed-exposure reduction, and final principal invariant at block `25,837,866`.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 

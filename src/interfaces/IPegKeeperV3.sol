@@ -23,6 +23,16 @@ interface IPegKeeperV3 {
         bool deployedToYield,
         uint256 unlockTime
     );
+    event KeeperBuyback(
+        address indexed keeper,
+        address backingToken,
+        uint256 backingSpent,
+        uint256 yieldTokenSpent,
+        uint256 crvUsdReceived,
+        uint256 grossProfit,
+        uint256 keeperReward,
+        bool earlyExit
+    );
 
     function version() external view returns (string memory);
 
@@ -82,6 +92,18 @@ interface IPegKeeperV3 {
             uint256 keeperReward,
             bool deployedToYield
         );
+    function previewUndeployedContraction(uint256 targetAmount)
+        external
+        view
+        returns (
+            uint256 expectedCrvUsdOut,
+            uint256 expectedGrossProfit,
+            uint256 expectedKeeperReward,
+            bool earlyExit
+        );
+    function contractUndeployedBacking(uint256 targetAmount)
+        external
+        returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
     function execute(address target, uint256 value, bytes calldata data)
         external
         payable
