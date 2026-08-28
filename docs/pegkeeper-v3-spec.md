@@ -360,6 +360,21 @@ function buyback(
 
 If `undeployedBacking` can satisfy the complete quote, `underlyingOut` and `yieldSharesSpent` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and withdraws the exact remaining underlying amount from the yield vault. If no undeployed backing exists, the complete payout comes from yield underlying. The call reverts unless combined trusted output and each caller minimum pass.
 
+Direct buyback retains its exit spread as additional protocol surplus. Let `C` be crvUSD received and `P` be the trusted value of USDT plus yield underlying paid to the caller:
+
+```text
+surplusBefore = trustedBackingBefore - deployedCrvUsdBefore
+
+trustedBackingAfter = trustedBackingBefore - P
+deployedCrvUsdAfter  = deployedCrvUsdBefore - C
+
+surplusAfter - surplusBefore
+    = C - P
+    = directBuybackProfit
+```
+
+The exit condition requires `C >= P + selectedExitMargin`. With the configured positive normal or early margin, `C > P`, so a successful direct buyback increases surplus by at least that margin; a future zero-margin setting would permit break-even but never reduce surplus. Because the payout waterfall spends USDT first, the residual assets will often be sUSDS shares, but those particular shares are not a separate profit bucket. They support any remaining `deployedCrvUsd`; only combined trusted backing above the remaining deployed amount is surplus. Once `deployedCrvUsd == 0`, all remaining trusted backing is surplus, subject to no other obligations.
+
 The direct quote should be previewable:
 
 ```solidity
@@ -914,6 +929,8 @@ V3 uses one fungible surplus value rather than separate onchain buckets for yiel
 protocolSurplus
     = max(trustedBackingValue - deployedCrvUsd, 0)
 ```
+
+Here `trustedBackingValue` is the normalized value of accounted undeployed USDT plus the current underlying-equivalent value represented by the fixed sUSDS position. It uses current `convertToAssets()` value, not merely the historical USDS amount deposited, so accrued vault yield is included.
 
 Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, buyback waterfalls, share-price appreciation, and fee claims, without strengthening the principal invariant.
 
