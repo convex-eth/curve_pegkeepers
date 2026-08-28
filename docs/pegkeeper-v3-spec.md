@@ -70,7 +70,7 @@ V3 is not intended to:
 
 ### Governance
 
-Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Route changes are delayed. The governance owner can also make an arbitrary external call through `execute()` when a typed path or normal migration flow is insufficient.
+Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes. The governance owner can also make an arbitrary external call through `execute()` when a typed path or normal migration flow is insufficient.
 
 ### Emergency admin
 
@@ -525,27 +525,20 @@ There is no protocol-level maximum path length. Governance is trusted to configu
 
 ### Path governance
 
-Path replacement is a privileged operation capable of directing the protocol's full conversion flow. It should use delayed two-step governance:
-
-```text
-PATH_UPDATE_DELAY = 3 days
-```
+Path replacement is a privileged operation capable of directing the protocol's full conversion flow. The DAO's seven-day voting period already supplies the public review window, so V3 does not add a second contract-level timelock:
 
 ```solidity
-function commitPaths(
+function setPaths(
     DownstreamPathConfig calldata newExpansionPath,
     RouteStep[] calldata newContractionPath
 ) external;
-
-function applyPaths() external;
-function cancelPendingPaths() external;
 ```
 
-`commitPaths` validates and stores the pending configuration hash with `activationTime = block.timestamp + 3 days`. `applyPaths` validates again and can replace both active paths atomically only after that timestamp. Complete target-AMM or endpoint configuration bundles use the same delay.
+`setPaths` validates and replaces both active paths atomically in the governance execution transaction. A target-AMM or endpoint migration must use a complete compatible configuration bundle rather than applying mismatched components in stages.
 
-The emergency admin may disable a path immediately but cannot apply a new one.
+The emergency admin may disable a path immediately but cannot apply a new one. Only the governance owner can install or replace routes.
 
-Three days is long enough for public review and cancellation while remaining tolerable because a broken downstream path does not stop target-only expansion, and independent contraction and owner recovery remain available. The delay is an operational mistake-detection window, not protection against a malicious DAO owner: the same owner retains unrestricted `execute()` authority.
+There is deliberately no pending-path state, activation timestamp, or cancellation lifecycle inside V3. Duplicating the seven-day governance process would add state and defer an already approved repair without creating a new trust boundary.
 
 ### Path execution
 
@@ -953,9 +946,8 @@ Required controls:
 - pause keeper buyback;
 - global shutdown;
 - lower trade and total-deployment caps immediately;
-- delayed increases to caps;
-- delayed target-AMM and path replacement;
-- immediate cancellation of a pending path;
+- governance updates to trade and total-deployment caps;
+- atomic governance replacement of the target AMM, endpoints, and paths;
 - fee-receiver update;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
 - first-class migration of the yield-token position;
@@ -1035,9 +1027,7 @@ event KeeperBuyback(
     bool earlyExit
 );
 
-event PathsCommitted(bytes32 expansionHash, bytes32 contractionHash, uint256 activationTime);
-event PathsApplied(bytes32 expansionHash, bytes32 contractionHash);
-event PathsCancelled();
+event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
 event DirectionPaused(uint8 indexed direction, bool paused);
 event SurplusClaimed(address indexed token, uint256 amount, uint256 trustedValue);
 event Executed(
@@ -1065,7 +1055,7 @@ event Executed(
 13. Deployment of undeployed backing cannot consume more than available surplus or exceed its per-call loss bound.
 14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 15. Disabling expansion never disables the governance-approved contraction and offboarding paths unless global shutdown explicitly does so.
-16. A path update cannot bypass the three-day governance delay.
+16. A path update replaces only a complete, validated, endpoint-compatible configuration.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
 19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
@@ -1116,7 +1106,7 @@ A strict holding period could deadlock downward peg support during an actual cri
 
 ### Governance route power
 
-An updatable path can direct all future flows into a malicious venue. Typed steps, endpoint validation, delayed activation, exact approvals, and emergency cancellation limit this risk.
+An updatable path can direct all future flows into a malicious venue. The DAO's seven-day vote, typed steps, endpoint validation, atomic compatible-bundle updates, exact approvals, and emergency directional pauses limit this risk. V3 deliberately does not duplicate the DAO review period with another contract-level delay.
 
 ### Governance execute power
 
@@ -1144,7 +1134,7 @@ The following are deliberately unresolved:
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
 - whether exact-output route adapters are needed;
 - how surplus is separated between yield and execution spread;
-- whether V3 supports one yield token permanently or permits delayed endpoint migration;
+- whether V3 supports one yield token permanently or permits endpoint migration;
 - the final shutdown and migration transaction sequence.
 
 ## Sources
