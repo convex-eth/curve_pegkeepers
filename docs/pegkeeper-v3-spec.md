@@ -57,8 +57,8 @@ V3 is not intended to:
 - **Target AMM:** the external crvUSD/stablecoin pool used by keeper expansion and fallback contraction.
 - **Target asset:** the non-crvUSD coin in the target AMM, such as USDT.
 - **Undeployed backing:** target asset retained by a successful fallback expansion and explicitly included in backing accounting. Unsolicited target-asset transfers are not automatically included.
-- **Backing asset:** the approved stablecoin immediately before yield deployment, such as USDS before an sUSDS deposit.
-- **Yield token:** the final token held after the expansion path, such as sUSDS.
+- **Backing asset:** the approved stablecoin denomination returned by the yield token's `asset()` and `convertToAssets()` accounting interface, such as USDS for sUSDS or frxUSD for sfrxUSD.
+- **Yield token:** the fixed yield-bearing token that every successful downstream expansion path must leave in V3, such as sUSDS or sfrxUSD.
 - **Downstream expansion path:** the updatable sequence from the target asset to the yield token.
 - **Yield contraction path:** an independently configured sequence from the yield token to crvUSD, such as sUSDS redemption followed by a USDS/crvUSD swap.
 - **Mature deployment state:** the configured minimum market time has elapsed since the latest successful material expansion.
@@ -128,7 +128,7 @@ yieldContractionPaused
 
 The exact storage representation is deferred until the implementation language and route encoding are selected.
 
-`targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires `yieldToken` to implement ERC-4626 and requires `yieldToken.asset() == backingAsset` at construction. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or a non-ERC-4626 accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
+`targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires the final yield token to expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `yieldToken.asset() == backingAsset` at construction. It does not require the yield token itself to accept `deposit()` or `withdraw()`. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
 
 ## Supply accounting and Factory integration
 
@@ -160,47 +160,67 @@ The current ControllerFactory does not inspect or mark to market assets held by 
 
 V3 makes that trust assumption explicit and narrow:
 
-- governance approves the AMM-facing stablecoin, yield token, vault underlying, and typed conversion paths;
+- governance approves the AMM-facing stablecoin, final yield token, accounting backing asset, and typed conversion paths;
 - one normalized unit of an approved backing stablecoin is accounted as one dollar and one crvUSD unit;
-- yield-token shares are not treated as one dollar each; the fixed ERC-4626 `yieldToken` converts them into units of its approved `backingAsset`;
+- yield-token units are not treated as one dollar each; the fixed `yieldToken` converts them into units of its approved `backingAsset` through `convertToAssets()`;
 - only `undeployedBacking` and the configured yield position count toward V3 principal and surplus accounting;
 - unsolicited tokens and arbitrary assets sent to V3 do not count as backing.
 
-For an ERC-4626-style sUSDS position:
+For any supported final yield token:
 
 ```text
-trustedBackingValue(sUSDS shares)
-    = normalizeTo1e18(convertToAssets(sUSDS shares))
+trustedYieldValue(yieldTokenAmount)
+    = normalizeDown(yieldToken.convertToAssets(yieldTokenAmount))
 ```
 
-The returned USDS units are then trusted at par because USDS and the sUSDS position were approved by governance as PegKeeper backing. No target-AMM spot price is used to value the final position.
+The returned backing-asset units are then trusted at par because that backing asset and final yield token were approved by governance for this PegKeeper deployment. No target-AMM spot price is used to value the final position.
 
-V1 does not need a separate accounting-adapter contract. It uses the fixed ERC-4626 vault directly and applies these rules:
+The minimal read-only accounting interface is:
+
+```solidity
+interface IYieldTokenAccounting {
+    function asset() external view returns (address);
+    function convertToAssets(uint256 yieldTokenAmount)
+        external
+        view
+        returns (uint256 backingAssetAmount);
+    function convertToShares(uint256 backingAssetAmount)
+        external
+        view
+        returns (uint256 yieldTokenAmount);
+}
+```
+
+Acquisition and unwind are deliberately not part of that accounting interface. They are typed route steps. The terminal expansion step may deposit into an ERC-4626 vault, swap through a Curve pool, or use another explicitly supported typed adapter, but its measured `tokenOut` must be the fixed `yieldToken`. The first yield-unwind step is independently encoded in `yieldContractionPath`.
+
+V3 applies these accounting rules regardless of how the route acquired the final token:
 
 ```text
-trusted assets for held shares
-    = yieldToken.convertToAssets(actualHeldShares)
+trusted assets for held yield-token units
+    = yieldToken.convertToAssets(actualHeldYieldToken)
 
 trusted normalized value
     = normalizeDown(trusted assets)
 
-trusted value added when shares enter V3
-    = normalizeDown(convertToAssets(actualSharesReceived))
+trusted value added when yield-token units enter V3
+    = normalizeDown(yieldToken.convertToAssets(actualYieldTokenReceived))
 
-trusted value removed when shares leave V3
+trusted value removed when yield-token units leave V3
     = trustedBackingBefore - trustedBackingAfter
 ```
 
-ERC-4626 requires `convertToAssets()` to round down. It also requires `previewDeposit()` to return no more than the shares minted by a same-transaction deposit and `previewWithdraw()` to return no fewer than the shares burned by a same-transaction withdrawal.[12] V3 therefore uses:
+ERC-4626 requires its conversion methods to round down. Where a route actually uses a vault deposit, it also requires `previewDeposit()` to return no more than the shares minted by a same-transaction deposit.[12] V3 therefore uses:
 
-- `convertToAssets(totalHeldShares)` with downward normalization for principal and surplus valuation;
-- `previewDeposit(actualAssets)` as the terminal deposit quote, followed by the measured share balance delta;
-- `previewWithdraw(exactAssets)` as the conservative maximum-share quote for direct buyback, followed by measured asset and share deltas;
-- conservative standalone valuation of newly received shares so pre-existing yield appreciation cannot be attributed to the new action;
-- pre/post total-position valuation when shares are spent, rather than assuming `convertToAssets(total - spent) + convertToAssets(spent) == convertToAssets(total)`;
+- `convertToAssets(totalHeldYieldToken)` with downward normalization for principal and surplus valuation;
+- `convertToShares(backingAssetAmount)` only as a downward-rounded sizing primitive, never as proof of assets actually realized;
+- the terminal route step's own quote method—such as Curve `get_dy()` or ERC-4626 `previewDeposit()`—followed by the measured yield-token balance delta;
+- conservative standalone valuation of newly received yield-token units so pre-existing yield appreciation cannot be attributed to the new action;
+- pre/post total-position valuation when yield-token units are spent, rather than assuming `convertToAssets(total - spent) + convertToAssets(spent) == convertToAssets(total)`;
 - actual token deltas as the final authority for every state change.
 
-Expansion needs no inverse accounting adapter: after deposit, it applies `convertToAssets()` to the actual shares received and uses the rounded-down result for the action's trusted-asset profit floor. For an increasing position this standalone value is conservative under ERC-4626 downward rounding and does not credit existing yield to the new action. For a decreasing position V3 instead recomputes the complete pre/post position because conversion floors are not additive. A later V3 supporting a non-ERC-4626 yield token must define its own fixed accounting implementation rather than installing a mutable generic adapter in this deployment.
+After the complete acquisition route, V3 applies `convertToAssets()` to the actual final yield-token units received and uses the rounded-down result for the action's trusted-asset profit floor. For an increasing position this standalone value is conservative under downward rounding and does not credit existing yield to the new action. For a decreasing position V3 instead recomputes the complete pre/post position because conversion floors are not additive.
+
+This separation is necessary for sfrxUSD. At Ethereum block `25,851,930`, sfrxUSD returned a valid frxUSD `asset()`, `convertToAssets()`, and `convertToShares()` result while both `maxDeposit()` and `previewDeposit()` returned zero.[13] A frxUSD-facing PegKeeper must therefore acquire sfrxUSD through the configured route—such as a frxUSD/sfrxUSD swap—rather than assuming the final token is directly depositable.
 
 This is a protocol accounting convention, not proof that every approved stablecoin can always be sold for one dollar. If an approved backing asset depegs, freezes, or becomes non-redeemable, V3 can remain nominally solvent under its configured accounting while being economically impaired. Governance must pause affected routes and use slow wind-down or owner `execute()` to recover or move the position. Continuing with a different yield token requires deploying a new V3.
 
@@ -237,7 +257,7 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
 ```
 
-The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, deposit, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
+The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, terminal yield-acquisition, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
 
 This gas policy is not a reward for deploying `undeployedBacking`. It is a transaction-safety rule for the downstream attempt inside `expand()`. Immediately before the isolated subcall, V3 requires `gasleft() >= minDownstreamAttemptGas`, where `minDownstreamAttemptGas` is governance-changeable. Its initial value is selected only after implementation benchmarks and should include ample headroom over the measured worst-case full route, call overhead, failed-attempt handling, fallback accounting, token payment, storage writes, and event emission. Expansion cannot be enabled with an uninitialized zero threshold, and a materially different downstream path must be activated with a compatible threshold.
 
@@ -257,7 +277,7 @@ A preliminary interface is:
 function expand(uint256 crvUsdAmount) external returns (
     uint256 crvUsdSold,
     uint256 backingRetained,
-    uint256 yieldSharesReceived,
+    uint256 yieldTokenReceived,
     uint256 keeperReward,
     bool deployedToYield
 );
@@ -276,7 +296,7 @@ function previewExpansion(uint256 crvUsdAmount)
         uint256 expectedBackingAssetOut,
         uint256 expectedGrossProfit,
         uint256 expectedKeeperReward,
-        uint256 expectedYieldShares,
+        uint256 expectedYieldToken,
         bool expectedToDeploy
     );
 ```
@@ -317,7 +337,7 @@ Undeployed backing may be converted later through the same fixed downstream path
 ```solidity
 function deployUndeployedBacking(uint256 targetAmount)
     external
-    returns (uint256 targetSpent, uint256 yieldSharesReceived);
+    returns (uint256 targetSpent, uint256 yieldTokenReceived);
 ```
 
 This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them. The caller chooses an exact `targetAmount` no greater than `undeployedBacking`. There is no separate maintenance action-size maximum: an amount whose quote, route-loss, surplus, or final-backing checks fail simply reverts.
@@ -337,7 +357,7 @@ availableDeploymentSurplus
       )
 
 conversionCost = max(
-    normalize(targetSpent) - trustedValue(yieldSharesReceived),
+    normalize(targetSpent) - trustedYieldValue(yieldTokenReceived),
     0
 )
 
@@ -357,7 +377,7 @@ The initial design does not combine old `undeployedBacking` with a newly rewarde
 
 ## Direct buyback lifecycle
 
-Direct buyback provides one-sided downward liquidity through a deterministic backing waterfall. The caller chooses only the crvUSD amount and token-specific minimum outputs; V3 always pays `undeployedBacking` first and redeems yield backing only for the remaining trusted value. The caller cannot select a backing source, route, venue, recipient, or accounting value.
+Direct buyback provides one-sided downward liquidity through a deterministic backing waterfall. The caller chooses only the crvUSD amount and token-specific minimum outputs; V3 always pays `undeployedBacking` first and unwinds yield backing only for the remaining trusted-value budget. The caller cannot select a backing source, route, venue, recipient, or accounting value.
 
 ```text
 1. Verify direct buyback is enabled.
@@ -367,12 +387,13 @@ Direct buyback provides one-sided downward liquidity through a deterministic bac
 5. Calculate the maximum trusted backing value payable while preserving that margin.
 6. Transfer crvUSD from the caller to V3.
 7. Allocate as much payout value as possible from `undeployedBacking` and decrease its accounting by the exact target amount paid.
-8. If value remains, use the fixed ERC-4626 vault's exact-asset `withdraw()` operation to obtain that underlying remainder, rounding the maximum share burn up and measuring the actual share delta.
-9. Transfer the target asset, underlying asset, or both to the caller.
-10. Enforce the caller's token-specific minimums and measure actual backing outputs by balance delta.
-11. Verify the received crvUSD exceeds total trusted backing value paid by the selected margin.
-12. Reduce `deployedCrvUsd` by the crvUSD received and retain it as idle inventory.
-13. Emit both payout amounts, yield shares spent, and whether early exit was used.
+8. If value remains, use `convertToShares()` only to derive a downward-rounded yield-token input whose measured trusted value cannot exceed the remaining budget.
+9. Execute the distinguished first step of `yieldContractionPath` as an exact-input unwind from `yieldToken` to `backingAsset`; for sUSDS this can be an ERC-4626 redeem, while for sfrxUSD it can be a Curve swap.
+10. Transfer the target asset, backing asset, or both to the caller.
+11. Enforce the caller's token-specific minimums and measure actual route outputs and yield-token spending by balance delta.
+12. Recompute the trusted value removed from the complete pre/post yield position and verify the received crvUSD exceeds total trusted backing spent by the selected margin.
+13. Reduce `deployedCrvUsd` by the crvUSD received and retain it as idle inventory.
+14. Emit both payout amounts, yield-token units spent, and whether early exit was used.
 ```
 
 A preliminary interface is:
@@ -381,17 +402,19 @@ A preliminary interface is:
 function buyback(
     uint256 crvUsdAmount,
     uint256 minTargetOut,
-    uint256 minUnderlyingOut
+    uint256 minBackingOut
 ) external returns (
     uint256 targetOut,
-    uint256 underlyingOut,
-    uint256 yieldSharesSpent
+    uint256 backingOut,
+    uint256 yieldTokenSpent
 );
 ```
 
-If `undeployedBacking` can satisfy the complete quote, `underlyingOut` and `yieldSharesSpent` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and withdraws the exact remaining underlying amount from the yield vault. If no undeployed backing exists, the complete payout comes from yield underlying. The call reverts unless combined trusted output and each caller minimum pass.
+If `undeployedBacking` can satisfy the complete trusted-value budget, `backingOut` and `yieldTokenSpent` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and sends a protocol-sized exact yield-token input through the configured first unwind step. If no undeployed backing exists, the complete backing spend comes from the yield position. The route may realize slightly more or less backing asset than the yield units' trusted accounting value; the caller receives the measured output, while V3's economic floor uses the actual pre/post trusted value removed from its position. The call reverts unless each caller minimum and the final profit condition pass.
 
-Direct buyback retains its exit spread as additional protocol surplus. Let `C` be crvUSD received and `P` be the trusted value of USDT plus yield underlying paid to the caller:
+This removes the assumption that every yield token supports native exact-asset withdrawal. No binary search or generic exact-output swap adapter is required. V3 derives the yield-token input conservatively from the remaining trusted-value budget, executes the fixed exact-input unwind step, and treats route output as an execution result rather than as the accounting value of shares spent. The initial candidate uses `convertToShares(max(denormalizeDown(remainingBudget) - 1, 0))`; the one-native-unit haircut covers the possible non-additive floor increment, and the final measured pre/post trusted-value check remains authoritative. If that check would still exceed the budget, the call reverts rather than overpaying from principal.
+
+Direct buyback retains its exit spread as additional protocol surplus. Let `C` be crvUSD received and `P` be the trusted value removed from `undeployedBacking` plus the pre/post trusted value removed from the yield position:
 
 ```text
 surplusBefore = trustedBackingBefore - deployedCrvUsdBefore
@@ -414,8 +437,8 @@ function previewBuyback(uint256 crvUsdAmount)
     view
     returns (
         uint256 expectedTargetOut,
-        uint256 expectedUnderlyingOut,
-        uint256 expectedYieldSharesSpent,
+        uint256 expectedBackingOut,
+        uint256 expectedYieldTokenSpent,
         uint256 requiredExitProfit,
         bool earlyExit
     );
@@ -423,7 +446,7 @@ function previewBuyback(uint256 crvUsdAmount)
 
 The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
 
-Caller minimums are retained because the direct buyback caller supplies crvUSD and may receive two different backing tokens. The effective minimums are the caller's token-specific floors combined with V3's internally calculated total trusted-value floor. Passing zero for either token cannot weaken V3's floor.
+Caller minimums are retained because the direct buyback caller supplies crvUSD and may receive two different backing tokens. The effective minimums are the caller's token-specific floors combined with V3's internally calculated trusted-spend and final-profit checks. Passing zero for either token cannot weaken V3's floor. When `targetAsset == backingAsset`, as in a frxUSD-facing deployment, the two logical waterfall components may be consolidated into one ERC-20 transfer while remaining separately measured for accounting and events.
 
 ## Keeper buyback fallback
 
@@ -447,9 +470,9 @@ For yield backing:
 1. Verify keeper buyback is enabled.
 2. Determine whether V3 is in the mature or young deployment state.
 3. Select the normal or early exit margin accordingly.
-4. Verify the keeper's requested yield-share amount is within the available yield backing and cannot reduce more than the current `deployedCrvUsd` exposure.
-5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS and then use a configured USDS/crvUSD venue without passing through USDT.
-6. Calculate gross exit profit as crvUSD received minus the trusted backing value of yield-token shares spent.
+4. Verify the keeper's requested yield-token amount is within the available yield backing and cannot reduce more than the current `deployedCrvUsd` exposure.
+5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS and then use a configured USDS/crvUSD venue; for sfrxUSD it may first swap to frxUSD.
+6. Calculate gross exit profit as crvUSD received minus the trusted backing value removed by the yield-token units spent.
 7. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperReward`, and pay it to `msg.sender` in crvUSD.
 8. Verify the net crvUSD retained after the reward exceeds the trusted backing value spent by the selected exit margin.
 9. Reduce deployedCrvUsd by the net crvUSD retained, capped at the deployed amount.
@@ -465,7 +488,7 @@ function contractUndeployedBacking(uint256 targetAmount)
 
 function contractViaAmm(uint256 yieldShares)
     external
-    returns (uint256 yieldSharesSpent, uint256 crvUsdReceived, uint256 keeperReward);
+    returns (uint256 yieldTokenSpent, uint256 crvUsdReceived, uint256 keeperReward);
 ```
 
 The keeper chooses only the exact target amount or yield-token shares. V3 calculates every route minimum, realized profit, and reward internally. The two contraction paths have separate venues, limits, and pause controls; failure of the downstream expansion route does not disable either undeployed backing contraction or a healthy yield-to-crvUSD route.
@@ -540,6 +563,14 @@ DAI --typed exact converter--> USDS
 USDS --ERC4626Deposit(sUSDS)--> sUSDS
 ```
 
+The terminal action is route data, not a hardcoded deposit performed after the route. A frxUSD-facing deployment may instead use:
+
+```text
+frxUSD --CurveSwap(frxUSD/sfrxUSD)--> sfrxUSD
+```
+
+In both cases the complete downstream route ends in the deployment's fixed yield-bearing token. For sUSDS the terminal adapter is an ERC-4626 deposit; for sfrxUSD it is a swap because direct deposits are disabled.[13]
+
 Example contraction path:
 
 ```text
@@ -554,8 +585,8 @@ A path is valid only when:
 1. The downstream expansion path starts with `targetAsset` and ends with `yieldToken`.
 2. The yield contraction path starts with `yieldToken` and ends with `crvUSD`.
 3. Every step's `tokenOut` equals the next step's `tokenIn`.
-4. The expansion path has a distinguished terminal deployment step whose input is `backingAsset` and output is `yieldToken`.
-5. The yield contraction path has a distinguished first unwind step whose input is `yieldToken` and output is `backingAsset`.
+4. The expansion path has a distinguished terminal yield-acquisition step whose input is `backingAsset` and measured output is exactly `yieldToken`; its `kind` and `venue` are encoded in the route.
+5. The yield contraction path has a distinguished first unwind step whose input is `yieldToken` and output is `backingAsset`; its action is independently encoded, need not be the inverse call type of the acquisition step, and must be executable on its own for direct buyback.
 6. A Curve step's pool contains both configured tokens.
 7. An exact stable converter is a governance-approved typed adapter with fixed input and output tokens; it accepts no caller calldata or recipient.
 8. An ERC-4626 deposit step uses `vault.asset() == tokenIn` and the vault share token as `tokenOut`.
@@ -564,7 +595,7 @@ A path is valid only when:
 11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
 12. No venue, token, or endpoint is zero.
 
-The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, and the ERC-4626 `yieldToken` cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
+The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, and `yieldToken` cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched. V3 does not append an implicit vault deposit after the configured expansion path: successful execution is complete only when the route itself has delivered measured `yieldToken` units to V3.
 
 There is no protocol-level maximum path length. Governance is trusted to configure an executable typed path; transaction gas and `minDownstreamAttemptGas` provide the practical bound. An excessively long or expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset. Route review and gas-threshold benchmarking remain governance responsibilities.
 
@@ -599,13 +630,13 @@ For every step:
 
 Successful downstream deployment and contraction calls must consume the entire routed input except for bounded rounding dust. A failed isolated downstream expansion attempt consumes none of the target input and leaves it available for the accounted fallback branch.
 
-After a target-to-yield route completes, V3 compares normalized target input with the trusted underlying value of measured yield shares and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
+After a target-to-yield route completes, V3 compares normalized target input with the trusted backing-asset value of measured final yield-token units and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
 
-### Exact-input routing and direct exact-asset withdrawal
+### Exact-input routing and route-defined yield handling
 
-The configurable swap paths are exact-input. Expansion routes the keeper's exact crvUSD amount, later deployment routes an exact target amount, and keeper contraction routes an exact target amount or yield-share amount. Each step measures output and enforces a protocol-calculated `minOut`; none needs a generic exact-output swap adapter.
+The configurable paths are exact-input. Expansion routes the keeper's exact crvUSD amount, later deployment routes an exact target amount, keeper contraction routes an exact target amount or yield-token amount, and direct buyback uses a protocol-sized exact yield-token amount only after exhausting `undeployedBacking`. Each step measures output and enforces a protocol-calculated `minOut`; none needs a generic exact-output swap adapter.
 
-Direct buyback is the only action that needs a fixed underlying remainder after exhausting `undeployedBacking`. The ERC-4626 vault already provides the required primitive through `previewWithdraw(assets)`, `maxWithdraw(owner)`, and `withdraw(assets, receiver, owner)`. V3 verifies the remainder is withdrawable, calculates a conservative maximum share burn rounded up, calls `withdraw()` for the exact underlying amount, and checks actual asset and share deltas. This is vault rounding discipline, not a reason to add arbitrary exact-output Curve or converter adapters. A future route that genuinely requires a fixed swap output would need a separately typed and audited adapter for that venue.
+Yield acquisition and unwind follow their configured step kinds. An ERC-4626 deployment may use `deposit()` and `redeem()`. A non-depositable token such as sfrxUSD may instead be acquired and unwound through typed Curve swaps while still using its read-only conversion interface for trusted accounting. Direct buyback receives whatever measured `backingAsset` output its exact-input unwind produces, subject to the caller's minimum and V3's trusted-spend profit floor; it does not assume native exact-asset withdrawal.
 
 ## Keeper-supplied sizing
 
@@ -634,7 +665,7 @@ Under-sizing may leave a second profitable action available, and a flat per-call
 
 Realized profitability under the trusted-backing convention is the primary execution gate. V3 should not copy V2-style spot/EMA proximity checks onto the target crvUSD AMM: a sudden crvUSD price spike creates the exact expansion opportunity V3 should capture. Requiring spot to remain close to EMA would suppress the intended trade.
 
-Expansion therefore has two authoritative realized postconditions. A fully deployed branch uses the approved underlying units represented by final yield shares after the complete downstream route and keeper reward. A fallback branch uses only the accounted target asset actually retained after its keeper reward. A downstream preview is never counted as backing. Each approved stablecoin unit is treated as one dollar without consulting the target AMM spot.
+Expansion therefore has two authoritative realized postconditions. A fully deployed branch uses the approved backing-asset units represented by the final yield token after the complete downstream route and keeper reward. A fallback branch uses only the accounted target asset actually retained after its keeper reward. A downstream preview is never counted as backing. Each approved stablecoin unit is treated as one dollar without consulting the target AMM spot.
 
 Contraction applies the inverse test to either source: crvUSD retained after paying the keeper must exceed the normalized undeployed backing or trusted yield value consumed by the configured margin.
 
@@ -683,7 +714,7 @@ Fallback gross profit used for keeper compensation
     - crvUSD deployed
 
 Fully deployed PegKeeper-local net profit
-    = trusted backing value of final yield shares
+    = trusted backing value of final yield-token units
     - crvUSD deployed
 
 Fallback PegKeeper-local net profit
@@ -699,7 +730,7 @@ The local branch result is the onchain safety invariant. DAO-consolidated profit
 
 Optional depeg or venue-health checks may later protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence. A configured backing-quality guard may veto an action that would increase exposure despite nominal final value, while contraction, redemption, slow wind-down, and owner recovery actions that reduce exposure remain available. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
 
-For a successful full-route expansion, V3 calculates the keeper reward from the realized backing-asset output immediately before yield deployment:
+For a successful full-route expansion, V3 calculates the keeper reward from the realized backing-asset output immediately before the terminal yield-acquisition step:
 
 ```text
 require normalize(backingAssetOut) >= crvUsdSold
@@ -711,10 +742,10 @@ keeperRewardValue = min(
 )
 
 keeperRewardTokens = denormalizeDown(keeperRewardValue)
-backingAssetToDeploy = backingAssetOut - keeperRewardTokens
+backingAssetToRoute = backingAssetOut - keeperRewardTokens
 ```
 
-`backingAssetOut` is the actual balance delta after the crvUSD-to-target AMM swap and every successful downstream stablecoin conversion. Target-AMM fees, downstream pool fees, converter loss, and slippage are therefore already deducted before `grossEntryProfit` and the reward are calculated. The terminal yield deposit is then checked from the actual share delta and cannot weaken the final backing floor.
+`backingAssetOut` is the actual balance delta after the crvUSD-to-target AMM swap and every successful downstream conversion before the terminal yield-acquisition step. Target-AMM fees, downstream pool fees, converter loss, and slippage are therefore already deducted before `grossEntryProfit` and the reward are calculated. The configured terminal step then consumes `backingAssetToRoute`; its measured yield-token delta is valued through `convertToAssets()` and cannot weaken the final backing floor.
 
 If normalized backing output does not exceed crvUSD sold, gross entry profit and keeper compensation are zero and the transaction cannot pass any positive entry margin. Reward conversion rounds down so decimal normalization cannot overpay the keeper.
 
@@ -730,12 +761,12 @@ stepMinOut = floor(
 actualStepOut >= stepMinOut
 ```
 
-Examples are Curve `get_dy()` for a swap, the typed converter's deterministic quote for a stable wrapper conversion, and ERC-4626 `previewDeposit()` for the terminal deposit. Actual output is always measured by balance delta. Governance configures `executionBufferBps` per step, bounded only by the `10_000` bps denominator; deterministic converters and standards-compliant same-transaction ERC-4626 deposits can use zero, while swap steps receive a benchmarked nonzero allowance. The separately stored target AMM configuration carries its own `executionBufferBps` and uses the same quote/minimum equation for the initial crvUSD-to-target swap.
+Examples are Curve `get_dy()` for any swap—including a terminal frxUSD-to-sfrxUSD swap—the typed converter's deterministic quote for a stable wrapper conversion, and ERC-4626 `previewDeposit()` when the configured terminal step is a vault deposit. Actual output is always measured by balance delta. Governance configures `executionBufferBps` per step, bounded only by the `10_000` bps denominator; deterministic converters and standards-compliant same-transaction ERC-4626 deposits can use zero, while swap steps receive a benchmarked nonzero allowance. The separately stored target AMM configuration carries its own `executionBufferBps` and uses the same quote/minimum equation for the initial crvUSD-to-target swap.
 
 After all steps, V3 independently enforces:
 
 ```text
-normalizeDown(yieldToken.convertToAssets(actualYieldSharesReceived))
+normalizeDown(yieldToken.convertToAssets(actualYieldTokenReceived))
     >= crvUsdSold + entryMargin
 ```
 
@@ -747,7 +778,7 @@ The fallback branch separately enforces the target AMM's quote-relative output f
 
 ```text
 fully deployed:
-normalizeDown(yieldToken.convertToAssets(yieldSharesReceived))
+normalizeDown(yieldToken.convertToAssets(yieldTokenReceived))
 >= crvUsdSold
  + entryMargin
 
@@ -782,7 +813,7 @@ crvUsdReceived - keeperReward
  + selectedExitMargin
 ```
 
-Reward-token conversion and every trusted-value normalization round down. Exact-asset direct buyback uses ERC-4626 `previewWithdraw()` as an upward/conservative share bound, while expansion and surplus solvency use actual post-action shares valued downward through `convertToAssets()`.
+Reward-token conversion and every trusted-value normalization round down. Direct buyback sizes yield-token input downward through `convertToShares()` and executes the configured exact-input first unwind step, while expansion and surplus solvency value actual post-action yield-token balances downward through `convertToAssets()`.
 
 ## Asymmetric timing and carry
 
@@ -883,7 +914,7 @@ At `10,000` crvUSD and the initial `0.5 bps` entry margin, the minimum guarantee
 
 Open keepers are an explicit design choice. V3 cannot prevent an account from using flash liquidity to move the target AMM, call `expand()` or `contractViaAmm()`, and reverse the market trade afterward.
 
-The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the fixed ERC-4626 vault accounting itself is compromised. A real depeg of an approved backing asset remains outside nominal accounting.
+The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the fixed yield token's accounting interface itself is compromised. A real depeg of an approved backing asset remains outside nominal accounting.
 
 The execution-quality floor prevents the configured route from performing materially worse than the quote visible when V3 executes. It cannot detect a malicious keeper that moved the AMM before the V3 transaction and restores it afterward. Preventing that completely would require a trusted price reference, auction, private order flow, or keeper whitelist. Those mechanisms are outside the current open-keeper design.
 
@@ -1113,7 +1144,7 @@ event Expanded(
     uint256 crvUsdSold,
     uint256 targetReceived,
     uint256 backingAssetReceived,
-    uint256 yieldSharesReceived,
+    uint256 yieldTokenReceived,
     uint256 grossProfit,
     uint256 keeperReward,
     uint256 backingRetained,
@@ -1124,7 +1155,7 @@ event Expanded(
 event UndeployedBackingDeployed(
     address indexed caller,
     uint256 targetSpent,
-    uint256 yieldSharesReceived,
+    uint256 yieldTokenReceived,
     uint256 conversionCost
 );
 
@@ -1132,8 +1163,8 @@ event DirectBuyback(
     address indexed caller,
     uint256 crvUsdReceived,
     uint256 targetPaid,
-    uint256 underlyingPaid,
-    uint256 yieldSharesSpent,
+    uint256 backingPaid,
+    uint256 yieldTokenSpent,
     bool earlyExit
 );
 
@@ -1141,7 +1172,7 @@ event KeeperBuyback(
     address indexed keeper,
     address backingToken,
     uint256 backingSpent,
-    uint256 yieldSharesSpent,
+    uint256 yieldTokenSpent,
     uint256 crvUsdReceived,
     uint256 grossProfit,
     uint256 keeperReward,
@@ -1182,7 +1213,7 @@ event Executed(
 14. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
 15. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 16. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
-17. A path update preserves the deployment's fixed target asset, backing asset, and ERC-4626 yield token.
+17. A path update preserves the deployment's fixed target asset, backing asset, and final yield token.
 18. Every external conversion is non-reentrant and uses measured balance deltas.
 19. Only the governance owner can execute arbitrary targets or calldata.
 20. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
@@ -1191,9 +1222,11 @@ event Executed(
 23. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
 24. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
 25. A failed or below-minimum expansion cannot extend the normal-exit timer.
-26. Direct buyback never redeems yield shares for payout value that available `undeployedBacking` can satisfy.
-27. Trusted yield valuation uses ERC-4626 `convertToAssets()` and downward normalization; it never rounds backing upward.
-28. Any action that removes yield shares computes trusted value spent from the complete pre/post held-share positions and actual deltas.
+26. Direct buyback never unwinds yield tokens for payout value that available `undeployedBacking` can satisfy.
+27. Trusted yield valuation uses the fixed yield token's `convertToAssets()` and downward normalization; it never rounds backing upward.
+28. Any action that removes yield-token units computes trusted value spent from the complete pre/post held positions and actual deltas.
+29. A fully deployed expansion succeeds only when the configured route itself ends with a measured balance increase in the fixed `yieldToken`; V3 performs no implicit post-route deposit.
+30. The terminal yield-acquisition step and first yield-unwind step are typed route data with fixed tokens, venues, protocol minima, and V3 as recipient.
 
 ## Risks
 
@@ -1219,7 +1252,7 @@ A USDT-facing AMM combined with an sUSDS yield position crosses USDT, DAI, USDS,
 
 ### Oracle and preview manipulation
 
-Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the fixed vault's ERC-4626 conversion functions, final nominal-profit assertions, deadlines, available inventory, and the total deployed-exposure bound. Governance is responsible for approving a vault whose share-to-underlying accounting is acceptable for backing.
+Target-AMM spot quotes, route previews, and yield-token conversion functions can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the fixed yield token's conversion functions, final nominal-profit assertions, deadlines, available inventory, and the total deployed-exposure bound. Governance is responsible for approving a final yield token whose unit-to-backing accounting is acceptable.
 
 ### MEV
 
@@ -1249,7 +1282,7 @@ A backing-depeg guard is a possible later risk-control layer, not core V3 accoun
 
 For a USDT-facing deployment, candidate observations include a robust USDT/USD oracle and time-weighted USDT/USDC or USDT/USDS markets that are independent of the designated crvUSD/USDT execution AMM. A production design would need explicit staleness rules, minimum liquidity and observation windows, treatment of disagreement between references, and protection against correlated stablecoin failures. No single comparison to another governance-approved stablecoin proves dollar parity.
 
-Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or underlying while preserving contraction, redemption, slow wind-down, and owner recovery actions that reduce that exposure. For a yield token, the relevant checks are the approved underlying's external value and the vault's actual redemption behavior; an illiquid share-market quote or `convertToAssets()` alone is not a complete depeg test.
+Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or backing asset while preserving contraction, route-defined unwind, slow wind-down, and owner recovery actions that reduce that exposure. For a yield token, the relevant checks are the approved backing asset's external value, the final token's accounting behavior, and actual unwind-route liquidity; an illiquid share-market quote or `convertToAssets()` alone is not a complete depeg test.
 
 ## Remaining deferred decisions
 
@@ -1266,6 +1299,10 @@ The following are deliberately unresolved:
     > "inputToken.forceApprove(target.swapPool, inputAmount);
         ICurveStableSwapPool(target.swapPool).exchange(assetIndex, targetIndex, inputAmount, minOut);
         inputToken.forceApprove(target.swapPool, 0);"
+    > "uint256 received = target.token == inputToken
+                ? swapInputAmount
+                : _swapViaCurve(IERC20(inputToken), inputToken, target, swapInputAmount, minOut);"
+    > "shares = _returnOrDeposit(target.token, target.vault, targetAmount);"
 [2] https://github.com/curvefi/curve-stablecoin/blob/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a/curve_stablecoin/ControllerFactory.vy — Curve ControllerFactory debt-ceiling allocation
     > "diff: uint256 = min(old_debt_residual - debt_ceiling, STABLECOIN.balanceOf(addr))"
     > "if debt_ceiling > old_debt_residual:
@@ -1302,3 +1339,11 @@ FeeSplitter excess_receiver: 0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00"
     > "MUST round down towards 0"
     > "MUST return as close to and no more than the exact amount of Vault shares that would be minted in a deposit call in the same transaction"
     > "MUST return as close to and no fewer than the exact amount of Vault shares that would be burned in a withdraw call in the same transaction"
+[13] https://etherscan.io/address/0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6 — sfrxUSD live read-only conversion and disabled deposit state
+    > "Ethereum block: 25851930
+sfrxUSD proxy: 0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6
+asset()(address)=0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29
+convertToAssets(1e18)(uint256)=1207846223556964914
+convertToShares(1e18)(uint256)=827919962406404468
+maxDeposit(0x0000000000000000000000000000000000000001)(uint256)=0
+previewDeposit(1e18)(uint256)=0"
