@@ -86,7 +86,7 @@ Any account can sell crvUSD directly to V3 through the buyback function while th
 
 ### Fee receiver
 
-The fee receiver is the governance-configured crvUSD `FeeSplitter`. It receives idle crvUSD only against realized surplus above the amount required to support outstanding externalized crvUSD and pending obligations. Backing tokens and principal yield-token shares are never withdrawn as fees.
+Each V3 PegKeeper stores its own governance-configured `feeReceiver` directly. It does not resolve the surplus recipient through `regulator.fee_receiver()`. This per-PegKeeper override is required during gradual migration because live V2 PegKeepers may continue using the shared regulator's generic `FeeCollector` while V3 pays crvUSD to the `FeeSplitter`. The V3 receiver gets idle crvUSD only against realized surplus above the amount required to support outstanding externalized crvUSD and pending obligations. Backing tokens and principal yield-token shares are never withdrawn as fees.
 
 ## State model
 
@@ -994,9 +994,15 @@ The fee claim does not reset `lastExpansionAt`. Resetting the global maturity ti
 
 The configured initial receiver is Curve's crvUSD `FeeSplitter`. Its dispatch logic reads and distributes its crvUSD balance, so directly transferred V3 fees join the same crvUSD-denominated revenue flow as ControllerFactory mint-market fees.[10] At Ethereum block `25,851,058`, ControllerFactory's `fee_receiver()` was the FeeSplitter at `0x2dFd89449faff8a532790667baB21cF733C064f2`. Its two configured receiver weights were `5,000` each: `0xE8d1E2531761406Af1615A6764B0d5fF52736F56` and `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the latter FeeCollector was also the excess receiver.[10]
 
-V2 uses a different revenue path despite being part of the crvUSD system. Its `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting or sending crvUSD.[8] At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose receiver was the generic FeeCollector at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the collector's CowSwap burner converts source fee tokens toward its crvUSD target.[9][11] V2 therefore bypasses the FeeSplitter, while V3 deliberately reaches it by paying crvUSD directly.
+V2 uses a different revenue path despite being part of the crvUSD system. Its `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting or sending crvUSD.[8] At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose receiver was the generic FeeCollector at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the collector's CowSwap burner converts source fee tokens toward its crvUSD target.[9][11] V2 therefore bypasses the FeeSplitter, while V3 deliberately reaches it by paying crvUSD directly. Governance must not change the shared regulator receiver to the FeeSplitter merely to serve V3: that would also redirect remaining V2 LP-token profit into a receiver whose normal distribution path expects crvUSD.
 
-A governance update may replace `feeReceiver`, but normal surplus claims always transfer crvUSD. Governance must point it to a contract whose accounting and distribution flow accept direct crvUSD transfers; changing the receiver does not change the exposure or backing equations.
+The V3-local update surface is:
+
+```solidity
+function setFeeReceiver(address newFeeReceiver) external onlyOwner;
+```
+
+The call rejects the zero address and emits the old and new receiver. It changes only this V3 deployment; it does not call or mutate the shared regulator. Normal surplus claims always transfer crvUSD, so governance must point it to a contract whose accounting and distribution flow accept direct crvUSD transfers. Changing the receiver does not change the exposure or backing equations.
 
 ## Curve compatibility
 
@@ -1025,7 +1031,7 @@ Required controls:
 - lower `maxDeployedCrvUsd` to stop further exposure growth;
 - governance updates to `maxDeployedCrvUsd`;
 - atomic governance replacement of the target AMM and paths while preserving fixed token endpoints;
-- fee-receiver update;
+- direct per-PegKeeper `feeReceiver` update independent of any regulator receiver;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
@@ -1109,6 +1115,7 @@ event KeeperBuyback(
 
 event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
 event DirectionPaused(uint8 indexed direction, bool paused);
+event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 event SurplusClaimed(
     address indexed receiver,
     uint256 crvUsdTransferred,
@@ -1133,22 +1140,23 @@ event Executed(
 7. Keeper rewards and fee claims cannot consume required principal; a fee claim increases `deployedCrvUsd` only by an equal or smaller amount of protocol surplus.
 8. Caller-supplied minimums can only make execution stricter.
 9. Callers cannot choose routes, venues, output recipients, or reward recipients.
-10. Active paths always connect the configured endpoints.
-11. Successful downstream execution leaves no material unaccounted intermediate-token balance.
-12. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.
-13. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
-14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
-15. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
-16. A path update preserves the deployment's fixed target asset, backing asset, yield token, and accounting adapter.
-17. Every external conversion is non-reentrant and uses measured balance deltas.
-18. Only the governance owner can execute arbitrary targets or calldata.
-19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
-20. Combined trusted backing remaining after rewards, later deployment costs, and crvUSD fee claims is never below `deployedCrvUsd`.
-21. Expansion is not delayed when either approved branch satisfies its entry floor.
-22. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
-23. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
-24. A failed or below-minimum expansion cannot extend the normal-exit timer.
-25. Direct buyback never redeems yield shares for payout value that available `undeployedBacking` can satisfy.
+10. A V3 surplus claim always uses that V3 deployment's local `feeReceiver`; changing a shared regulator receiver cannot redirect it.
+11. Active paths always connect the configured endpoints.
+12. Successful downstream execution leaves no material unaccounted intermediate-token balance.
+13. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.
+14. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
+15. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
+16. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
+17. A path update preserves the deployment's fixed target asset, backing asset, yield token, and accounting adapter.
+18. Every external conversion is non-reentrant and uses measured balance deltas.
+19. Only the governance owner can execute arbitrary targets or calldata.
+20. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
+21. Combined trusted backing remaining after rewards, later deployment costs, and crvUSD fee claims is never below `deployedCrvUsd`.
+22. Expansion is not delayed when either approved branch satisfies its entry floor.
+23. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
+24. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
+25. A failed or below-minimum expansion cannot extend the normal-exit timer.
+26. Direct buyback never redeems yield shares for payout value that available `undeployedBacking` can satisfy.
 
 ## Risks
 
