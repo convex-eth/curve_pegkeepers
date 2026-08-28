@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation has started in Vyper `0.3.10`. The current foundation pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; initializes governance parameters; keeps all execution directions paused until their routes exist; excludes unsolicited balances from trusted accounting; and implements governance-only ordinary-call recovery. Expansion, typed routes, buyback, contraction, and surplus settlement remain to be implemented in later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It now also deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records the retained target asset as `undeployedBacking`. This first economic branch is intentionally target-only: typed downstream yield deployment, buyback, contraction, and surplus settlement remain for later verified slices.
 
 ## Toolchain
 
@@ -162,6 +162,8 @@ src/
 test/
 ├── DaiUsdsConverter.t.sol
 ├── PegKeeperLifecycle.t.sol
+├── PegKeeperV3ExpansionFork.t.sol
+├── PegKeeperV3Expansion.t.sol
 └── PegKeeperV3Foundation.t.sol
 ```
 
@@ -194,6 +196,14 @@ Current V2 PegKeepers covered by the retirement test:
 ### `PegKeeperV3FoundationTest`
 
 Deploys the Vyper V3 foundation against local token, Factory, yield-accounting, and two-coin AMM contracts. It verifies fixed endpoint and both target-pair orderings, initial parameter values, safe fully paused startup, constructor rejection of bad pool/yield/decimal configurations, overlapping admin roles, or missing yield-conversion accounting, exclusion of unsolicited backing from accounting, the requirement for benchmarked downstream and fallback gas limits before expansion can be enabled, emergency-admin pause-only authority, pause and execution events, and owner-only ordinary-call execution with value forwarding, bounded large input/return data, and bubbled target reverts.
+
+### `PegKeeperV3ExpansionTest`
+
+Exercises the first economic V3 branch against a deterministic two-coin pool. It verifies governance expansion-safety configuration, the minimum of idle inventory, Factory allocation, and local capacity, protocol-calculated target-AMM quote floors, exact crvUSD spending, measured target receipts, target-denominated keeper rewards, retained `undeployedBacking`, timer updates, allowance reset, event fields, and complete rollback when the retained entry margin is unavailable.
+
+### `PegKeeperV3ExpansionForkTest`
+
+Deploys V3 against the live USDT/crvUSD pool and ControllerFactory at block `25,837,866`, allocates `1,000,000 crvUSD` through the real Factory, creates an above-peg opportunity by buying crvUSD with USDT, and executes a `100,000 crvUSD` fallback expansion. It verifies the live pool's `int128` quote/exchange ABI, crvUSD spending, no-return USDT reward transfer, retained USDT accounting, and the final backing invariant.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 

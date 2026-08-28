@@ -6,6 +6,23 @@ interface IPegKeeperV3 {
     event Executed(
         address indexed target, uint256 value, bytes4 indexed selector, bytes32 dataHash
     );
+    event ExpansionConfigUpdated(
+        uint256 targetAmmExecutionBufferBps,
+        uint256 minDownstreamAttemptGas,
+        uint256 fallbackSettlementGasReserve
+    );
+    event Expanded(
+        address indexed keeper,
+        uint256 crvUsdSold,
+        uint256 targetReceived,
+        uint256 backingAssetReceived,
+        uint256 yieldTokenReceived,
+        uint256 grossProfit,
+        uint256 keeperReward,
+        uint256 backingRetained,
+        bool deployedToYield,
+        uint256 unlockTime
+    );
 
     function version() external view returns (string memory);
 
@@ -33,6 +50,7 @@ interface IPegKeeperV3 {
     function min_deployment_time() external view returns (uint256);
     function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
+    function target_amm_execution_buffer_bps() external view returns (uint256);
     function min_downstream_attempt_gas() external view returns (uint256);
     function fallback_settlement_gas_reserve() external view returns (uint256);
 
@@ -49,6 +67,21 @@ interface IPegKeeperV3 {
     function all_execution_paused() external view returns (bool);
 
     function set_direction_paused(uint256 direction, bool paused) external;
+    function set_expansion_config(
+        uint256 targetAmmExecutionBufferBps,
+        uint256 minDownstreamAttemptGas,
+        uint256 fallbackSettlementGasReserve
+    ) external;
+    function available_expansion() external view returns (uint256);
+    function expand(uint256 crvUsdAmount)
+        external
+        returns (
+            uint256 crvUsdSold,
+            uint256 backingRetained,
+            uint256 yieldTokenReceived,
+            uint256 keeperReward,
+            bool deployedToYield
+        );
     function execute(address target, uint256 value, bytes calldata data)
         external
         payable

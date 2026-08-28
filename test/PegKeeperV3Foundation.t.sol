@@ -410,6 +410,20 @@ contract PegKeeperV3FoundationTest is Test {
         assertEq(encodedResult.length, 65_535);
     }
 
+    function test_unknownSelectorRevertsButEmptyEtherTransferSucceeds() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+
+        (bool unknownSucceeded,) = address(pegKeeper).call(hex"deadbeef");
+        assertFalse(unknownSucceeded);
+
+        vm.deal(address(this), 1 ether);
+        (bool transferSucceeded,) = address(pegKeeper).call{value: 1 ether}("");
+        assertTrue(transferSucceeded);
+        assertEq(address(pegKeeper).balance, 1 ether);
+    }
+
     function _deploy(
         address targetAmm_,
         address targetAsset_,

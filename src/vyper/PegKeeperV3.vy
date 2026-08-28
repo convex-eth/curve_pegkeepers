@@ -3,18 +3,23 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Initial implementation foundation: fixed endpoints, trusted accounting, roles, pauses, and recovery execution.
+@dev Incremental implementation: foundation controls plus fixed target-AMM fallback expansion.
 """
 
 interface ERC20:
     def balanceOf(_owner: address) -> uint256: view
     def decimals() -> uint256: view
+    def approve(_spender: address, _amount: uint256): nonpayable
+    def transfer(_recipient: address, _amount: uint256): nonpayable
 
 interface ControllerFactory:
     def stablecoin() -> address: view
+    def debt_ceiling(_account: address) -> uint256: view
 
 interface TwoCoinPool:
     def coins(_index: uint256) -> address: view
+    def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
+    def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
 
 interface YieldToken:
     def asset() -> address: view
@@ -33,6 +38,23 @@ event Executed:
     value: uint256
     selector: indexed(bytes4)
     data_hash: bytes32
+
+event ExpansionConfigUpdated:
+    target_amm_execution_buffer_bps: uint256
+    min_downstream_attempt_gas: uint256
+    fallback_settlement_gas_reserve: uint256
+
+event Expanded:
+    keeper: indexed(address)
+    crv_usd_sold: uint256
+    target_received: uint256
+    backing_asset_received: uint256
+    yield_token_received: uint256
+    gross_profit: uint256
+    keeper_reward: uint256
+    backing_retained: uint256
+    deployed_to_yield: bool
+    unlock_time: uint256
 
 
 version: public(constant(String[8])) = "3.0.0"
@@ -71,6 +93,7 @@ max_keeper_reward: public(uint256)
 min_deployment_time: public(uint256)
 min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
+target_amm_execution_buffer_bps: public(uint256)
 min_downstream_attempt_gas: public(uint256)
 fallback_settlement_gas_reserve: public(uint256)
 
@@ -247,6 +270,143 @@ def protocol_surplus() -> uint256:
 
 
 @external
+@view
+def available_expansion() -> uint256:
+    available: uint256 = CRV_USD.balanceOf(self)
+
+    if self.max_deployed_crvusd <= self.deployed_crvusd:
+        return 0
+    remaining_capacity: uint256 = self.max_deployed_crvusd - self.deployed_crvusd
+    if remaining_capacity < available:
+        available = remaining_capacity
+
+    factory_allocation: uint256 = FACTORY.debt_ceiling(self)
+    if factory_allocation <= self.deployed_crvusd:
+        return 0
+    remaining_allocation: uint256 = factory_allocation - self.deployed_crvusd
+    if remaining_allocation < available:
+        available = remaining_allocation
+
+    return available
+
+
+@external
+def set_expansion_config(
+    _target_amm_execution_buffer_bps: uint256,
+    _min_downstream_attempt_gas: uint256,
+    _fallback_settlement_gas_reserve: uint256,
+):
+    assert msg.sender == self.admin, "not admin"
+    assert _target_amm_execution_buffer_bps <= BPS, "buffer too high"
+    assert _fallback_settlement_gas_reserve > 0, "gas reserve"
+    assert _min_downstream_attempt_gas > _fallback_settlement_gas_reserve, "gas reserve"
+
+    self.target_amm_execution_buffer_bps = _target_amm_execution_buffer_bps
+    self.min_downstream_attempt_gas = _min_downstream_attempt_gas
+    self.fallback_settlement_gas_reserve = _fallback_settlement_gas_reserve
+
+    log ExpansionConfigUpdated(
+        _target_amm_execution_buffer_bps,
+        _min_downstream_attempt_gas,
+        _fallback_settlement_gas_reserve,
+    )
+
+
+@external
+@nonreentrant("lock")
+def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, bool):
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.expansion_paused, "expansion paused"
+    assert _crv_usd_amount >= self.min_expansion_amount, "expansion too small"
+
+    crv_usd_before: uint256 = CRV_USD.balanceOf(self)
+    assert _crv_usd_amount <= crv_usd_before, "insufficient idle"
+
+    deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
+    assert deployed_after <= self.max_deployed_crvusd, "max deployed"
+    assert deployed_after <= FACTORY.debt_ceiling(self), "factory allocation"
+
+    crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
+    target_index: int128 = convert(self.target_amm_target_index, int128)
+    target_quote: uint256 = TARGET_AMM.get_dy(
+        crv_usd_index,
+        target_index,
+        _crv_usd_amount,
+    )
+    target_minimum: uint256 = target_quote * (
+        BPS - self.target_amm_execution_buffer_bps
+    ) / BPS
+
+    target_before: uint256 = TARGET_ASSET.balanceOf(self)
+    CRV_USD.approve(TARGET_AMM.address, _crv_usd_amount)
+    TARGET_AMM.exchange(
+        crv_usd_index,
+        target_index,
+        _crv_usd_amount,
+        target_minimum,
+    )
+    CRV_USD.approve(TARGET_AMM.address, 0)
+
+    crv_usd_after: uint256 = CRV_USD.balanceOf(self)
+    assert crv_usd_before >= crv_usd_after, "bad crvUSD delta"
+    crv_usd_sold: uint256 = crv_usd_before - crv_usd_after
+    assert crv_usd_sold == _crv_usd_amount, "bad crvUSD spend"
+
+    target_after_swap: uint256 = TARGET_ASSET.balanceOf(self)
+    assert target_after_swap >= target_before, "bad target delta"
+    target_received: uint256 = target_after_swap - target_before
+    assert target_received >= target_minimum, "target minimum"
+
+    target_value: uint256 = self._normalize_target(target_received)
+    gross_profit: uint256 = 0
+    if target_value > crv_usd_sold:
+        gross_profit = target_value - crv_usd_sold
+
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    if keeper_reward_value > self.max_keeper_reward:
+        keeper_reward_value = self.max_keeper_reward
+    keeper_reward: uint256 = keeper_reward_value / TARGET_MULTIPLIER
+
+    if keeper_reward > 0:
+        keeper_balance_before: uint256 = TARGET_ASSET.balanceOf(msg.sender)
+        TARGET_ASSET.transfer(msg.sender, keeper_reward)
+        keeper_balance_after: uint256 = TARGET_ASSET.balanceOf(msg.sender)
+        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
+        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+
+    target_after_reward: uint256 = TARGET_ASSET.balanceOf(self)
+    assert target_after_swap >= target_after_reward, "bad reward spend"
+    assert target_after_swap - target_after_reward == keeper_reward, "bad reward spend"
+    assert target_after_reward >= target_before, "bad retained delta"
+    target_retained: uint256 = target_after_reward - target_before
+
+    entry_margin: uint256 = crv_usd_sold * self.entry_min_profit_ppm / PPM
+    assert self._normalize_target(target_retained) >= crv_usd_sold + entry_margin, "entry margin"
+
+    self.undeployed_backing += target_retained
+    self.deployed_crvusd = deployed_after
+    self.last_expansion_at = block.timestamp
+
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
+    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+
+    log Expanded(
+        msg.sender,
+        crv_usd_sold,
+        target_received,
+        0,
+        0,
+        gross_profit,
+        keeper_reward,
+        target_retained,
+        False,
+        block.timestamp + self.min_deployment_time,
+    )
+
+    return crv_usd_sold, target_retained, 0, keeper_reward, False
+
+
+@external
 def set_direction_paused(_direction: uint256, _paused: bool):
     assert msg.sender == self.admin or msg.sender == self.emergency_admin, "not authorized"
     if msg.sender == self.emergency_admin:
@@ -296,4 +456,4 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
 @external
 @payable
 def __default__():
-    pass
+    assert len(msg.data) == 0, "unknown selector"

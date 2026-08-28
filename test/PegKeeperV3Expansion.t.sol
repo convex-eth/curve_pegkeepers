@@ -1,0 +1,327 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test} from "forge-std/Test.sol";
+
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+
+contract ExpansionToken {
+    uint8 public immutable decimals;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
+
+    constructor(uint8 decimals_) {
+        decimals = decimals_;
+    }
+
+    function mint(address account, uint256 amount) external {
+        balanceOf[account] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external returns (bool) {
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= amount, "allowance");
+        allowance[from][msg.sender] = allowed - amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        return true;
+    }
+}
+
+contract ExpansionYieldToken is ExpansionToken {
+    address public immutable asset;
+
+    constructor(address asset_) ExpansionToken(18) {
+        asset = asset_;
+    }
+
+    function convertToAssets(uint256 shares) external pure returns (uint256) {
+        return shares;
+    }
+
+    function convertToShares(uint256 assets) external pure returns (uint256) {
+        return assets;
+    }
+}
+
+contract ExpansionFactory {
+    address public immutable stablecoin;
+    mapping(address => uint256) public debt_ceiling;
+
+    constructor(address stablecoin_) {
+        stablecoin = stablecoin_;
+    }
+
+    function setDebtCeiling(address account, uint256 amount) external {
+        debt_ceiling[account] = amount;
+    }
+}
+
+contract ExpansionPool {
+    uint256 internal constant PPM = 1_000_000;
+
+    ExpansionToken public immutable crvUsd;
+    ExpansionToken public immutable targetAsset;
+    uint256 public quotePricePpm = 1_000_100;
+    uint256 public executionPricePpm = 1_000_100;
+
+    constructor(ExpansionToken crvUsd_, ExpansionToken targetAsset_) {
+        crvUsd = crvUsd_;
+        targetAsset = targetAsset_;
+    }
+
+    function coins(uint256 index) external view returns (address) {
+        if (index == 0) return address(targetAsset);
+        require(index == 1, "coin index");
+        return address(crvUsd);
+    }
+
+    function setPrices(uint256 quotePricePpm_, uint256 executionPricePpm_) external {
+        quotePricePpm = quotePricePpm_;
+        executionPricePpm = executionPricePpm_;
+    }
+
+    function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256) {
+        require(i == 1 && j == 0, "indices");
+        return dx * quotePricePpm / (PPM * 1e12);
+    }
+
+    function exchange(int128 i, int128 j, uint256 dx, uint256 minDy)
+        external
+        returns (uint256 amountOut)
+    {
+        require(i == 1 && j == 0, "indices");
+        amountOut = dx * executionPricePpm / (PPM * 1e12);
+        require(amountOut >= minDy, "slippage");
+        require(crvUsd.transferFrom(msg.sender, address(this), dx), "transfer");
+        targetAsset.mint(msg.sender, amountOut);
+    }
+}
+
+contract PegKeeperV3ExpansionTest is Test {
+    uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
+    uint256 internal constant MIN_EXPANSION = 10_000e18;
+    uint256 internal constant TARGET_MULTIPLIER = 1e12;
+
+    address internal governance = makeAddr("governance");
+    address internal emergencyAdmin = makeAddr("emergencyAdmin");
+    address internal feeReceiver = makeAddr("feeReceiver");
+    address internal keeper = makeAddr("keeper");
+
+    ExpansionToken internal crvUsd;
+    ExpansionToken internal targetAsset;
+    ExpansionToken internal backingAsset;
+    ExpansionYieldToken internal yieldToken;
+    ExpansionFactory internal factory;
+    ExpansionPool internal pool;
+    IPegKeeperV3 internal pegKeeper;
+
+    function setUp() public {
+        crvUsd = new ExpansionToken(18);
+        targetAsset = new ExpansionToken(6);
+        backingAsset = new ExpansionToken(18);
+        yieldToken = new ExpansionYieldToken(address(backingAsset));
+        factory = new ExpansionFactory(address(crvUsd));
+        pool = new ExpansionPool(crvUsd, targetAsset);
+        pegKeeper = _deploy();
+        factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
+    }
+
+    function test_adminConfiguresExpansionSafety() public {
+        vm.expectEmit(false, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.ExpansionConfigUpdated(2, 500_000, 100_000);
+        vm.prank(governance);
+        pegKeeper.set_expansion_config(2, 500_000, 100_000);
+
+        assertEq(pegKeeper.target_amm_execution_buffer_bps(), 2);
+        assertEq(pegKeeper.min_downstream_attempt_gas(), 500_000);
+        assertEq(pegKeeper.fallback_settlement_gas_reserve(), 100_000);
+    }
+
+    function test_availableExpansionUsesIdleFactoryAndConfiguredBounds() public {
+        crvUsd.mint(address(pegKeeper), 20_000_000e18);
+        factory.setDebtCeiling(address(pegKeeper), 18_000_000e18);
+
+        assertEq(pegKeeper.available_expansion(), 18_000_000e18);
+    }
+
+    function test_fallbackExpansionPaysKeeperAndAccountsMeasuredBacking() public {
+        uint256 amount = MIN_EXPANSION;
+        crvUsd.mint(address(pegKeeper), amount);
+        _enableExpansion(0);
+        vm.warp(1_800_000_000);
+
+        uint256 expectedTarget = pool.get_dy(1, 0, amount);
+        uint256 grossProfit = expectedTarget * TARGET_MULTIPLIER - amount;
+        uint256 rewardValue = grossProfit * 3_000 / 10_000;
+        uint256 expectedReward = rewardValue / TARGET_MULTIPLIER;
+        uint256 expectedRetained = expectedTarget - expectedReward;
+
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.Expanded(
+            keeper,
+            amount,
+            expectedTarget,
+            0,
+            0,
+            grossProfit,
+            expectedReward,
+            expectedRetained,
+            false,
+            block.timestamp + 2 days
+        );
+        vm.prank(keeper);
+        (
+            uint256 sold,
+            uint256 retained,
+            uint256 yieldReceived,
+            uint256 reward,
+            bool deployedToYield
+        ) = pegKeeper.expand(amount);
+
+        assertEq(sold, amount);
+        assertEq(retained, expectedRetained);
+        assertEq(yieldReceived, 0);
+        assertEq(reward, expectedReward);
+        assertFalse(deployedToYield);
+        assertEq(targetAsset.balanceOf(keeper), expectedReward);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), expectedRetained);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), 0);
+        assertEq(pegKeeper.deployed_crvusd(), amount);
+        assertEq(pegKeeper.undeployed_backing(), expectedRetained);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(pegKeeper.last_expansion_at(), block.timestamp);
+        assertEq(pegKeeper.trusted_backing_value(), expectedRetained * TARGET_MULTIPLIER);
+        assertEq(pegKeeper.protocol_surplus(), expectedRetained * TARGET_MULTIPLIER - amount);
+        assertEq(crvUsd.allowance(address(pegKeeper), address(pool)), 0);
+    }
+
+    function test_expansionRevertsAndRollsBackWithoutRetainedMargin() public {
+        uint256 amount = MIN_EXPANSION;
+        crvUsd.mint(address(pegKeeper), amount);
+        pool.setPrices(1_000_000, 1_000_000);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("entry margin");
+        pegKeeper.expand(amount);
+
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), amount);
+        assertEq(crvUsd.balanceOf(address(pool)), 0);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), 0);
+        assertEq(targetAsset.balanceOf(keeper), 0);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+        assertEq(pegKeeper.last_expansion_at(), 0);
+    }
+
+    function test_expansionEnforcesTargetAmmQuoteFloor() public {
+        uint256 amount = MIN_EXPANSION;
+        crvUsd.mint(address(pegKeeper), amount);
+        pool.setPrices(1_001_000, 1_000_900);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("slippage");
+        pegKeeper.expand(amount);
+    }
+
+    function test_expansionRejectsAmountBelowMinimum() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("expansion too small");
+        pegKeeper.expand(MIN_EXPANSION - 1);
+    }
+
+    function test_expansionRejectsAmountAboveIdleInventory() public {
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("insufficient idle");
+        pegKeeper.expand(MIN_EXPANSION);
+    }
+
+    function test_expansionRejectsAmountAboveFactoryAllocation() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        factory.setDebtCeiling(address(pegKeeper), MIN_EXPANSION - 1);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("factory allocation");
+        pegKeeper.expand(MIN_EXPANSION);
+    }
+
+    function test_expansionRejectsAmountAboveConfiguredCapacity() public {
+        uint256 amount = MAX_DEPLOYED + 1;
+        crvUsd.mint(address(pegKeeper), amount);
+        factory.setDebtCeiling(address(pegKeeper), amount);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert("max deployed");
+        pegKeeper.expand(amount);
+    }
+
+    function test_onlyAdminCanConfigureExpansion() public {
+        vm.prank(keeper);
+        vm.expectRevert("not admin");
+        pegKeeper.set_expansion_config(0, 500_000, 100_000);
+    }
+
+    function test_expansionConfigRejectsInvalidBounds() public {
+        vm.startPrank(governance);
+        vm.expectRevert("buffer too high");
+        pegKeeper.set_expansion_config(10_001, 500_000, 100_000);
+        vm.expectRevert("gas reserve");
+        pegKeeper.set_expansion_config(0, 100_000, 100_000);
+        vm.stopPrank();
+    }
+
+    function _enableExpansion(uint256 bufferBps) internal {
+        vm.startPrank(governance);
+        pegKeeper.set_expansion_config(bufferBps, 500_000, 100_000);
+        pegKeeper.set_direction_paused(5, false);
+        pegKeeper.set_direction_paused(0, false);
+        vm.stopPrank();
+    }
+
+    function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory constructorArgs = abi.encode(
+            address(factory),
+            address(pool),
+            address(targetAsset),
+            address(backingAsset),
+            address(yieldToken),
+            feeReceiver,
+            governance,
+            emergencyAdmin,
+            MAX_DEPLOYED
+        );
+        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
+        address deployed;
+
+        assembly ("memory-safe") {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                let size := returndatasize()
+                returndatacopy(0, 0, size)
+                revert(0, size)
+            }
+        }
+        deployedPegKeeper = IPegKeeperV3(deployed);
+    }
+}

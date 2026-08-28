@@ -1158,7 +1158,7 @@ Required controls:
 - governance updates to `maxDeployedCrvUsd`;
 - atomic governance replacement of the target AMM and paths while preserving fixed token endpoints;
 - direct per-PegKeeper `feeReceiver` update independent of any regulator receiver;
-- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
+- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, `targetAmmExecutionBufferBps`, `minDownstreamAttemptGas`, and `fallbackSettlementGasReserve`;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
 - expansion pause for contraction-only slow wind-down.
@@ -1238,7 +1238,12 @@ event KeeperBuyback(
 );
 
 event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
-event DirectionPaused(uint8 indexed direction, bool paused);
+event ExpansionConfigUpdated(
+    uint256 targetAmmExecutionBufferBps,
+    uint256 minDownstreamAttemptGas,
+    uint256 fallbackSettlementGasReserve
+);
+event DirectionPaused(uint256 indexed direction, bool paused);
 event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 event SurplusClaimed(
     address indexed receiver,
