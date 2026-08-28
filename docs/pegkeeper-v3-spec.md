@@ -574,7 +574,7 @@ The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(shares)` 
 
 Under-sizing may leave a second profitable action available, and a flat per-call cap can be collected again if another complete profitable call succeeds. This is accepted: each reward is a percentage of independently realized post-route gross profit, each call leaves V3 with its configured post-reward margin, and the keeper pays additional gas. `minExpansionAmount` blocks true dust without adding quote probes or a full-path search.
 
-`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. It should be economically material and may be capacity-relative. Trade and rolling-flow caps remain protocol controls rather than keeper inputs.
+`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. Trade and rolling-flow caps remain protocol controls rather than keeper inputs.
 
 ## Profitability and execution controls
 
@@ -735,7 +735,7 @@ selectedBranchBackingRetainedAfterReward
 >= crvUsdSold + entryMargin
 ```
 
-The initial configuration is `entryMinProfitPpm = 50`, equal to `0.5 bps`. The ppm unit is deliberate because an integer basis-point parameter cannot represent half a basis point. This margin applies after realized route costs, terminal rounding, and keeper reward. The deployed branch must complete the downstream route while the fallback branch must retain target asset covering principal; either branch must then retain the additional `0.5 bps` margin. Later target-to-yield conversion remains optional and may spend only existing surplus.
+The initial configuration is `entryMinProfitPpm = 50`, equal to `0.5 bps`. The ppm unit is deliberate because an integer basis-point parameter cannot represent half a basis point. Governance may reduce this parameter as low as `0`, but V3 does not support a negative entry margin. At zero, the selected branch must still break even after realized route costs, terminal rounding, and keeper reward. At the initial setting, the deployed branch must complete the downstream route while the fallback branch must retain target asset covering principal; either branch must then retain the additional `0.5 bps` margin. Later target-to-yield conversion remains optional and may spend only existing surplus.
 
 Expansion should not wait for a timer, EMA, accumulated yield, or downstream route recovery. If the target-AMM leg can complete into acceptable target backing, delaying it gives away the above-peg opportunity.
 
@@ -789,13 +789,13 @@ At a simple annualized stablecoin yield of `4%` to `5%`, earning one basis point
 5% APR: 17.5 hours
 ```
 
-One full day earns approximately `1.10` to `1.37` basis points at those rates. A one-day minimum deployment time is therefore a reasonable initial reference for exposure that reached the yield token. Undeployed backing does not earn this carry; its holding period is justified only by supply anti-churn and may need a separate policy after live simulation.
+The initial `minDeploymentTime` is `2 days` (`172_800` seconds). At those illustrative rates, two days earn approximately `2.19` to `2.74` basis points for exposure that reached the yield token. Undeployed backing does not earn this carry, but the same global timer applies to both backing sources because its core purpose is supply anti-churn rather than per-position yield attribution. Governance can update the duration.
 
 The timer must not be used as a solvency assumption. Yield can change, stop, or become impaired. Every contraction still has to pass its realized final-value condition. Carry only improves the economics of holding exposure through short-lived volatility.
 
 ### Material-expansion timer
 
-A single global `lastExpansionAt` is acceptable for the initial design if only a material successful expansion can reset it. The keeper chooses the amount, but `expand()` can complete only when the sale meets `minExpansionAmount` and receives acceptable final backing after route costs and the keeper reward.
+The design uses one global `lastExpansionAt`; it does not use tranches or maturity buckets. Only a material successful expansion can reset it. The keeper chooses the amount, but `expand()` can complete only when the sale meets the initial `10_000e18` crvUSD `minExpansionAmount` and receives acceptable final backing after route costs and the keeper reward.
 
 The normal-exit timer is:
 
@@ -803,15 +803,17 @@ The normal-exit timer is:
 earlyExit =
     deployedCrvUsd > 0
     && block.timestamp < lastExpansionAt + minDeploymentTime
+
+minDeploymentTime = 2 days  // initial value; governance-changeable
 ```
 
-A caller can still flash-borrow liquidity, buy crvUSD to create an expansion opportunity, request the minimum accepted expansion, and sell back afterward. That can reset the timer, but it is not free. The actor pays the market round trip, AMM fees and slippage, and enough manipulated premium for at least `minExpansionAmount` of V3's selected expansion branch and keeper compensation to pass. Making the threshold capacity-relative prevents the reset cost from becoming economically negligible as the position grows.
+A caller can still flash-borrow liquidity, buy crvUSD to create an expansion opportunity, request the minimum accepted expansion, and sell back afterward. That can reset the timer, but it is not free. The actor pays the market round trip, AMM fees and slippage, and enough manipulated premium for at least `10,000` crvUSD of V3's selected expansion branch and keeper compensation to pass.
 
 The minimum makes timer manipulation economically self-penalizing rather than free. V3 sells the requested material amount into the price increase the actor created, so the attacker buys high, is countertraded by V3, then sells back lower while also paying pool fees. V3 captures the entry economics. This does not make manipulation cryptographically impossible: an actor with a sufficiently valuable external position may rationally pay that loss to delay normal-margin contraction. It cannot deadlock contraction because the timer never disables the exit functions; it only selects the higher early-exit margin. Genuinely distressed crvUSD can still be contracted during the timer while paying V3 that larger spread.
 
-The global timer also means a sequence of legitimate profitable expansions extends the normal-exit delay for the whole position. That is consistent with the initial anti-churn objective and is considerably simpler than tranche accounting. Later undeployed backing deployment does not reset this supply timer, so it does not guarantee that newly created yield shares accrue a full carry interval. If live behavior requires separate maturity for undeployed and yield exposure, governance can migrate a later implementation to bounded maturity buckets.
+The global timer also means a sequence of legitimate profitable expansions extends the normal-exit delay for the whole position. That is accepted as part of the anti-churn policy. Later undeployed backing deployment does not reset this supply timer, so newly created yield shares are not guaranteed a separate carry interval.
 
-`minExpansionAmount` should remain economically meaningful as capacity changes. Governance may express it as an absolute amount, a percentage of configured capacity, or the greater of both. The exact initial threshold remains to be selected.
+At `10,000` crvUSD and the initial `0.5 bps` entry margin, the minimum guaranteed retained protocol margin is only `0.50` normalized dollar units. The attacker's total cost is higher because it also bears AMM fees, slippage, and the manipulated round trip, but the absolute threshold does not make timer resets expensive by itself. The higher early-exit margin prevents a hard lock. Governance should monitor reset behavior and can raise `minExpansionAmount` if repeated resets become too cheap relative to deployed capacity.
 
 ## Open keeper and flash-liquidity model
 
@@ -913,6 +915,7 @@ Required controls:
 - delayed target-AMM and path replacement;
 - immediate cancellation of a pending path;
 - fee-receiver update;
+- governance updates to `minDeploymentTime`, `minExpansionAmount`, and the entry and exit margin parameters;
 - first-class migration of the yield-token position;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
@@ -1090,10 +1093,6 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 
 The following are deliberately unresolved:
 
-- whether a later version may permit a tightly capped negative entry margin expected to be amortized by carry; the initial design does not;
-- initial `minDeploymentTime` and whether `minExpansionAmount` is absolute, capacity-relative, or the greater of both;
-- whether a later implementation needs tranche or bounded-bucket maturity accounting instead of the initial global timer;
-- whether undeployed backing contraction should share the global expansion timer or use a less restrictive policy because undeployed backing earns no yield;
 - initial `keeperProfitShareBps` and flat `maxKeeperReward`;
 - initial `maxUndeployedBacking`, `maxBackingDeployPerCall`, `maxBackingDeploymentLossBps`, and required backing reserve;
 - exact downstream isolated-call gas policy and minimum gas reserve;
