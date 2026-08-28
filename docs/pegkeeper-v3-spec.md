@@ -70,7 +70,7 @@ V3 is not intended to:
 
 ### Governance
 
-Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes. The governance owner can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
+Governance selects the deployment's fixed token endpoints and configures debt capacity, the target AMM, paths, execution constraints, profitability thresholds, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes but cannot change those endpoints. The governance owner can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
 
 ### Emergency admin
 
@@ -128,6 +128,8 @@ yieldContractionPaused
 
 The exact storage representation is deferred until the implementation language and route encoding are selected.
 
+`targetAsset`, `backingAsset`, `yieldToken`, and the yield-token accounting adapter are fixed for the lifetime of a V3 deployment. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
+
 ## Supply accounting and Factory integration
 
 The current ControllerFactory mints the configured debt-ceiling increase to V3 upfront. It does not grant V3 a permissionless lazy-mint function.
@@ -169,7 +171,7 @@ trustedBackingValue(sUSDS shares)
 
 The returned USDS units are then trusted at par because USDS and the sUSDS position were approved by governance as PegKeeper backing. No target-AMM spot price is used to value the final position.
 
-This is a protocol accounting convention, not proof that every approved stablecoin can always be sold for one dollar. If an approved backing asset depegs, freezes, or becomes non-redeemable, V3 can remain nominally solvent under its configured accounting while being economically impaired. Governance must pause affected routes and use path migration or owner `execute()` to move the position.
+This is a protocol accounting convention, not proof that every approved stablecoin can always be sold for one dollar. If an approved backing asset depegs, freezes, or becomes non-redeemable, V3 can remain nominally solvent under its configured accounting while being economically impaired. Governance must pause affected routes and use slow wind-down or owner `execute()` to recover or move the position. Continuing with a different yield token requires deploying a new V3.
 
 For a USDT-facing sUSDS deployment:
 
@@ -334,12 +336,12 @@ Direct buyback provides one-sided downward liquidity through a deterministic bac
 5. Calculate the maximum trusted backing value payable while preserving that margin.
 6. Transfer crvUSD from the caller to V3.
 7. Allocate as much payout value as possible from `undeployedBacking` and decrease its accounting by the exact target amount paid.
-8. If value remains, redeem only enough yield shares to pay the remainder in the approved underlying.
+8. If value remains, use the fixed ERC-4626 vault's exact-asset `withdraw()` operation to obtain that underlying remainder, rounding the maximum share burn up and measuring the actual share delta.
 9. Transfer the target asset, underlying asset, or both to the caller.
 10. Enforce the caller's token-specific minimums and measure actual backing outputs by balance delta.
 11. Verify the received crvUSD exceeds total trusted backing value paid by the selected margin.
 12. Reduce `deployedCrvUsd` by the crvUSD received and retain it as idle inventory.
-13. Emit both payout amounts, yield shares redeemed, and whether early exit was used.
+13. Emit both payout amounts, yield shares spent, and whether early exit was used.
 ```
 
 A preliminary interface is:
@@ -352,11 +354,11 @@ function buyback(
 ) external returns (
     uint256 targetOut,
     uint256 underlyingOut,
-    uint256 yieldSharesRedeemed
+    uint256 yieldSharesSpent
 );
 ```
 
-If `undeployedBacking` can satisfy the complete quote, `underlyingOut` and `yieldSharesRedeemed` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and redeems yield shares for the remainder. If no undeployed backing exists, the complete payout comes from yield underlying. The call reverts unless combined trusted output and each caller minimum pass.
+If `undeployedBacking` can satisfy the complete quote, `underlyingOut` and `yieldSharesSpent` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and withdraws the exact remaining underlying amount from the yield vault. If no undeployed backing exists, the complete payout comes from yield underlying. The call reverts unless combined trusted output and each caller minimum pass.
 
 The direct quote should be previewable:
 
@@ -367,7 +369,7 @@ function previewBuyback(uint256 crvUsdAmount)
     returns (
         uint256 expectedTargetOut,
         uint256 expectedUnderlyingOut,
-        uint256 expectedYieldSharesRedeemed,
+        uint256 expectedYieldSharesSpent,
         uint256 requiredExitProfit,
         bool earlyExit
     );
@@ -516,7 +518,7 @@ A path is valid only when:
 11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
 12. No venue, token, or endpoint is zero.
 
-Changing the target AMM, target asset, backing asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
+The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, `yieldToken`, and the yield-accounting adapter cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
 
 There is no protocol-level maximum path length. Governance is trusted to configure an executable typed path; transaction gas and `minDownstreamAttemptGas` provide the practical bound. An excessively long or expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset. Route review and gas-threshold benchmarking remain governance responsibilities.
 
@@ -531,7 +533,7 @@ function setPaths(
 ) external;
 ```
 
-`setPaths` validates and replaces both active paths atomically in the governance execution transaction. A target-AMM or endpoint migration must use a complete compatible configuration bundle rather than applying mismatched components in stages.
+`setPaths` validates and replaces both active paths atomically in the governance execution transaction. It cannot migrate endpoints or make another token count as trusted backing.
 
 The emergency admin may disable a path immediately but cannot apply a new one. Only the governance owner can install or replace routes.
 
@@ -552,6 +554,12 @@ For every step:
 Successful downstream deployment and contraction calls must consume the entire routed input except for bounded rounding dust. A failed isolated downstream expansion attempt consumes none of the target input and leaves it available for the accounted fallback branch.
 
 After a target-to-yield route completes, V3 compares normalized target input with the trusted underlying value of measured yield shares and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
+
+### Exact-input routing and direct exact-asset withdrawal
+
+The configurable swap paths are exact-input. Expansion routes the keeper's exact crvUSD amount, later deployment routes an exact target amount, and keeper contraction routes an exact target amount or yield-share amount. Each step measures output and enforces a protocol-calculated `minOut`; none needs a generic exact-output swap adapter.
+
+Direct buyback is the only action that needs a fixed underlying remainder after exhausting `undeployedBacking`. The ERC-4626 vault already provides the required primitive through `previewWithdraw(assets)`, `maxWithdraw(owner)`, and `withdraw(assets, receiver, owner)`. V3 verifies the remainder is withdrawable, calculates a conservative maximum share burn rounded up, calls `withdraw()` for the exact underlying amount, and checks actual asset and share deltas. This is vault rounding discipline, not a reason to add arbitrary exact-output Curve or converter adapters. A future route that genuinely requires a fixed swap output would need a separately typed and audited adapter for that venue.
 
 ## Keeper-supplied sizing
 
@@ -900,9 +908,16 @@ No fixed stipend or time-refilling credit system is paid. A keeper decides wheth
 
 ## Fee receiver and surplus
 
-Yield-token appreciation and execution spread retained in either approved backing source create protocol surplus. Fee withdrawal must not reduce combined trusted backing below outstanding deployed crvUSD.
+V3 uses one fungible surplus value rather than separate onchain buckets for yield and execution spread:
 
-A withdrawal function should calculate the maximum withdrawable amount from combined trusted backing, rounding principal requirements against the fee receiver, and transfer no more than that amount.
+```text
+protocolSurplus
+    = max(trustedBackingValue - deployedCrvUsd, 0)
+```
+
+Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, buyback waterfalls, share-price appreciation, and fee claims, without strengthening the principal invariant.
+
+A fee withdrawal may transfer yield shares or undeployed target backing, but the asset selected for withdrawal does not identify where the surplus originated. Each claim calculates the maximum withdrawable amount from combined trusted backing, rounds principal requirements against the fee receiver, and must leave `trustedBackingValue >= deployedCrvUsd`. Existing action events provide enough data for offchain reporting to estimate retained execution profit and yield carry without adding consensus-critical surplus buckets.
 
 ```solidity
 function claimYieldSurplus(uint256 maxShares)
@@ -914,7 +929,7 @@ function claimUndeployedSurplus(uint256 maxTargetAmount)
     returns (uint256 targetTransferred);
 ```
 
-These functions are permissionless to call but always pay the configured fee receiver.
+These functions are permissionless to call but always pay the configured fee receiver. Their names identify the asset withdrawn, not a distinct source or class of surplus.
 
 ## Curve compatibility
 
@@ -942,7 +957,7 @@ Required controls:
 - pause keeper buyback;
 - lower `maxDeployedCrvUsd` to stop further exposure growth;
 - governance updates to `maxDeployedCrvUsd`;
-- atomic governance replacement of the target AMM, endpoints, and paths;
+- atomic governance replacement of the target AMM and paths while preserving fixed token endpoints;
 - fee-receiver update;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
 - approval revocation for retired venues;
@@ -962,21 +977,23 @@ function execute(address target, uint256 value, bytes calldata data)
     returns (bytes memory result);
 ```
 
-This function exists for failures that typed routes and slow wind-down cannot handle directly. It is also the one-off migration mechanism. Examples include:
+This function exists for failures that typed routes and slow wind-down cannot handle directly. It is also the one-off recovery or migration-out mechanism. Examples include:
 
 - loss of confidence in the current yield token or one of its underlying stablecoins;
 - a vault, pool, or route changing behavior;
-- an urgent migration to a replacement token or venue;
+- an urgent transfer or conversion out of an impaired token or venue;
 - recovery of tokens or approvals not anticipated by the original implementation;
 - interacting with a one-off rescue contract approved by the DAO.
 
 V3 applies no additional delay or migration-state precondition to `execute()`: once the governance owner invokes it, the ordinary external call executes in that transaction.
 
+Using `execute()` to acquire a replacement token does not make that token part of normal V3 backing accounting. Continued operation with another yield token requires a new V3 deployment.
+
 `execute()` performs a normal external `call`, not `delegatecall`. It bubbles the target's revert data and returns the target's return data. It has no target allowlist because an allowlist would defeat its role as a general recovery mechanism.
 
 The owner is expected to be the same DAO or governance executor that already controls crvUSD minting, debt capacity, and protocol configuration. Within that governance trust model, `execute()` does not add a new trusted actor or materially expand the DAO's ultimate authority. It does increase the immediate blast radius of an owner compromise or governance mistake at this contract, so it must never be callable by keepers, public operators, or the emergency admin.
 
-Governance should pause affected directions before using `execute()` where practical. If the call moves principal or changes token composition, normal execution remains paused until accounting and active paths match the post-recovery state.
+Governance should pause affected directions before using `execute()` where practical. If the call moves principal outside the fixed backing set, the existing V3 remains paused and is wound down or retired; it does not reconcile a new yield token into normal accounting. Calls that preserve the fixed endpoints may resume only after balances, accounting, approvals, and active paths are consistent.
 
 ## Events
 
@@ -1008,7 +1025,7 @@ event DirectBuyback(
     uint256 crvUsdReceived,
     uint256 targetPaid,
     uint256 underlyingPaid,
-    uint256 yieldSharesRedeemed,
+    uint256 yieldSharesSpent,
     bool earlyExit
 );
 
@@ -1051,7 +1068,7 @@ event Executed(
 13. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
 14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 15. Disabling expansion never disables direct buyback or the governance-approved contraction paths.
-16. A path update replaces only a complete, validated, endpoint-compatible configuration.
+16. A path update preserves the deployment's fixed target asset, backing asset, yield token, and accounting adapter.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
 19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
@@ -1127,9 +1144,6 @@ The following are deliberately unresolved:
 - the execution-quality benchmark used in addition to the hard profit floor;
 - exact adapter interface and rounding rules for converting supported yield shares into trusted underlying units;
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
-- whether exact-output route adapters are needed;
-- how surplus is separated between yield and execution spread;
-- whether V3 supports one yield token permanently or permits endpoint migration;
 
 ## Sources
 
