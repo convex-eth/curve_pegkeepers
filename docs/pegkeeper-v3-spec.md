@@ -119,9 +119,6 @@ lastExpansionAt
 maxExpansionPerCall
 maxBuybackPerCall
 maxDeployedCrvUsd
-maxUndeployedBacking
-maxBackingDeployPerCall
-maxBackingDeploymentLossBps
 requiredBackingReserve
 minDownstreamAttemptGas
 
@@ -205,7 +202,7 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 5. Receive the target asset.
 6. Attempt the configured target-to-yield path in an isolated, typed, `onlySelf` call with protocol-calculated minima. That subcall includes full-route balance measurement, keeper payment in the backing asset, terminal yield deployment, and the final yield-backing floor.
 7. Treat the downstream branch as successful only if the isolated call completes all of those operations and returns consistent measured deltas.
-8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, require the resulting `undeployedBacking` not to exceed `maxUndeployedBacking`, and retain the remainder as `undeployedBacking`.
+8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, and retain the remainder as `undeployedBacking`.
 9. Require the selected branch to leave principal plus its configured entry margin after reward. A failure of both branches reverts the complete expansion, including the target-AMM swap.
 10. Increase `deployedCrvUsd` and set `lastExpansionAt` to the current timestamp.
 11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
@@ -294,7 +291,7 @@ function deployUndeployedBacking(uint256 targetAmount)
     returns (uint256 targetSpent, uint256 yieldSharesReceived);
 ```
 
-This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them.
+This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them. The caller chooses an exact `targetAmount` no greater than `undeployedBacking`. There is no separate maintenance per-call maximum: an amount whose quote, route-loss, surplus, or final-backing checks are unacceptable simply reverts.
 
 Later route fees are paid only from existing protocol surplus:
 
@@ -318,21 +315,17 @@ conversionCost = max(
 
 conversionCost <= availableDeploymentSurplus
 conversionCost <= normalize(targetSpent)
-    * maxBackingDeploymentLossBps / 10_000
+    * downstreamExpansionPath.maxRouteLossBps / 10_000
 
 trustedBackingAfter
     >= deployedCrvUsd + requiredBackingReserve
 ```
 
+`maxRouteLossBps` belongs to the governance-approved downstream path configuration rather than a standalone strategy-wide deployment-loss parameter. The same path quote, step minima, execution-quality floor, final measured output, and route-level accounting-loss limit determine whether both an expansion's downstream attempt and a later `deployUndeployedBacking()` call are executable. Quote-relative slippage protection remains distinct from the accounting-loss limit: a route can execute exactly at a bad quote and still be rejected for losing too much normalized backing value.
+
 If the route is unavailable or those checks fail, the maintenance call reverts and `undeployedBacking` remains intact. This means later deployment can reduce the protocol's retained execution spread, but cannot consume the principal backing deployed crvUSD.
 
-V3 should not blindly combine all existing undeployed backing with a newly rewarded expansion. That would contaminate current-call profit attribution and may make a healthy small conversion fail from excessive combined size. After a new expansion has settled its own reward and demonstrated that the downstream route works, V3 may make a separate best-effort subcall for:
-
-```text
-min(undeployedBacking, maxBackingDeployPerCall)
-```
-
-The separate deployment has independent balance snapshots and failure cannot revert the completed expansion. An explicit `deployUndeployedBacking()` remains necessary when the route recovers without another expansion.
+The initial design does not combine old `undeployedBacking` with a newly rewarded expansion or automatically flush it afterward. That would contaminate current-call profit attribution and could make a healthy small conversion fail from excessive combined size. Existing undeployed backing is handled only through a separate explicit `deployUndeployedBacking(targetAmount)` call with independent snapshots and checks.
 
 ## Direct buyback lifecycle
 
@@ -482,6 +475,11 @@ struct RouteStep {
     address tokenOut;
     uint16 executionBufferBps;
 }
+
+struct DownstreamPathConfig {
+    RouteStep[] steps;
+    uint16 maxRouteLossBps;
+}
 ```
 
 No normal route step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter. This restriction applies to permissionless execution paths, not the governance owner's separate `execute()` escape hatch.
@@ -519,8 +517,9 @@ A path is valid only when:
 8. An ERC-4626 deposit step uses `vault.asset() == tokenIn` and the vault share token as `tokenOut`.
 9. An ERC-4626 redeem step uses the vault share token as `tokenIn` and `vault.asset()` as `tokenOut`.
 10. Execution-buffer parameters remain within governance-set maxima.
-11. The path length is bounded.
-12. No venue, token, or endpoint is zero.
+11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
+12. The path length is bounded.
+13. No venue, token, or endpoint is zero.
 
 Changing the target AMM, target asset, backing asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
 
@@ -530,7 +529,7 @@ Path replacement is a privileged operation capable of directing the protocol's f
 
 ```solidity
 function commitPaths(
-    RouteStep[] calldata newExpansionPath,
+    DownstreamPathConfig calldata newExpansionPath,
     RouteStep[] calldata newContractionPath
 ) external;
 
@@ -556,6 +555,8 @@ For every step:
 
 Successful downstream deployment and contraction calls must consume the entire routed input except for bounded rounding dust. A failed isolated downstream expansion attempt consumes none of the target input and leaves it available for the accounted fallback branch.
 
+After a target-to-yield route completes, V3 compares normalized target input with the trusted underlying value of measured yield shares and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
+
 ## Keeper-supplied sizing
 
 V3 does not calculate or verify the perfect maximum expansion. A keeper chooses an exact amount, while V3 retains every safety decision.
@@ -572,7 +573,7 @@ crvUsdAmount <= min(
 )
 ```
 
-Fallback contraction applies ordinary minimum and maximum limits to either requested target amount or requested yield shares and their trusted backing value. The contract executes every requested amount exactly or reverts; it does not silently resize the transaction. A fallback expansion can complete only if its retained target asset also fits within remaining `maxUndeployedBacking` capacity.
+Fallback contraction applies ordinary minimum and maximum limits to either requested target amount or requested yield shares and their trusted backing value. The contract executes every requested amount exactly or reverts; it does not silently resize the transaction. Fallback expansion has no separate undeployed-backing cap: total target exposure remains bounded by `maxDeployedCrvUsd`, available Factory inventory, and the amount actually deployed.
 
 The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(shares)` offchain to select an economically useful amount. Onchain, V3 still calculates every intermediate minimum, profit-share reward, flat reward cap, and final post-reward margin. A keeper-supplied amount can cause its own transaction to revert but cannot make an unsafe amount execute.
 
@@ -945,8 +946,7 @@ Required controls:
 - pause direct buyback;
 - pause keeper buyback;
 - global shutdown;
-- lower trade and deployment caps immediately;
-- lower the undeployed backing cap and later-deployment loss limit immediately;
+- lower trade and total-deployment caps immediately;
 - delayed increases to caps;
 - delayed target-AMM and path replacement;
 - immediate cancellation of a pending path;
@@ -1081,7 +1081,7 @@ The fallback branch may produce a larger immediate keeper reward than the full r
 
 ### Undeployed backing accumulation
 
-Undeployed backing preserves peg liveness but creates persistent exposure to the AMM-facing stablecoin and may remain idle without earning yield. `maxUndeployedBacking`, independent pauses, permissionless bounded deployment, direct undeployed backing contraction, and governance migration limit that exposure. Once undeployed backing reaches its cap, further fallback expansion must stop unless some undeployed backing is deployed, contracted, or migrated; the cap must therefore be large enough to serve the intended liveness purpose.
+Undeployed backing preserves peg liveness but creates persistent exposure to the AMM-facing stablecoin and may remain idle without earning yield. V3 deliberately has no separate `maxUndeployedBacking`: if the target asset remains approved backing, downstream failure must not disable otherwise profitable peg support. Exposure is still bounded by `maxDeployedCrvUsd` and the Factory allocation, but in the worst case the entire deployed backing composition can remain in the target asset. Governance approval, directional pauses, direct undeployed-backing contraction, path recovery, and migration are the controls for that concentration risk.
 
 ### Yield-token impairment
 
@@ -1129,9 +1129,8 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 
 The following are deliberately unresolved:
 
-- initial `maxUndeployedBacking`, `maxBackingDeployPerCall`, `maxBackingDeploymentLossBps`, and required backing reserve;
+- initial downstream-path `maxRouteLossBps` and `requiredBackingReserve`;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- whether a successful expansion should always attempt a separate capped deployment of undeployed backing or leave flushing to `deployUndeployedBacking()`;
 - final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
 - path length bound;
 - governance delay duration;
