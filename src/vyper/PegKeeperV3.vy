@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: foundation, target-only expansion/contraction, and crvUSD surplus settlement.
+@dev Incremental implementation: core accounting/actions plus bounded typed route configuration and validation.
 """
 
 interface ERC20:
@@ -21,12 +21,29 @@ interface TwoCoinPool:
     def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
     def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
 
+interface CurveRoutePool:
+    def coins(_index: uint256) -> address: view
+
+interface DaiUsds:
+    def dai() -> address: view
+    def usds() -> address: view
+
 interface YieldToken:
     def asset() -> address: view
     def balanceOf(_owner: address) -> uint256: view
     def decimals() -> uint256: view
     def convertToAssets(_yield_token_amount: uint256) -> uint256: view
-    def convertToShares(_backing_asset_amount: uint256) -> uint256: view
+    def convertToShares(_assets: uint256) -> uint256: view
+
+
+struct RouteStep:
+    kind: uint256
+    venue: address
+    token_in: address
+    token_out: address
+    pool_index_in: int128
+    pool_index_out: int128
+    execution_buffer_bps: uint256
 
 
 event DirectionPaused:
@@ -76,11 +93,21 @@ event FeeReceiverUpdated:
     old_receiver: indexed(address)
     new_receiver: indexed(address)
 
+event PathsUpdated:
+    expansion_path_hash: indexed(bytes32)
+    contraction_path_hash: indexed(bytes32)
+    expansion_max_route_loss_bps: uint256
+
 
 version: public(constant(String[8])) = "3.0.0"
 
-PPM: constant(uint256) = 1_000_000
 BPS: constant(uint256) = 10_000
+PPM: constant(uint256) = 1_000_000
+MAX_ROUTE_STEPS: public(constant(uint256)) = 16
+STEP_CURVE_SWAP: constant(uint256) = 0
+STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
+STEP_ERC4626_DEPOSIT: constant(uint256) = 2
+STEP_ERC4626_REDEEM: constant(uint256) = 3
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_BACKING_DEPLOYMENT: constant(uint256) = 1
@@ -116,6 +143,9 @@ max_deployed_crvusd: public(uint256)
 target_amm_execution_buffer_bps: public(uint256)
 min_downstream_attempt_gas: public(uint256)
 fallback_settlement_gas_reserve: public(uint256)
+expansion_path: DynArray[RouteStep, 16]
+contraction_path: DynArray[RouteStep, 16]
+expansion_max_route_loss_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
 undeployed_backing: public(uint256)
@@ -606,6 +636,117 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
         deployed_crv_usd_after,
     )
     return crv_usd_transferred
+
+
+@internal
+@view
+def _validate_route_step(_step: RouteStep):
+    assert _step.venue != empty(address), "route venue=0"
+    assert _step.token_in != empty(address), "route tokenIn=0"
+    assert _step.token_out != empty(address), "route tokenOut=0"
+    assert _step.execution_buffer_bps <= BPS, "step buffer too high"
+
+    if _step.kind == STEP_CURVE_SWAP:
+        assert _step.pool_index_in >= 0 and _step.pool_index_out >= 0, "curve index"
+        assert _step.pool_index_in != _step.pool_index_out, "curve index"
+        assert CurveRoutePool(_step.venue).coins(
+            convert(_step.pool_index_in, uint256)
+        ) == _step.token_in, "curve tokenIn"
+        assert CurveRoutePool(_step.venue).coins(
+            convert(_step.pool_index_out, uint256)
+        ) == _step.token_out, "curve tokenOut"
+    elif _step.kind == STEP_DAI_USDS_CONVERTER:
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "converter index"
+        assert _step.execution_buffer_bps == 0, "converter buffer"
+        dai: address = DaiUsds(_step.venue).dai()
+        usds: address = DaiUsds(_step.venue).usds()
+        valid_direction: bool = (
+            _step.token_in == dai and _step.token_out == usds
+        ) or (
+            _step.token_in == usds and _step.token_out == dai
+        )
+        assert valid_direction, "converter pair"
+    elif _step.kind == STEP_ERC4626_DEPOSIT:
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "vault index"
+        assert _step.venue == _step.token_out, "vault tokenOut"
+        assert YieldToken(_step.venue).asset() == _step.token_in, "vault asset"
+    elif _step.kind == STEP_ERC4626_REDEEM:
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0, "vault index"
+        assert _step.venue == _step.token_in, "vault tokenIn"
+        assert YieldToken(_step.venue).asset() == _step.token_out, "vault asset"
+    else:
+        raise "unknown step"
+
+
+@internal
+@view
+def _validate_route_continuity(_steps: DynArray[RouteStep, 16]):
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= len(_steps):
+            break
+        if i > 0:
+            assert _steps[i - 1].token_out == _steps[i].token_in, "path discontinuity"
+        self._validate_route_step(_steps[i])
+
+
+@external
+def setPaths(
+    _expansion_steps: DynArray[RouteStep, 16],
+    _expansion_max_route_loss_bps: uint256,
+    _contraction_steps: DynArray[RouteStep, 16],
+):
+    assert msg.sender == self.admin, "not admin"
+    assert len(_expansion_steps) > 0, "empty expansion path"
+    assert len(_contraction_steps) > 0, "empty contraction path"
+    assert _expansion_max_route_loss_bps <= BPS, "route loss too high"
+
+    assert _expansion_steps[0].token_in == TARGET_ASSET.address, "expansion start"
+    expansion_last: RouteStep = _expansion_steps[len(_expansion_steps) - 1]
+    assert expansion_last.token_out == YIELD_TOKEN.address, "expansion end"
+    assert expansion_last.token_in == BACKING_ASSET.address, "terminal backing"
+
+    assert _contraction_steps[0].token_in == YIELD_TOKEN.address, "contraction start"
+    assert _contraction_steps[0].token_out == BACKING_ASSET.address, "initial backing"
+    contraction_last: RouteStep = _contraction_steps[len(_contraction_steps) - 1]
+    assert contraction_last.token_out == CRV_USD.address, "contraction end"
+
+    self._validate_route_continuity(_expansion_steps)
+    self._validate_route_continuity(_contraction_steps)
+
+    self.expansion_path = _expansion_steps
+    self.contraction_path = _contraction_steps
+    self.expansion_max_route_loss_bps = _expansion_max_route_loss_bps
+    log PathsUpdated(
+        keccak256(_abi_encode(_expansion_steps)),
+        keccak256(_abi_encode(_contraction_steps)),
+        _expansion_max_route_loss_bps,
+    )
+
+
+@external
+@view
+def expansion_path_length() -> uint256:
+    return len(self.expansion_path)
+
+
+@external
+@view
+def contraction_path_length() -> uint256:
+    return len(self.contraction_path)
+
+
+@external
+@view
+def expansion_path_step(_index: uint256) -> RouteStep:
+    assert _index < len(self.expansion_path), "path index"
+    return self.expansion_path[_index]
+
+
+@external
+@view
+def contraction_path_step(_index: uint256) -> RouteStep:
+    assert _index < len(self.contraction_path), "path index"
+    return self.contraction_path[_index]
 
 
 @external

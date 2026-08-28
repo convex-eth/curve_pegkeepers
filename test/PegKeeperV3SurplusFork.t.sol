@@ -9,6 +9,10 @@ import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
 
+interface IFeeSplitter {
+    function n_receivers() external view returns (uint256);
+}
+
 contract PegKeeperV3SurplusForkTest is Test {
     uint256 internal constant FORK_BLOCK = 25_837_866;
 
@@ -37,6 +41,10 @@ contract PegKeeperV3SurplusForkTest is Test {
     }
 
     function test_liveFeeSplitterSurplusClaim() public {
+        assertEq(IControllerFactory(FACTORY).fee_receiver(), FEE_SPLITTER);
+        assertGt(FEE_SPLITTER.code.length, 0);
+        assertGt(IFeeSplitter(FEE_SPLITTER).n_receivers(), 0);
+
         IPegKeeperV3 pegKeeper = _deploy();
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);

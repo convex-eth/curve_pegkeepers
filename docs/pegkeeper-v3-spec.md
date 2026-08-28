@@ -583,12 +583,14 @@ struct RouteStep {
     address venue;
     address tokenIn;
     address tokenOut;
-    uint16 executionBufferBps;
+    int128 poolIndexIn;
+    int128 poolIndexOut;
+    uint256 executionBufferBps;
 }
 
 struct DownstreamPathConfig {
     RouteStep[] steps;
-    uint16 maxRouteLossBps;
+    uint256 maxRouteLossBps;
 }
 ```
 
@@ -655,9 +657,11 @@ A path is valid only when:
 11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
 12. No venue, token, or endpoint is zero.
 
+Curve steps also carry explicit signed pool indices. Governance supplies them and V3 validates `coins(poolIndexIn) == tokenIn` and `coins(poolIndexOut) == tokenOut`; the indices must be distinct and non-negative. Non-Curve steps require both index fields to be zero. The wire-level `kind` field is encoded as a `uint256` constrained to the four listed `StepKind` values because the Vyper implementation does not expose a Solidity enum type in its ABI.
+
 The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, and `yieldToken` cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched. V3 does not append an implicit vault deposit after the configured expansion path: successful execution is complete only when the route itself has delivered measured `yieldToken` units to V3.
 
-There is no protocol-level maximum path length. Governance is trusted to configure an executable typed path; transaction gas and `minDownstreamAttemptGas` provide the practical bound. An excessively long or expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset. Route review and gas-threshold benchmarking remain governance responsibilities.
+Vyper `0.3.10` requires a compile-time bound for dynamic arrays and loops. Each directional path is therefore limited to `16` typed steps. This is an implementation-safety bound rather than an economic throttle; it keeps validation and execution statically bounded while leaving ample room for the intended three-step USDT-to-sUSDS route. Governance remains responsible for configuring a path whose actual gas cost fits `minDownstreamAttemptGas`. An expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset.
 
 ### Path governance
 
@@ -665,8 +669,9 @@ Path replacement is a privileged operation capable of directing the protocol's f
 
 ```solidity
 function setPaths(
-    DownstreamPathConfig calldata newExpansionPath,
-    RouteStep[] calldata newContractionPath
+    RouteStep[] calldata newExpansionSteps,
+    uint256 newExpansionMaxRouteLossBps,
+    RouteStep[] calldata newContractionSteps
 ) external;
 ```
 
@@ -1125,7 +1130,7 @@ V2 uses a different revenue path despite being part of the crvUSD system. Its `w
 The V3-local update surface is:
 
 ```solidity
-function setFeeReceiver(address newFeeReceiver) external onlyOwner;
+function set_fee_receiver(address newFeeReceiver) external onlyOwner;
 ```
 
 The call rejects the zero address and emits the old and new receiver. It changes only this V3 deployment; it does not call or mutate the shared regulator. Normal surplus claims always transfer crvUSD, so governance must point it to a contract whose accounting and distribution flow accept direct crvUSD transfers. Changing the receiver does not change the exposure or backing equations.
@@ -1246,6 +1251,7 @@ event ExpansionConfigUpdated(
 event DirectionPaused(uint256 indexed direction, bool paused);
 event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 event SurplusClaimed(
+    address indexed caller,
     address indexed receiver,
     uint256 crvUsdTransferred,
     uint256 deployedCrvUsdAfter

@@ -2,6 +2,16 @@
 pragma solidity ^0.8.30;
 
 interface IPegKeeperV3 {
+    struct RouteStep {
+        uint256 kind;
+        address venue;
+        address tokenIn;
+        address tokenOut;
+        int128 poolIndexIn;
+        int128 poolIndexOut;
+        uint256 executionBufferBps;
+    }
+
     event DirectionPaused(uint256 indexed direction, bool paused);
     event Executed(
         address indexed target, uint256 value, bytes4 indexed selector, bytes32 dataHash
@@ -40,8 +50,14 @@ interface IPegKeeperV3 {
         uint256 deployedCrvUsdAfter
     );
     event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
+    event PathsUpdated(
+        bytes32 indexed expansionPathHash,
+        bytes32 indexed contractionPathHash,
+        uint256 expansionMaxRouteLossBps
+    );
 
     function version() external view returns (string memory);
+    function MAX_ROUTE_STEPS() external pure returns (uint256);
 
     function factory() external view returns (address);
     function crv_usd() external view returns (address);
@@ -90,6 +106,16 @@ interface IPegKeeperV3 {
         uint256 fallbackSettlementGasReserve
     ) external;
     function set_fee_receiver(address newFeeReceiver) external;
+    function setPaths(
+        RouteStep[] calldata expansionSteps,
+        uint256 expansionMaxRouteLossBps,
+        RouteStep[] calldata contractionSteps
+    ) external;
+    function expansion_path_length() external view returns (uint256);
+    function contraction_path_length() external view returns (uint256);
+    function expansion_max_route_loss_bps() external view returns (uint256);
+    function expansion_path_step(uint256 index) external view returns (RouteStep memory);
+    function contraction_path_step(uint256 index) external view returns (RouteStep memory);
     function available_expansion() external view returns (uint256);
     function expand(uint256 crvUsdAmount)
         external
