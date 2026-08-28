@@ -127,7 +127,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The exact storage representation is deferred until the implementation language and route encoding are selected.
+The production implementation uses Vyper `0.3.10`. Its first verified foundation pins the fixed endpoints, initial parameters, accounting counters, governance roles, and pause state described here. Route encoding and lifecycle storage are added only with the corresponding executable tests.
 
 `targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires the final yield token to expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `yieldToken.asset() == backingAsset` at construction. It does not require the yield token itself to accept `deposit()` or `withdraw()`. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
 

@@ -1,6 +1,6 @@
 # Curve PegKeeper Experiments
 
-Foundry workspace for reproducing Curve's live crvUSD `PegKeeperV2`, testing protocol offboarding, and using V2 as the starting point for a future V3.
+Foundry workspace for reproducing Curve's live crvUSD `PegKeeperV2`, testing protocol offboarding, and implementing an asymmetric V3 from an executable specification.
 
 ## What PegKeepers are built for
 
@@ -115,6 +115,8 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
+The production implementation has started in Vyper `0.3.10`. The current foundation pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; initializes governance parameters; keeps all execution directions paused until their routes exist; excludes unsolicited balances from trusted accounting; and implements governance-only ordinary-call recovery. Expansion, typed routes, buyback, contraction, and surplus settlement remain to be implemented in later verified slices.
+
 ## Toolchain
 
 - Foundry with native Vyper compilation support (verified with Forge `1.7.1`)
@@ -150,17 +152,20 @@ src/
 │   ├── IPegKeeperOffboarding.sol
 │   ├── IPegKeeperRegulator.sol
 │   ├── IPegKeeperV2.sol
+│   ├── IPegKeeperV3.sol
 │   ├── IStableSwap2Pool.sol
 │   └── IUSDT.sol
 └── vyper/
     ├── PegKeeperOffboarding.vy
-    └── PegKeeperV2.vy
+    ├── PegKeeperV2.vy
+    └── PegKeeperV3.vy
 test/
 ├── DaiUsdsConverter.t.sol
-└── PegKeeperLifecycle.t.sol
+├── PegKeeperLifecycle.t.sol
+└── PegKeeperV3Foundation.t.sol
 ```
 
-The Vyper contracts were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline) and pins `# pragma version 0.3.10`.
+`PegKeeperV2.vy` and `PegKeeperOffboarding.vy` were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline). `PegKeeperV3.vy` is the new implementation developed in this repository. All three pin Vyper `0.3.10`.
 
 ## Pinned forks
 
@@ -185,6 +190,10 @@ Current V2 PegKeepers covered by the retirement test:
 - GHO: `0x53876B157DeCf04389eEd66c7C29d73863f8C50b`
 
 ## Tests
+
+### `PegKeeperV3FoundationTest`
+
+Deploys the Vyper V3 foundation against local token, Factory, yield-accounting, and two-coin AMM contracts. It verifies fixed endpoint and routing-pair discovery, initial parameter values, safe fully paused startup, constructor rejection of bad pool/yield/decimal configurations or missing yield-conversion accounting, exclusion of unsolicited backing from accounting, the requirement for benchmarked downstream and fallback gas limits before expansion can be enabled, emergency-admin pause-only authority, and governance-only ordinary-call recovery.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 
