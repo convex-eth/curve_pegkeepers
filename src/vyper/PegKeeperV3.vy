@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: core accounting/actions plus bounded typed route configuration and validation.
+@dev Incremental implementation: core accounting/actions plus bounded typed route validation and backing deployment.
 """
 
 interface ERC20:
@@ -23,10 +23,20 @@ interface TwoCoinPool:
 
 interface CurveRoutePool:
     def coins(_index: uint256) -> address: view
+    def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
+    def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
 
 interface DaiUsds:
     def dai() -> address: view
     def usds() -> address: view
+    def daiToUsds(_receiver: address, _amount: uint256): nonpayable
+    def usdsToDai(_receiver: address, _amount: uint256): nonpayable
+
+interface ERC4626Route:
+    def previewDeposit(_assets: uint256) -> uint256: view
+    def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
+    def previewRedeem(_shares: uint256) -> uint256: view
+    def redeem(_shares: uint256, _receiver: address, _owner: address) -> uint256: nonpayable
 
 interface YieldToken:
     def asset() -> address: view
@@ -97,6 +107,13 @@ event PathsUpdated:
     expansion_path_hash: indexed(bytes32)
     contraction_path_hash: indexed(bytes32)
     expansion_max_route_loss_bps: uint256
+
+event UndeployedBackingDeployed:
+    caller: indexed(address)
+    target_spent: uint256
+    yield_token_received: uint256
+    trusted_value_received: uint256
+    conversion_cost: uint256
 
 
 version: public(constant(String[8])) = "3.0.0"
@@ -747,6 +764,124 @@ def expansion_path_step(_index: uint256) -> RouteStep:
 def contraction_path_step(_index: uint256) -> RouteStep:
     assert _index < len(self.contraction_path), "path index"
     return self.contraction_path[_index]
+
+
+@internal
+def _execute_expansion_path(_target_amount: uint256) -> uint256:
+    amount_in: uint256 = _target_amount
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= len(self.expansion_path):
+            break
+
+        step: RouteStep = self.expansion_path[i]
+        token_in: ERC20 = ERC20(step.token_in)
+        token_out: ERC20 = ERC20(step.token_out)
+        input_balance_before: uint256 = token_in.balanceOf(self)
+        output_balance_before: uint256 = token_out.balanceOf(self)
+        quoted_output: uint256 = 0
+        minimum_output: uint256 = 0
+
+        token_in.approve(step.venue, 0)
+        token_in.approve(step.venue, amount_in)
+
+        if step.kind == STEP_CURVE_SWAP:
+            quoted_output = CurveRoutePool(step.venue).get_dy(
+                step.pool_index_in,
+                step.pool_index_out,
+                amount_in,
+            )
+            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
+            CurveRoutePool(step.venue).exchange(
+                step.pool_index_in,
+                step.pool_index_out,
+                amount_in,
+                minimum_output,
+            )
+        elif step.kind == STEP_DAI_USDS_CONVERTER:
+            minimum_output = amount_in
+            if step.token_in == DaiUsds(step.venue).dai():
+                DaiUsds(step.venue).daiToUsds(self, amount_in)
+            else:
+                DaiUsds(step.venue).usdsToDai(self, amount_in)
+        elif step.kind == STEP_ERC4626_DEPOSIT:
+            quoted_output = ERC4626Route(step.venue).previewDeposit(amount_in)
+            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
+            ERC4626Route(step.venue).deposit(amount_in, self)
+        else:
+            quoted_output = ERC4626Route(step.venue).previewRedeem(amount_in)
+            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
+            ERC4626Route(step.venue).redeem(amount_in, self, self)
+
+        token_in.approve(step.venue, 0)
+        input_balance_after: uint256 = token_in.balanceOf(self)
+        output_balance_after: uint256 = token_out.balanceOf(self)
+        assert input_balance_before >= input_balance_after, "bad step spend"
+        assert input_balance_before - input_balance_after == amount_in, "bad step spend"
+        assert output_balance_after >= output_balance_before, "bad step output"
+        amount_in = output_balance_after - output_balance_before
+        if step.kind == STEP_DAI_USDS_CONVERTER:
+            assert amount_in == minimum_output, "converter output"
+        else:
+            assert amount_in >= minimum_output, "step output"
+
+    return amount_in
+
+
+@external
+@nonreentrant("lock")
+def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.backing_deployment_paused, "backing deployment paused"
+    assert _target_amount > 0, "target amount=0"
+    assert _target_amount <= self.undeployed_backing, "insufficient backing"
+    assert len(self.expansion_path) > 0, "empty expansion path"
+
+    trusted_backing_before: uint256 = self._trusted_backing_value()
+    available_deployment_surplus: uint256 = 0
+    if trusted_backing_before > self.deployed_crvusd:
+        available_deployment_surplus = trusted_backing_before - self.deployed_crvusd
+
+    target_balance_before: uint256 = TARGET_ASSET.balanceOf(self)
+    yield_balance_before: uint256 = YIELD_TOKEN.balanceOf(self)
+    assert target_balance_before >= self.undeployed_backing, "target accounting"
+
+    self._execute_expansion_path(_target_amount)
+
+    target_balance_after: uint256 = TARGET_ASSET.balanceOf(self)
+    yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
+    assert target_balance_before >= target_balance_after, "bad target spend"
+    target_spent: uint256 = target_balance_before - target_balance_after
+    assert target_spent == _target_amount, "bad target spend"
+    assert yield_balance_after >= yield_balance_before, "bad yield output"
+    yield_token_received: uint256 = yield_balance_after - yield_balance_before
+    assert yield_token_received > 0, "yield output=0"
+
+    target_value_spent: uint256 = target_spent * TARGET_MULTIPLIER
+    trusted_value_received: uint256 = (
+        YIELD_TOKEN.convertToAssets(yield_token_received) * BACKING_MULTIPLIER
+    )
+    conversion_cost: uint256 = 0
+    if target_value_spent > trusted_value_received:
+        conversion_cost = target_value_spent - trusted_value_received
+    assert conversion_cost <= (
+        target_value_spent * self.expansion_max_route_loss_bps / BPS
+    ), "route loss"
+    assert conversion_cost <= available_deployment_surplus, "deployment surplus"
+
+    self.undeployed_backing -= target_spent
+    self.accounted_yield_token_units += yield_token_received
+    assert TARGET_ASSET.balanceOf(self) >= self.undeployed_backing, "target accounting"
+    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
+    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+
+    log UndeployedBackingDeployed(
+        msg.sender,
+        target_spent,
+        yield_token_received,
+        trusted_value_received,
+        conversion_cost,
+    )
+    return target_spent, yield_token_received
 
 
 @external

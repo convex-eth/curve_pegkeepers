@@ -1,0 +1,529 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test} from "forge-std/Test.sol";
+
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {ExpansionFactory, ExpansionPool, ExpansionToken} from "./PegKeeperV3Expansion.t.sol";
+
+contract ExecutionRoutePool {
+    uint256 internal constant PPM = 1_000_000;
+
+    ExpansionToken public immutable coin0;
+    ExpansionToken public immutable coin1;
+    uint256 public quotePricePpm = PPM;
+    uint256 public executionPricePpm = PPM;
+
+    constructor(ExpansionToken coin0_, ExpansionToken coin1_) {
+        coin0 = coin0_;
+        coin1 = coin1_;
+    }
+
+    function coins(uint256 index) external view returns (address) {
+        if (index == 0) return address(coin0);
+        require(index == 1, "coin index");
+        return address(coin1);
+    }
+
+    function setPrices(uint256 quotePricePpm_, uint256 executionPricePpm_) external {
+        quotePricePpm = quotePricePpm_;
+        executionPricePpm = executionPricePpm_;
+    }
+
+    function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256) {
+        return _quote(i, j, dx, quotePricePpm);
+    }
+
+    function exchange(int128 i, int128 j, uint256 dx, uint256 minDy)
+        external
+        returns (uint256 amountOut)
+    {
+        amountOut = _quote(i, j, dx, executionPricePpm);
+        require(amountOut >= minDy, "route slippage");
+        if (i == 0 && j == 1) {
+            require(coin0.transferFrom(msg.sender, address(this), dx), "transfer");
+            coin1.mint(msg.sender, amountOut);
+        } else {
+            require(i == 1 && j == 0, "indices");
+            require(coin1.transferFrom(msg.sender, address(this), dx), "transfer");
+            coin0.mint(msg.sender, amountOut);
+        }
+    }
+
+    function _quote(int128 i, int128 j, uint256 dx, uint256 pricePpm)
+        internal
+        view
+        returns (uint256 amountOut)
+    {
+        uint256 inputDecimals;
+        uint256 outputDecimals;
+        if (i == 0 && j == 1) {
+            inputDecimals = coin0.decimals();
+            outputDecimals = coin1.decimals();
+        } else {
+            require(i == 1 && j == 0, "indices");
+            inputDecimals = coin1.decimals();
+            outputDecimals = coin0.decimals();
+        }
+        amountOut = dx * pricePpm / PPM;
+        if (outputDecimals > inputDecimals) {
+            amountOut *= 10 ** (outputDecimals - inputDecimals);
+        } else if (inputDecimals > outputDecimals) {
+            amountOut /= 10 ** (inputDecimals - outputDecimals);
+        }
+    }
+}
+
+contract ExecutionDaiUsds {
+    ExpansionToken public immutable daiToken;
+    ExpansionToken public immutable usdsToken;
+    uint256 public outputPpm = 1_000_000;
+
+    constructor(ExpansionToken dai_, ExpansionToken usds_) {
+        daiToken = dai_;
+        usdsToken = usds_;
+    }
+
+    function dai() external view returns (address) {
+        return address(daiToken);
+    }
+
+    function usds() external view returns (address) {
+        return address(usdsToken);
+    }
+
+    function setOutputPpm(uint256 outputPpm_) external {
+        outputPpm = outputPpm_;
+    }
+
+    function daiToUsds(address receiver, uint256 amount) external {
+        require(daiToken.transferFrom(msg.sender, address(this), amount), "transfer");
+        usdsToken.mint(receiver, amount * outputPpm / 1_000_000);
+    }
+
+    function usdsToDai(address receiver, uint256 amount) external {
+        require(usdsToken.transferFrom(msg.sender, address(this), amount), "transfer");
+        daiToken.mint(receiver, amount * outputPpm / 1_000_000);
+    }
+}
+
+contract ExecutionYieldToken is ExpansionToken {
+    ExpansionToken public immutable backing;
+    uint256 public previewSharesPpm = 1_000_000;
+    uint256 public executionSharesPpm = 1_000_000;
+    uint256 public assetValuePpm = 1_000_000;
+
+    constructor(ExpansionToken backing_) ExpansionToken(18) {
+        backing = backing_;
+    }
+
+    function asset() external view returns (address) {
+        return address(backing);
+    }
+
+    function setRates(uint256 previewPpm, uint256 executionPpm, uint256 valuePpm) external {
+        previewSharesPpm = previewPpm;
+        executionSharesPpm = executionPpm;
+        assetValuePpm = valuePpm;
+    }
+
+    function previewDeposit(uint256 assets) external view returns (uint256) {
+        return assets * previewSharesPpm / 1_000_000;
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+        require(backing.transferFrom(msg.sender, address(this), assets), "transfer");
+        shares = assets * executionSharesPpm / 1_000_000;
+        balanceOf[receiver] += shares;
+    }
+
+    function previewRedeem(uint256 shares) external view returns (uint256) {
+        return shares * assetValuePpm / 1_000_000;
+    }
+
+    function redeem(uint256 shares, address receiver, address owner)
+        external
+        returns (uint256 assets)
+    {
+        require(owner == msg.sender, "owner");
+        balanceOf[owner] -= shares;
+        assets = shares * assetValuePpm / 1_000_000;
+        backing.mint(receiver, assets);
+    }
+
+    function convertToAssets(uint256 shares) external view returns (uint256) {
+        return shares * assetValuePpm / 1_000_000;
+    }
+
+    function convertToShares(uint256 assets) external view returns (uint256) {
+        return assets * 1_000_000 / assetValuePpm;
+    }
+}
+
+contract PegKeeperV3BackingDeploymentTest is Test {
+    uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
+    uint256 internal constant MIN_EXPANSION = 10_000e18;
+    uint256 internal constant TARGET_MULTIPLIER = 1e12;
+    uint256 internal constant CURVE_SWAP = 0;
+    uint256 internal constant DAI_USDS_CONVERTER = 1;
+    uint256 internal constant ERC4626_DEPOSIT = 2;
+    uint256 internal constant ERC4626_REDEEM = 3;
+
+    address internal governance = makeAddr("governance");
+    address internal emergencyAdmin = makeAddr("emergencyAdmin");
+    address internal feeReceiver = makeAddr("feeReceiver");
+    address internal keeper = makeAddr("keeper");
+    address internal caller = makeAddr("caller");
+
+    ExpansionToken internal crvUsd;
+    ExpansionToken internal targetAsset;
+    ExpansionToken internal backingAsset;
+    ExpansionToken internal dai;
+    ExecutionYieldToken internal yieldToken;
+    ExpansionFactory internal factory;
+    ExpansionPool internal targetPool;
+    ExecutionRoutePool internal targetToDaiPool;
+    ExecutionRoutePool internal targetToBackingPool;
+    ExecutionRoutePool internal daiToCrvUsdPool;
+    ExecutionDaiUsds internal daiUsds;
+    IPegKeeperV3 internal pegKeeper;
+    IPegKeeperV3 internal deployment;
+
+    function setUp() public {
+        crvUsd = new ExpansionToken(18);
+        targetAsset = new ExpansionToken(6);
+        backingAsset = new ExpansionToken(18);
+        dai = new ExpansionToken(18);
+        yieldToken = new ExecutionYieldToken(backingAsset);
+        factory = new ExpansionFactory(address(crvUsd));
+        targetPool = new ExpansionPool(crvUsd, targetAsset);
+        targetToDaiPool = new ExecutionRoutePool(targetAsset, dai);
+        targetToBackingPool = new ExecutionRoutePool(targetAsset, backingAsset);
+        daiToCrvUsdPool = new ExecutionRoutePool(dai, crvUsd);
+        daiUsds = new ExecutionDaiUsds(dai, backingAsset);
+        pegKeeper = _deploy();
+        deployment = IPegKeeperV3(address(pegKeeper));
+        _installPaths(100);
+        _createUndeployedBacking();
+    }
+
+    function test_deploysExactAccountedTargetThroughTypedRoute() public {
+        uint256 targetAmount = 1_000e6;
+        uint256 undeployedBefore = pegKeeper.undeployed_backing();
+        uint256 trustedBefore = pegKeeper.trusted_backing_value();
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        uint256 expansionTime = pegKeeper.last_expansion_at();
+
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.UndeployedBackingDeployed(caller, targetAmount, 1_000e18, 1_000e18, 0);
+        vm.prank(caller);
+        (uint256 targetSpent, uint256 yieldReceived) =
+            deployment.deployUndeployedBacking(targetAmount);
+
+        assertEq(targetSpent, targetAmount);
+        assertEq(yieldReceived, 1_000e18);
+        assertEq(pegKeeper.undeployed_backing(), undeployedBefore - targetAmount);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldReceived);
+        assertEq(yieldToken.balanceOf(address(pegKeeper)), yieldReceived);
+        assertEq(pegKeeper.trusted_backing_value(), trustedBefore);
+        assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
+        assertEq(pegKeeper.last_expansion_at(), expansionTime);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(targetToDaiPool)), 0);
+        assertEq(dai.allowance(address(pegKeeper), address(daiUsds)), 0);
+        assertEq(backingAsset.allowance(address(pegKeeper), address(yieldToken)), 0);
+    }
+
+    function test_preExistingYieldDonationIsNotAccounted() public {
+        uint256 donation = 77e18;
+        uint256 targetAmount = 100e6;
+        yieldToken.mint(address(pegKeeper), donation);
+
+        vm.prank(caller);
+        (, uint256 yieldReceived) = deployment.deployUndeployedBacking(targetAmount);
+
+        assertEq(yieldReceived, 100e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+        assertEq(yieldToken.balanceOf(address(pegKeeper)), donation + 100e18);
+    }
+
+    function test_preExistingIntermediateDonationsAreNotRoutedOrAccounted() public {
+        dai.mint(address(pegKeeper), 11e18);
+        backingAsset.mint(address(pegKeeper), 22e18);
+
+        vm.prank(caller);
+        (, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(yieldReceived, 100e18);
+        assertEq(dai.balanceOf(address(pegKeeper)), 11e18);
+        assertEq(backingAsset.balanceOf(address(pegKeeper)), 22e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_executesExactlySixteenConfiguredSteps() public {
+        IPegKeeperV3.RouteStep[] memory path = new IPegKeeperV3.RouteStep[](16);
+        for (uint256 i; i < 14; ++i) {
+            if (i % 2 == 0) {
+                path[i] = _curveStep(
+                    address(targetToDaiPool), address(targetAsset), address(dai), 0, 1, 5
+                );
+            } else {
+                path[i] = _curveStep(
+                    address(targetToDaiPool), address(dai), address(targetAsset), 1, 0, 5
+                );
+            }
+        }
+        path[14] = _curveStep(
+            address(targetToBackingPool), address(targetAsset), address(backingAsset), 0, 1, 5
+        );
+        path[15] = _vaultStep(ERC4626_DEPOSIT, address(backingAsset), address(yieldToken));
+        vm.prank(governance);
+        pegKeeper.setPaths(path, 100, _contractionPath());
+
+        vm.prank(caller);
+        (uint256 targetSpent, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(targetSpent, 100e6);
+        assertEq(yieldReceived, 100e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_executesErc4626RedeemStepInsideConfiguredRoute() public {
+        IPegKeeperV3.RouteStep[] memory path = new IPegKeeperV3.RouteStep[](4);
+        path[0] = _curveStep(
+            address(targetToBackingPool), address(targetAsset), address(backingAsset), 0, 1, 5
+        );
+        path[1] = _vaultStep(ERC4626_DEPOSIT, address(backingAsset), address(yieldToken));
+        path[2] = _vaultStep(ERC4626_REDEEM, address(yieldToken), address(backingAsset));
+        path[3] = _vaultStep(ERC4626_DEPOSIT, address(backingAsset), address(yieldToken));
+        vm.prank(governance);
+        pegKeeper.setPaths(path, 100, _contractionPath());
+
+        vm.prank(caller);
+        (uint256 targetSpent, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(targetSpent, 100e6);
+        assertEq(yieldReceived, 100e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_revertsWhenBackingDeploymentDirectionIsPaused() public {
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
+
+        vm.prank(caller);
+        vm.expectRevert("backing deployment paused");
+        deployment.deployUndeployedBacking(100e6);
+    }
+
+    function test_revertsWhenAllExecutionIsPaused() public {
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(5, true);
+
+        vm.prank(caller);
+        vm.expectRevert("all execution paused");
+        deployment.deployUndeployedBacking(100e6);
+    }
+
+    function test_rejectsZeroOrUnaccountedTargetAmount() public {
+        vm.prank(caller);
+        vm.expectRevert("target amount=0");
+        deployment.deployUndeployedBacking(0);
+
+        uint256 unaccountedAmount = pegKeeper.undeployed_backing() + 1;
+        vm.prank(caller);
+        vm.expectRevert("insufficient backing");
+        deployment.deployUndeployedBacking(unaccountedAmount);
+    }
+
+    function test_enforcesCurveQuoteRelativeMinimum() public {
+        targetToDaiPool.setPrices(1_000_000, 990_000);
+
+        vm.prank(caller);
+        vm.expectRevert("route slippage");
+        deployment.deployUndeployedBacking(100e6);
+    }
+
+    function test_requiresCanonicalConverterOneToOneOutput() public {
+        daiUsds.setOutputPpm(999_999);
+
+        vm.prank(caller);
+        vm.expectRevert("converter output");
+        deployment.deployUndeployedBacking(100e6);
+    }
+
+    function test_enforcesErc4626PreviewMinimum() public {
+        yieldToken.setRates(1_000_000, 990_000, 1_000_000);
+
+        vm.prank(caller);
+        vm.expectRevert("step output");
+        deployment.deployUndeployedBacking(100e6);
+    }
+
+    function test_rejectsConversionCostAboveRouteLossLimit() public {
+        targetPool.setPrices(1_100_000, 1_100_000);
+        _createAdditionalUndeployedBacking();
+        yieldToken.setRates(1_000_000, 1_000_000, 990_000);
+        _installPaths(50);
+
+        vm.prank(caller);
+        vm.expectRevert("route loss");
+        deployment.deployUndeployedBacking(1_000e6);
+    }
+
+    function test_rejectsConversionCostAboveAvailableSurplus() public {
+        yieldToken.setRates(1_000_000, 1_000_000, 950_000);
+        _installPaths(10_000);
+
+        vm.prank(caller);
+        vm.expectRevert("deployment surplus");
+        deployment.deployUndeployedBacking(1_000e6);
+    }
+
+    function test_failedDeploymentRollsBackInventoryAndAllowances() public {
+        uint256 undeployedBefore = pegKeeper.undeployed_backing();
+        uint256 targetBalanceBefore = targetAsset.balanceOf(address(pegKeeper));
+        daiUsds.setOutputPpm(999_999);
+
+        vm.prank(caller);
+        vm.expectRevert("converter output");
+        deployment.deployUndeployedBacking(100e6);
+
+        assertEq(pegKeeper.undeployed_backing(), undeployedBefore);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), targetBalanceBefore);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(targetToDaiPool)), 0);
+        assertEq(dai.allowance(address(pegKeeper), address(daiUsds)), 0);
+    }
+
+    function _createUndeployedBacking() internal {
+        factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        vm.startPrank(governance);
+        pegKeeper.set_expansion_config(0, 500_000, 100_000);
+        pegKeeper.set_direction_paused(5, false);
+        pegKeeper.set_direction_paused(0, false);
+        pegKeeper.set_direction_paused(1, false);
+        vm.stopPrank();
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+    }
+
+    function _createAdditionalUndeployedBacking() internal {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+    }
+
+    function _installPaths(uint256 maxRouteLossBps) internal {
+        vm.prank(governance);
+        pegKeeper.setPaths(_expansionPath(), maxRouteLossBps, _contractionPath());
+    }
+
+    function _expansionPath() internal view returns (IPegKeeperV3.RouteStep[] memory path) {
+        path = new IPegKeeperV3.RouteStep[](3);
+        path[0] = _curveStep(address(targetToDaiPool), address(targetAsset), address(dai), 0, 1, 5);
+        path[1] = IPegKeeperV3.RouteStep({
+            kind: DAI_USDS_CONVERTER,
+            venue: address(daiUsds),
+            tokenIn: address(dai),
+            tokenOut: address(backingAsset),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 0
+        });
+        path[2] = IPegKeeperV3.RouteStep({
+            kind: ERC4626_DEPOSIT,
+            venue: address(yieldToken),
+            tokenIn: address(backingAsset),
+            tokenOut: address(yieldToken),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 5
+        });
+    }
+
+    function _contractionPath() internal view returns (IPegKeeperV3.RouteStep[] memory path) {
+        path = new IPegKeeperV3.RouteStep[](3);
+        path[0] = IPegKeeperV3.RouteStep({
+            kind: ERC4626_REDEEM,
+            venue: address(yieldToken),
+            tokenIn: address(yieldToken),
+            tokenOut: address(backingAsset),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 0
+        });
+        path[1] = IPegKeeperV3.RouteStep({
+            kind: DAI_USDS_CONVERTER,
+            venue: address(daiUsds),
+            tokenIn: address(backingAsset),
+            tokenOut: address(dai),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 0
+        });
+        path[2] = _curveStep(address(daiToCrvUsdPool), address(dai), address(crvUsd), 0, 1, 5);
+    }
+
+    function _curveStep(
+        address venue,
+        address tokenIn,
+        address tokenOut,
+        int128 poolIndexIn,
+        int128 poolIndexOut,
+        uint256 executionBufferBps
+    ) internal pure returns (IPegKeeperV3.RouteStep memory step) {
+        step = IPegKeeperV3.RouteStep({
+            kind: CURVE_SWAP,
+            venue: venue,
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            poolIndexIn: poolIndexIn,
+            poolIndexOut: poolIndexOut,
+            executionBufferBps: executionBufferBps
+        });
+    }
+
+    function _vaultStep(uint256 kind, address tokenIn, address tokenOut)
+        internal
+        view
+        returns (IPegKeeperV3.RouteStep memory step)
+    {
+        step = IPegKeeperV3.RouteStep({
+            kind: kind,
+            venue: address(yieldToken),
+            tokenIn: tokenIn,
+            tokenOut: tokenOut,
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 5
+        });
+    }
+
+    function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory constructorArgs = abi.encode(
+            address(factory),
+            address(targetPool),
+            address(targetAsset),
+            address(backingAsset),
+            address(yieldToken),
+            feeReceiver,
+            governance,
+            emergencyAdmin,
+            MAX_DEPLOYED
+        );
+        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
+        address deployed;
+
+        assembly ("memory-safe") {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                let size := returndatasize()
+                returndatacopy(0, 0, size)
+                revert(0, size)
+            }
+        }
+        deployedPegKeeper = IPegKeeperV3(deployed);
+    }
+}

@@ -1221,6 +1221,7 @@ event UndeployedBackingDeployed(
     address indexed caller,
     uint256 targetSpent,
     uint256 yieldTokenReceived,
+    uint256 trustedValueReceived,
     uint256 conversionCost
 );
 
@@ -1242,7 +1243,11 @@ event KeeperBuyback(
     bool earlyExit
 );
 
-event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
+event PathsUpdated(
+    bytes32 indexed expansionPathHash,
+    bytes32 indexed contractionPathHash,
+    uint256 expansionMaxRouteLossBps
+);
 event ExpansionConfigUpdated(
     uint256 targetAmmExecutionBufferBps,
     uint256 minDownstreamAttemptGas,

@@ -55,6 +55,13 @@ interface IPegKeeperV3 {
         bytes32 indexed contractionPathHash,
         uint256 expansionMaxRouteLossBps
     );
+    event UndeployedBackingDeployed(
+        address indexed caller,
+        uint256 targetSpent,
+        uint256 yieldTokenReceived,
+        uint256 trustedValueReceived,
+        uint256 conversionCost
+    );
 
     function version() external view returns (string memory);
     function MAX_ROUTE_STEPS() external pure returns (uint256);
@@ -138,6 +145,9 @@ interface IPegKeeperV3 {
     function contractUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
+    function deployUndeployedBacking(uint256 targetAmount)
+        external
+        returns (uint256 targetSpent, uint256 yieldTokenReceived);
     function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     function execute(address target, uint256 value, bytes calldata data)
         external

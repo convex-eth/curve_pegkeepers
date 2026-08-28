@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can now atomically install separately validated expansion and contraction paths of up to `16` typed steps. Route execution, downstream yield deployment, and yield-backed buyback and contraction remain for later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can now deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. New-expansion downstream isolation, yield-backed buyback, and yield contraction remain for later verified slices.
 
 ## Toolchain
 
@@ -162,6 +162,8 @@ src/
 test/
 ├── DaiUsdsConverter.t.sol
 ├── PegKeeperLifecycle.t.sol
+├── PegKeeperV3BackingDeploymentFork.t.sol
+├── PegKeeperV3BackingDeployment.t.sol
 ├── PegKeeperV3ExpansionFork.t.sol
 ├── PegKeeperV3Expansion.t.sol
 ├── PegKeeperV3Foundation.t.sol
@@ -234,6 +236,14 @@ Validates atomic governance installation of independently directed expansion and
 ### `PegKeeperV3RoutesForkTest`
 
 Validates the concrete live sUSDS expansion route at block `25,851,930`: USDT through Curve 3pool to DAI, DAI through the canonical DaiUsds converter to USDS, and USDS through the sUSDS ERC-4626 endpoint. It proves the stored indices match live 3pool `coins()`, the converter getters match the typed direction, and `sUSDS.asset() == USDS` under the production route validator.
+
+### `PegKeeperV3BackingDeploymentTest`
+
+Executes accounted target backing through typed Curve, canonical DaiUsds, ERC-4626 deposit, and ERC-4626 redeem steps. It verifies exact input spending, balance-delta output accounting, zeroed temporary approvals, donation isolation, directional pauses, quote-relative step minima, canonical 1:1 converter output, route-loss and available-surplus bounds, full rollback, unchanged deployed exposure and maturity time, and the final principal invariant.
+
+### `PegKeeperV3BackingDeploymentForkTest`
+
+Creates live USDT fallback backing and then permissionlessly routes `1,000 USDT` through Curve 3pool to DAI, the canonical DaiUsds converter to USDS, and the live sUSDS deposit endpoint at block `25,851,930`. It verifies measured sUSDS receipt and accounting, exact undeployed-target reduction, unchanged crvUSD exposure and maturity timer, bounded conversion cost, and final principal preservation.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 
