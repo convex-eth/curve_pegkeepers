@@ -105,9 +105,9 @@ undeployedBacking
 downstreamExpansionPath
 yieldContractionPath
 
-entryMinProfitBps
-normalExitMinProfitBps
-earlyExitMinProfitBps
+entryMinProfitPpm
+normalExitMinProfitPpm
+earlyExitMinProfitPpm
 maxExecutionSlippageBps
 keeperProfitShareBps
 maxKeeperReward
@@ -149,9 +149,9 @@ Undeployed backing or yield-token position
 Idle crvUSD
 ```
 
-`expand()` deploys idle Factory-allocated crvUSD. It does not mint directly under the current Factory interface. A future Factory adapter may support lazy minting, but that is a separate governance and security decision.
+`expand()` deploys idle Factory-allocated crvUSD. It does not mint directly under the current Factory interface. The initial V3 design intentionally keeps this allocation model and does not add lazy mint or burn authority.
 
-crvUSD received during contraction remains idle in V3 and is out of active circulation. It can be reused in a later expansion. Governance can lower the Factory ceiling when it wants returned idle crvUSD burned.
+Unused allocated crvUSD and crvUSD received during contraction remain idle in V3 rather than circulating in markets. They can be reused in a later expansion. Under the current ControllerFactory allocation pattern, governance controls the approved amount and the Factory mints that amount to the strategy.[2] In V3 supply accounting, only the portion actually sold or deposited becomes active market supply. Governance can lower the Factory ceiling when it wants idle crvUSD burned.
 
 A burn-only timer would not prevent market churn. Reacquiring crvUSD already removes it from active circulation; waiting to destroy the idle tokens changes Factory accounting but does not postpone the economic contraction. The timer must therefore gate use of the yield position for buyback, not merely the later burn transaction. Once crvUSD has been reacquired, governance may burn it immediately by lowering the Factory ceiling.
 
@@ -195,7 +195,7 @@ Expansion increases `deployedCrvUsd` by the crvUSD sold regardless of whether th
 
 Expansion is keeper-driven. V3 does not offer a separate direct upward-price quote in the initial design.
 
-Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; downstream yield deployment is preferred but best effort. A zero-basis-point entry margin still requires whichever branch completes to retain at least principal after its realized route costs and keeper reward.
+Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; downstream yield deployment is preferred but best effort. The initial `0.5 bps` entry margin requires whichever branch completes to retain principal plus that margin after its realized route costs, terminal rounding, and keeper reward.
 
 ```text
 1. Verify expansion is enabled.
@@ -212,6 +212,14 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 ```
 
 The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, deposit, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
+
+### No aggregate crvUSD trigger
+
+The initial design does not require a separate aggregate crvUSD oracle trigger. Expansion acceptance is determined by exact amount bounds, protocol-calculated route minima, realized post-reward profitability for the selected terminal branch, final trusted-backing checks, and configured exposure limits.
+
+An aggregate trigger could reject a locally profitable sale because a broader oracle is stale, slow, or reports crvUSD near one dollar. That recreates an oracle-coupled liveness condition without uniquely improving the nominal backing invariant. A keeper can manufacture a local target-AMM opportunity even when broader crvUSD markets are balanced, but the manipulation must still leave V3 with the configured realized margin after reward and pay the attacker's round-trip costs. The remaining concern is bounded rent leakage or unwanted supply cycling, not an unaccounted principal loss.
+
+This decision should be revisited only if simulation or live operation identifies a concrete cross-market externality that realized final profitability and flow limits do not bound. Aggregate crvUSD observations may still be useful for monitoring and governance alerts without gating the core transaction.
 
 A preliminary interface is:
 
@@ -264,7 +272,7 @@ targetAssetRetained
     - denormalizeDown(fallbackKeeperRewardValue)
 
 fallbackEntryMargin
-    = crvUsdSold * entryMinProfitBps / 10_000
+    = crvUsdSold * entryMinProfitPpm / 1_000_000
 
 normalize(targetAssetRetained)
     >= crvUsdSold + fallbackEntryMargin
@@ -721,28 +729,41 @@ Entry and exit should not have symmetric urgency.
 Expansion should remain immediately callable with no time delay:
 
 ```text
-entryMargin = crvUsdSold * entryMinProfitBps / 10_000
+entryMargin = crvUsdSold * entryMinProfitPpm / 1_000_000
 
 selectedBranchBackingRetainedAfterReward
 >= crvUsdSold + entryMargin
 ```
 
-`entryMinProfitBps` may be set to zero. That does not socialize route loss: the deployed branch must cover the complete downstream route and keeper reward, while the fallback branch must retain target asset covering principal after its keeper reward. Later target-to-yield conversion is optional and may spend only existing surplus. Adding a positive entry margin requires the selected branch to retain that additional amount immediately.
+The initial configuration is `entryMinProfitPpm = 50`, equal to `0.5 bps`. The ppm unit is deliberate because an integer basis-point parameter cannot represent half a basis point. This margin applies after realized route costs, terminal rounding, and keeper reward. The deployed branch must complete the downstream route while the fallback branch must retain target asset covering principal; either branch must then retain the additional `0.5 bps` margin. Later target-to-yield conversion remains optional and may spend only existing surplus.
 
 Expansion should not wait for a timer, EMA, accumulated yield, or downstream route recovery. If the target-AMM leg can complete into acceptable target backing, delaying it gives away the above-peg opportunity.
 
 ### Exit policy
 
-Routine contraction in the mature deployment state requires a governance-set `normalExitMinProfitBps`. While V3 remains in the young deployment state, contraction must instead satisfy the larger `earlyExitMinProfitBps`:
+Routine contraction in the mature deployment state requires a governance-set `normalExitMinProfitPpm`. While V3 remains in the young deployment state, contraction must instead satisfy the larger `earlyExitMinProfitPpm`:
 
 ```text
-selectedExitMarginBps =
+selectedExitMarginPpm =
     block.timestamp < lastExpansionAt + minDeploymentTime
-        ? earlyExitMinProfitBps
-        : normalExitMinProfitBps
+        ? earlyExitMinProfitPpm
+        : normalExitMinProfitPpm
 
-earlyExitMinProfitBps > normalExitMinProfitBps >= entryMinProfitBps
+earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm
+
+selectedExitMargin
+    = trustedBackingValue(selectedBackingSpent)
+    * selectedExitMarginPpm / 1_000_000
 ```
+
+The initial exit settings are:
+
+```text
+normalExitMinProfitPpm = 1_000  // 10 bps
+earlyExitMinProfitPpm  = 5_000  // 50 bps
+```
+
+Ignoring swap fees, slippage, and keeper reward solely for price intuition, a `10 bps` retained-profit requirement corresponds to buying crvUSD at no more than approximately `0.999001` backing units, conventionally summarized as a `0.999` price. A `50 bps` requirement corresponds to approximately `0.995025`, summarized as `0.995`. The executable AMM price must normally be more favorable because the final post-reward condition includes route costs and keeper compensation.
 
 The higher early-exit margin acts as the distress override. A sufficiently deep below-peg dislocation naturally creates enough realized buyback profit to satisfy it, allowing V3 to contract before maturity without trusting a separately manipulable spot-price trigger. Mild volatility cannot wash newly expanded exposure back and forth unless it pays the protocol's larger early-exit spread.
 
@@ -1006,7 +1027,7 @@ event Executed(
 20. Combined trusted backing remaining after rewards, later deployment costs, and fee claims is never below `deployedCrvUsd` plus any required reserve.
 21. Expansion is not delayed when either approved branch satisfies its entry floor.
 22. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
-23. Contraction during the young deployment state always satisfies `earlyExitMinProfitBps`.
+23. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
 24. A failed or below-minimum expansion cannot extend the normal-exit timer.
 
 ## Risks
@@ -1055,14 +1076,20 @@ An updatable path can direct all future flows into a malicious venue. Typed step
 
 The owner can intentionally bypass typed routes and move or approve assets through `execute()`. This is an explicit trust assumption, not a permissionless surface. A compromised owner can drain V3, but the designated DAO already controls crvUSD minting and the protocol configuration that determines V3's capacity. Ownership must not be delegated to a weaker hot-key or keeper role.
 
-## Deferred decisions
+## Future considerations
+
+### Optional backing-depeg guard
+
+A backing-depeg guard is a possible later risk-control layer, not core V3 accounting or initial execution logic. If added, it should evaluate the target asset, yield-token underlying, or redemption health against references independent of crvUSD. A cheap crvUSD is exactly when contraction should buy it, and an expensive crvUSD is exactly when expansion should sell it; using crvUSD itself as the depeg reference would confuse the desired action signal with backing quality.
+
+For a USDT-facing deployment, candidate observations include a robust USDT/USD oracle and time-weighted USDT/USDC or USDT/USDS markets that are independent of the designated crvUSD/USDT execution AMM. A production design would need explicit staleness rules, minimum liquidity and observation windows, treatment of disagreement between references, and protection against correlated stablecoin failures. No single comparison to another governance-approved stablecoin proves dollar parity.
+
+Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or underlying while preserving contraction, redemption, migration, and shutdown operations that reduce that exposure. For a yield token, the relevant checks are the approved underlying's external value and the vault's actual redemption behavior; an illiquid share-market quote or `convertToAssets()` alone is not a complete depeg test.
+
+## Remaining deferred decisions
 
 The following are deliberately unresolved:
 
-- whether any aggregate crvUSD trigger is needed beyond realized final profitability;
-- whether any separate target-asset or yield-token depeg guard is desirable despite the approved-backing-at-par convention;
-- whether V3 eventually receives lazy mint/burn authority;
-- initial `entryMinProfitBps`, `normalExitMinProfitBps`, and `earlyExitMinProfitBps`;
 - whether a later version may permit a tightly capped negative entry margin expected to be amortized by carry; the initial design does not;
 - initial `minDeploymentTime` and whether `minExpansionAmount` is absolute, capacity-relative, or the greater of both;
 - whether a later implementation needs tranche or bounded-bucket maturity accounting instead of the initial global timer;
