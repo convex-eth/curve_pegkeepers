@@ -123,7 +123,7 @@ maxUndeployedBacking
 maxBackingDeployPerCall
 maxBackingDeploymentLossBps
 requiredBackingReserve
-downstreamAttemptGas
+minDownstreamAttemptGas
 
 expansionPaused
 backingDeploymentPaused
@@ -213,7 +213,9 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 
 The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, deposit, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
 
-This gas policy is not a reward for deploying `undeployedBacking`. It is a transaction-safety rule for the downstream attempt inside `expand()`. The implementation should require enough gas for a benchmarked downstream allowance plus a separate outer settlement reserve, forward no more than the downstream allowance to the `onlySelf` subcall, and preserve the outer reserve to catch failure, calculate the fallback reward, record `undeployedBacking`, and emit final events. The numeric `downstreamGasLimit` and `fallbackSettlementGasReserve` remain implementation benchmarks; neither amount is paid to the caller.
+This gas policy is not a reward for deploying `undeployedBacking`. It is a transaction-safety rule for the downstream attempt inside `expand()`. Immediately before the isolated subcall, V3 requires `gasleft() >= minDownstreamAttemptGas`, where `minDownstreamAttemptGas` is governance-changeable. Its initial value is selected only after implementation benchmarks and should include ample headroom over the measured worst-case full route, call overhead, failed-attempt handling, fallback accounting, token payment, storage writes, and event emission. Expansion cannot be enabled with an uninitialized zero threshold, and a materially different downstream path must be activated with a compatible threshold.
+
+A minimum `gasleft()` check alone is insufficient if the downstream subcall can consume everything after the check. V3 must also bound forwarded gas or preserve a non-forwarded `fallbackSettlementGasReserve` so it can catch failure, calculate the fallback reward, record `undeployedBacking`, and finish the outer call. The expected threshold may be on the order of several hundred thousand gas, but the specification does not assign a number before measurement. Governance should update the threshold when activating a materially different downstream path. Neither the minimum nor the reserve is paid to the caller.
 
 ### No aggregate crvUSD trigger
 
@@ -949,7 +951,7 @@ Required controls:
 - delayed target-AMM and path replacement;
 - immediate cancellation of a pending path;
 - fee-receiver update;
-- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, and `maxKeeperReward`;
+- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
 - first-class migration of the yield-token position;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
@@ -1075,7 +1077,7 @@ Any path venue can lose liquidity, pause, change behavior, or become unsafe. The
 
 ### Fallback forcing and gas starvation
 
-The fallback branch may produce a larger immediate keeper reward than the full route because it has not paid downstream conversion fees. A keeper must not be able to select that branch directly or force it by underfunding gas. The implementation needs a fixed downstream gas policy or a conservative pre-attempt gas requirement plus sufficient reserved gas to finalize `undeployedBacking` accounting. Route failure is caught only inside that controlled call boundary.
+The fallback branch may produce a larger immediate keeper reward than the full route because it has not paid downstream conversion fees. A keeper must not be able to select that branch directly or force it by underfunding gas. `minDownstreamAttemptGas` must exceed the benchmarked route requirement with ample safety margin, and the subcall must preserve enough outer gas to finalize `undeployedBacking` accounting. Setting the threshold too low reopens forced fallback; setting it unnecessarily high rejects otherwise valid expansion calls. Route activation and material route changes should therefore include a compatible gas-threshold review.
 
 ### Undeployed backing accumulation
 
@@ -1128,7 +1130,7 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 The following are deliberately unresolved:
 
 - initial `maxUndeployedBacking`, `maxBackingDeployPerCall`, `maxBackingDeploymentLossBps`, and required backing reserve;
-- benchmarked numeric `downstreamGasLimit` and `fallbackSettlementGasReserve` for the isolated downstream attempt;
+- initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
 - whether a successful expansion should always attempt a separate capped deployment of undeployed backing or leave flushing to `deployUndeployedBacking()`;
 - final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
 - path length bound;
