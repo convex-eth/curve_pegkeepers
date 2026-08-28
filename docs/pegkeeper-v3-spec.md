@@ -934,19 +934,39 @@ Here `trustedBackingValue` is the normalized value of accounted undeployed USDT 
 
 Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, buyback waterfalls, share-price appreciation, and fee claims, without strengthening the principal invariant.
 
-A fee withdrawal may transfer yield shares or undeployed target backing, but the asset selected for withdrawal does not identify where the surplus originated. Each claim calculates the maximum withdrawable amount from combined trusted backing, rounds principal requirements against the fee receiver, and must leave `trustedBackingValue >= deployedCrvUsd`. Existing action events provide enough data for offchain reporting to estimate retained execution profit and yield carry without adding consensus-critical surplus buckets.
+A fee withdrawal transfers source backing rather than performing another V3 conversion. Each claim calculates the maximum withdrawable amount from combined trusted backing, rounds principal requirements against the fee receiver, and must leave `trustedBackingValue >= deployedCrvUsd`. Existing action events provide enough data for offchain reporting to estimate retained execution profit and yield carry without adding consensus-critical surplus buckets.
 
 ```solidity
-function claimYieldSurplus(uint256 maxShares)
+function claimSurplus(uint256 maxTrustedValue)
     external
-    returns (uint256 sharesTransferred);
-
-function claimUndeployedSurplus(uint256 maxTargetAmount)
-    external
-    returns (uint256 targetTransferred);
+    returns (uint256 targetTransferred, uint256 yieldSharesTransferred);
 ```
 
-These functions are permissionless to call but always pay the configured fee receiver. Their names identify the asset withdrawn, not a distinct source or class of surplus.
+The caller selects only a maximum normalized value; it cannot select the asset source or recipient. V3 uses this deterministic waterfall:
+
+```text
+claimValue = min(maxTrustedValue, protocolSurplus)
+
+1. Transfer as much claim value as possible from accounted USDT.
+2. If claim value remains, transfer sUSDS shares whose trusted value is
+   no greater than the remainder, rounding the share amount down.
+3. Leave any terminal rounding dust in V3.
+4. Recompute trusted backing and require trustedBackingValue >= deployedCrvUsd.
+```
+
+USDT goes first because it is idle, earns no vault carry, and can be removed without a vault call. The remaining sUSDS keeps earning while it supports outstanding principal. This mirrors direct buyback's source order, but a surplus claim transfers sUSDS shares directly rather than redeeming them because the fee receiver—not the V3 core—owns fee conversion policy.
+
+Share calculations must use the trusted value of the **remaining** post-transfer share balance rather than assuming `convertToAssets(totalShares - sharesTransferred) + convertToAssets(sharesTransferred) == convertToAssets(totalShares)`. ERC-4626 floor rounding need not be additive. The candidate share amount is rounded down, the actual share delta is measured, and `trustedValue` in `SurplusClaimed` is the observed `trustedBackingBefore - trustedBackingAfter`; the final principal check catches any remaining rounding edge.
+
+The initial `feeReceiver` should be Curve's current `FeeCollector`, not the crvUSD mint-market `FeeSplitter`. V2's `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting them inside the PegKeeper.[8] The current `FeeCollector` is designed to collect arbitrary ERC-20 fee assets and has crvUSD as its target token.[9] Its current CowSwap burner creates sell orders for each supplied fee token into that target, so USDT and sUSDS can remain source assets when V3 claims profit.[11]
+
+At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose `fee_receiver()` was the `FeeCollector` at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`. The collector's live `target()` was crvUSD and its `burner()` was the generic CowSwap burner at `0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b`.[9][11]
+
+The separate mint-market `FeeSplitter` is crvUSD-specific: it claims controller fees, reads its crvUSD balance, and distributes that token by receiver weights.[10] Pointing V3 directly at it would therefore require V3 to convert surplus to crvUSD first. That would duplicate the `FeeCollector` burner, add route and market-price dependencies to fee claiming, and couple profit extraction to contraction execution. V3 instead transfers USDT first and then sUSDS to the configured `FeeCollector`; conversion to crvUSD occurs in the existing fee infrastructure.
+
+At Ethereum block `25,851,058`, ControllerFactory's `fee_receiver()` was the `FeeSplitter` at `0x2dFd89449faff8a532790667baB21cF733C064f2`. Its two configured receiver weights were `5,000` each: `0xE8d1E2531761406Af1615A6764B0d5fF52736F56` and the `FeeCollector`; the latter was also the excess receiver.[10] This confirms the two contracts serve different layers: mint-market fees reach the splitter already as crvUSD, whereas PegKeeper profit can reach the collector in its source token.
+
+`claimSurplus()` is permissionless to call but always pays the configured receiver. A future receiver update must point to a contract capable of handling both fixed backing tokens or governance must stop fee claims until it is.
 
 ## Curve compatibility
 
@@ -1059,7 +1079,12 @@ event KeeperBuyback(
 
 event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
 event DirectionPaused(uint8 indexed direction, bool paused);
-event SurplusClaimed(address indexed token, uint256 amount, uint256 trustedValue);
+event SurplusClaimed(
+    address indexed receiver,
+    uint256 targetTransferred,
+    uint256 yieldSharesTransferred,
+    uint256 trustedValue
+);
 event Executed(
     address indexed target,
     uint256 value,
@@ -1179,3 +1204,25 @@ The following are deliberately unresolved:
 Curve 3pool: 0xbEbc44782C7dB0a1A60Cb6fE97d0b483032FF1C7
 fee()(uint256)=1500000 [1.5e6]
 admin_fee()(uint256)=10000000000 [1e10]"
+[8] https://github.com/curvefi/curve-stablecoin/blob/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a/curve_stablecoin/stabilizer/PegKeeperV2.vy — PegKeeperV2 profit withdrawal
+    > "lp_amount: uint256 = self._calc_profit()
+        POOL.transfer(self.regulator.fee_receiver(), lp_amount)"
+[9] https://eth.blockscout.com/address/0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00?tab=contract — Curve FeeCollector verified source
+    > "@notice Collects fees and delegates to burner for exchange"
+    > "target: public(ERC20)  # coin swapped into"
+    > "Ethereum block: 25851076
+All five live PegKeeperV2 regulators: 0x36a04CAffc681fa179558B2Aaba30395CDdd855f
+regulator fee_receiver: 0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00
+FeeCollector target: 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E
+FeeCollector burner: 0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b"
+[10] https://eth.blockscout.com/address/0x2dFd89449faff8a532790667baB21cF733C064f2?tab=contract — Curve FeeSplitter verified source
+    > "balance: uint256 = staticcall crvusd.balanceOf(self)"
+    > "extcall crvusd.transfer(r.addr, balance * weight // MAX_BPS)"
+    > "Ethereum block: 25851058
+ControllerFactory fee_receiver: 0x2dFd89449faff8a532790667baB21cF733C064f2
+FeeSplitter receiver 0: 0xE8d1E2531761406Af1615A6764B0d5fF52736F56, weight 5000
+FeeSplitter receiver 1: 0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00, weight 5000
+FeeSplitter excess_receiver: 0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00"
+[11] https://eth.blockscout.com/address/0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b?tab=contract — Curve CowSwapBurner verified source
+    > "sellToken: sell_token"
+    > "buyToken: buy_token"
