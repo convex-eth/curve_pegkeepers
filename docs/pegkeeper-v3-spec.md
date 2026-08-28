@@ -119,7 +119,6 @@ lastExpansionAt
 maxExpansionPerCall
 maxBuybackPerCall
 maxDeployedCrvUsd
-requiredBackingReserve
 minDownstreamAttemptGas
 
 expansionPaused
@@ -303,8 +302,7 @@ trustedBackingBefore
 availableDeploymentSurplus
     = max(
         trustedBackingBefore
-        - deployedCrvUsd
-        - requiredBackingReserve,
+        - deployedCrvUsd,
         0
       )
 
@@ -318,7 +316,7 @@ conversionCost <= normalize(targetSpent)
     * downstreamExpansionPath.maxRouteLossBps / 10_000
 
 trustedBackingAfter
-    >= deployedCrvUsd + requiredBackingReserve
+    >= deployedCrvUsd
 ```
 
 `maxRouteLossBps` belongs to the governance-approved downstream path configuration rather than a standalone strategy-wide deployment-loss parameter. The same path quote, step minima, execution-quality floor, final measured output, and route-level accounting-loss limit determine whether both an expansion's downstream attempt and a later `deployUndeployedBacking()` call are executable. Quote-relative slippage protection remains distinct from the accounting-loss limit: a route can execute exactly at a bad quote and still be rejected for losing too much normalized backing value.
@@ -905,7 +903,7 @@ No fixed stipend or time-refilling credit system is paid. A keeper decides wheth
 
 ## Fee receiver and surplus
 
-Yield-token appreciation and execution spread retained in either approved backing source create protocol surplus. Fee withdrawal must not reduce combined trusted backing below outstanding deployed crvUSD and any configured reserve.
+Yield-token appreciation and execution spread retained in either approved backing source create protocol surplus. Fee withdrawal must not reduce combined trusted backing below outstanding deployed crvUSD.
 
 A withdrawal function should calculate the maximum withdrawable amount from combined trusted backing, rounding principal requirements against the fee receiver, and transfer no more than that amount.
 
@@ -1063,7 +1061,7 @@ event Executed(
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
 19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
-20. Combined trusted backing remaining after rewards, later deployment costs, and fee claims is never below `deployedCrvUsd` plus any required reserve.
+20. Combined trusted backing remaining after rewards, later deployment costs, and fee claims is never below `deployedCrvUsd`.
 21. Expansion is not delayed when either approved branch satisfies its entry floor.
 22. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
 23. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
@@ -1129,7 +1127,7 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 
 The following are deliberately unresolved:
 
-- initial downstream-path `maxRouteLossBps` and `requiredBackingReserve`;
+- initial downstream-path `maxRouteLossBps`;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
 - final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
 - path length bound;
