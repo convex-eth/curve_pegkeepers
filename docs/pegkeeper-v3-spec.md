@@ -74,7 +74,7 @@ Governance selects the deployment's fixed token endpoints and configures debt ca
 
 ### Emergency admin
 
-The emergency admin can immediately disable expansion, direct buyback, keeper buyback, or all execution. It cannot install a new path or move funds to an arbitrary address.
+The emergency admin can immediately disable expansion, direct buyback, keeper buyback, or all execution. It cannot install a new path or move funds to an arbitrary address. It must be a distinct address from the governance owner so the pause-only role cannot inherit owner execution authority or interfere with owner unpause semantics.
 
 ### Keeper
 
@@ -1167,7 +1167,7 @@ Setting `expansionPaused = true` is the complete slow-wind-down switch. It block
 
 ## Owner execute escape hatch
 
-The governance owner must be able to call an arbitrary target with arbitrary calldata:
+The governance owner must be able to call any target with owner-selected calldata, subject only to the implementation's explicit dynamic-bytes bound:
 
 ```solidity
 function execute(address target, uint256 value, bytes calldata data)
@@ -1188,7 +1188,7 @@ V3 applies no additional delay or migration-state precondition to `execute()`: o
 
 Using `execute()` to acquire a replacement token does not make that token part of normal V3 backing accounting. Continued operation with another yield token requires a new V3 deployment.
 
-`execute()` performs a normal external `call`, not `delegatecall`. It bubbles the target's revert data and returns the target's return data. It has no target allowlist because an allowlist would defeat its role as a general recovery mechanism.
+`execute()` performs a normal external `call`, not `delegatecall`. It bubbles the target's revert data and returns the target's return data. It has no target allowlist because an allowlist would defeat its role as a general recovery mechanism. The Vyper implementation accepts at most `65,535` calldata bytes and captures at most `65,535` return-data bytes per call; a larger successful return is truncated to that capture bound. This explicit representation bound is large enough for recovery payloads while preserving a finite worst case; a larger input operation must use a governance-approved helper contract or multiple calls.
 
 The owner is expected to be the same DAO or governance executor that already controls crvUSD minting, debt capacity, and protocol configuration. Within that governance trust model, `execute()` does not add a new trusted actor or materially expand the DAO's ultimate authority. It does increase the immediate blast radius of an owner compromise or governance mistake at this contract, so it must never be callable by keepers, public operators, or the emergency admin.
 

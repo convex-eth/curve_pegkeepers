@@ -84,6 +84,8 @@ contract MockTwoCoinPool {
 
 contract MockCallTarget {
     uint256 public value;
+    uint256 public receivedValue;
+    uint256 public dataLength;
 
     function setValue(uint256 value_) external returns (uint256) {
         value = value_;
@@ -92,6 +94,24 @@ contract MockCallTarget {
 
     function fail() external pure {
         revert("target failure");
+    }
+
+    function setValuePayable(uint256 value_) external payable {
+        value = value_;
+        receivedValue += msg.value;
+    }
+
+    function returnBytes(uint256 length) external pure returns (bytes memory result) {
+        result = new bytes(length);
+    }
+
+    fallback() external payable {
+        receivedValue += msg.value;
+        dataLength = msg.data.length;
+    }
+
+    receive() external payable {
+        receivedValue += msg.value;
     }
 }
 
@@ -159,7 +179,7 @@ contract PegKeeperV3FoundationTest is Test {
 
     function test_constructorRejectsPoolWithoutExactCrvUsdTargetPair() public {
         MockTwoCoinPool wrongPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
-        vm.expectRevert();
+        vm.expectRevert("bad target pair");
         _deploy(
             address(wrongPool), address(targetAsset), address(backingAsset), address(yieldToken)
         );
@@ -180,7 +200,7 @@ contract PegKeeperV3FoundationTest is Test {
 
     function test_constructorRejectsYieldAssetMismatch() public {
         MockYieldToken wrongYield = new MockYieldToken(address(targetAsset));
-        vm.expectRevert();
+        vm.expectRevert("yield asset mismatch");
         _deploy(
             address(targetAmm), address(targetAsset), address(backingAsset), address(wrongYield)
         );
@@ -204,7 +224,36 @@ contract PegKeeperV3FoundationTest is Test {
         factory = new MockFactory(address(crvUsd), governance);
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
 
-        vm.expectRevert();
+        vm.expectRevert("crvUSD decimals");
+        _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+    }
+
+    function test_constructorRejectsOverlappingAdminRoles() public {
+        emergencyAdmin = governance;
+
+        vm.expectRevert("roles overlap");
+        _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+    }
+
+    function test_constructorRejectsTargetDecimalsAbove18() public {
+        targetAsset = new MockToken(19);
+        targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
+
+        vm.expectRevert("target decimals>18");
+        _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+    }
+
+    function test_constructorRejectsBackingDecimalsAbove18() public {
+        backingAsset = new MockToken(19);
+        yieldToken = new MockYieldToken(address(backingAsset));
+
+        vm.expectRevert("backing decimals>18");
         _deploy(
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
@@ -230,10 +279,14 @@ contract PegKeeperV3FoundationTest is Test {
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
 
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.DirectionPaused(2, false);
         vm.prank(governance);
         pegKeeper.set_direction_paused(2, false);
         assertFalse(pegKeeper.direct_buyback_paused());
 
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.DirectionPaused(2, true);
         vm.prank(emergencyAdmin);
         pegKeeper.set_direction_paused(2, true);
         assertTrue(pegKeeper.direct_buyback_paused());
@@ -264,6 +317,10 @@ contract PegKeeperV3FoundationTest is Test {
         MockCallTarget target = new MockCallTarget();
         bytes memory callData = abi.encodeCall(target.setValue, (41));
 
+        vm.expectEmit(true, true, false, true, address(pegKeeper));
+        emit IPegKeeperV3.Executed(
+            address(target), 0, MockCallTarget.setValue.selector, keccak256(callData)
+        );
         vm.prank(governance);
         bytes memory result = pegKeeper.execute(address(target), 0, callData);
 
@@ -284,6 +341,73 @@ contract PegKeeperV3FoundationTest is Test {
         vm.prank(governance);
         vm.expectRevert("target failure");
         pegKeeper.execute(address(target), 0, abi.encodeCall(target.fail, ()));
+    }
+
+    function test_ownerExecuteForwardsContractValue() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+        MockCallTarget target = new MockCallTarget();
+        vm.deal(address(pegKeeper), 2 ether);
+
+        vm.prank(governance);
+        pegKeeper.execute(address(target), 1 ether, abi.encodeCall(target.setValuePayable, (73)));
+
+        assertEq(target.value(), 73);
+        assertEq(target.receivedValue(), 1 ether);
+        assertEq(address(pegKeeper).balance, 1 ether);
+    }
+
+    function test_ownerExecuteAcceptsMaximumPayload() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+        MockCallTarget target = new MockCallTarget();
+        bytes memory payload = new bytes(65_535);
+
+        vm.prank(governance);
+        pegKeeper.execute(address(target), 0, payload);
+
+        assertEq(target.dataLength(), payload.length);
+    }
+
+    function test_ownerExecuteRejectsPayloadAboveMaximum() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+        MockCallTarget target = new MockCallTarget();
+        bytes memory payload = new bytes(65_536);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        pegKeeper.execute(address(target), 0, payload);
+    }
+
+    function test_ownerExecuteReturnsLargePayloadWithinCaptureLimit() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+        MockCallTarget target = new MockCallTarget();
+
+        vm.prank(governance);
+        bytes memory encodedResult =
+            pegKeeper.execute(address(target), 0, abi.encodeCall(target.returnBytes, (65_440)));
+        bytes memory result = abi.decode(encodedResult, (bytes));
+
+        assertEq(result.length, 65_440);
+    }
+
+    function test_ownerExecuteTruncatesReturnDataAboveCaptureLimit() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+        MockCallTarget target = new MockCallTarget();
+
+        vm.prank(governance);
+        bytes memory encodedResult =
+            pegKeeper.execute(address(target), 0, abi.encodeCall(target.returnBytes, (65_472)));
+
+        assertEq(encodedResult.length, 65_535);
     }
 
     function _deploy(
@@ -309,8 +433,12 @@ contract PegKeeperV3FoundationTest is Test {
 
         assembly ("memory-safe") {
             deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                let size := returndatasize()
+                returndatacopy(0, 0, size)
+                revert(0, size)
+            }
         }
-        require(deployed != address(0), "Vyper deployment failed");
         pegKeeper = IPegKeeperV3(deployed);
     }
 }

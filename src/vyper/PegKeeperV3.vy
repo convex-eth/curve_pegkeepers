@@ -107,6 +107,7 @@ def __init__(
     assert _fee_receiver != empty(address), "fee receiver=0"
     assert _admin != empty(address), "admin=0"
     assert _emergency_admin != empty(address), "emergency admin=0"
+    assert _admin != _emergency_admin, "roles overlap"
     assert _max_deployed_crvusd > 0, "max deployed=0"
 
     crv_usd: address = _factory.stablecoin()
@@ -275,15 +276,15 @@ def set_direction_paused(_direction: uint256, _paused: bool):
 @external
 @payable
 @nonreentrant("lock")
-def execute(_target: address, _value: uint256, _data: Bytes[4096]) -> Bytes[4096]:
+def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[65535]:
     assert msg.sender == self.admin, "not admin"
     assert _target != empty(address), "target=0"
 
-    result: Bytes[4096] = raw_call(
+    result: Bytes[65535] = raw_call(
         _target,
         _data,
         value=_value,
-        max_outsize=4096,
+        max_outsize=65535,
     )
     selector: bytes4 = empty(bytes4)
     if len(_data) >= 4:
