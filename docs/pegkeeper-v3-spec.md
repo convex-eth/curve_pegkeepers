@@ -95,6 +95,7 @@ A minimal implementation needs the following state:
 ```text
 factory
 targetAmm
+targetAmmExecutionBufferBps
 targetAsset
 backingAsset
 yieldToken
@@ -108,7 +109,6 @@ yieldContractionPath
 entryMinProfitPpm
 normalExitMinProfitPpm
 earlyExitMinProfitPpm
-maxExecutionSlippageBps
 keeperProfitShareBps
 maxKeeperReward
 
@@ -128,7 +128,7 @@ yieldContractionPaused
 
 The exact storage representation is deferred until the implementation language and route encoding are selected.
 
-`targetAsset`, `backingAsset`, `yieldToken`, and the yield-token accounting adapter are fixed for the lifetime of a V3 deployment. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
+`targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires `yieldToken` to implement ERC-4626 and requires `yieldToken.asset() == backingAsset` at construction. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or a non-ERC-4626 accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
 
 ## Supply accounting and Factory integration
 
@@ -162,7 +162,7 @@ V3 makes that trust assumption explicit and narrow:
 
 - governance approves the AMM-facing stablecoin, yield token, vault underlying, and typed conversion paths;
 - one normalized unit of an approved backing stablecoin is accounted as one dollar and one crvUSD unit;
-- yield-token shares are not treated as one dollar each; they are converted into units of the approved underlying through the configured vault or adapter;
+- yield-token shares are not treated as one dollar each; the fixed ERC-4626 `yieldToken` converts them into units of its approved `backingAsset`;
 - only `undeployedBacking` and the configured yield position count toward V3 principal and surplus accounting;
 - unsolicited tokens and arbitrary assets sent to V3 do not count as backing.
 
@@ -174,6 +174,33 @@ trustedBackingValue(sUSDS shares)
 ```
 
 The returned USDS units are then trusted at par because USDS and the sUSDS position were approved by governance as PegKeeper backing. No target-AMM spot price is used to value the final position.
+
+V1 does not need a separate accounting-adapter contract. It uses the fixed ERC-4626 vault directly and applies these rules:
+
+```text
+trusted assets for held shares
+    = yieldToken.convertToAssets(actualHeldShares)
+
+trusted normalized value
+    = normalizeDown(trusted assets)
+
+trusted value added when shares enter V3
+    = normalizeDown(convertToAssets(actualSharesReceived))
+
+trusted value removed when shares leave V3
+    = trustedBackingBefore - trustedBackingAfter
+```
+
+ERC-4626 requires `convertToAssets()` to round down. It also requires `previewDeposit()` to return no more than the shares minted by a same-transaction deposit and `previewWithdraw()` to return no fewer than the shares burned by a same-transaction withdrawal.[12] V3 therefore uses:
+
+- `convertToAssets(totalHeldShares)` with downward normalization for principal and surplus valuation;
+- `previewDeposit(actualAssets)` as the terminal deposit quote, followed by the measured share balance delta;
+- `previewWithdraw(exactAssets)` as the conservative maximum-share quote for direct buyback, followed by measured asset and share deltas;
+- conservative standalone valuation of newly received shares so pre-existing yield appreciation cannot be attributed to the new action;
+- pre/post total-position valuation when shares are spent, rather than assuming `convertToAssets(total - spent) + convertToAssets(spent) == convertToAssets(total)`;
+- actual token deltas as the final authority for every state change.
+
+Expansion needs no inverse accounting adapter: after deposit, it applies `convertToAssets()` to the actual shares received and uses the rounded-down result for the action's trusted-asset profit floor. For an increasing position this standalone value is conservative under ERC-4626 downward rounding and does not credit existing yield to the new action. For a decreasing position V3 instead recomputes the complete pre/post position because conversion floors are not additive. A later V3 supporting a non-ERC-4626 yield token must define its own fixed accounting implementation rather than installing a mutable generic adapter in this deployment.
 
 This is a protocol accounting convention, not proof that every approved stablecoin can always be sold for one dollar. If an approved backing asset depegs, freezes, or becomes non-redeemable, V3 can remain nominally solvent under its configured accounting while being economically impaired. Governance must pause affected routes and use slow wind-down or owner `execute()` to recover or move the position. Continuing with a different yield token requires deploying a new V3.
 
@@ -533,11 +560,11 @@ A path is valid only when:
 7. An exact stable converter is a governance-approved typed adapter with fixed input and output tokens; it accepts no caller calldata or recipient.
 8. An ERC-4626 deposit step uses `vault.asset() == tokenIn` and the vault share token as `tokenOut`.
 9. An ERC-4626 redeem step uses the vault share token as `tokenIn` and `vault.asset()` as `tokenOut`.
-10. Execution-buffer parameters remain within governance-set maxima.
+10. Every `executionBufferBps` is no greater than `10_000`.
 11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
 12. No venue, token, or endpoint is zero.
 
-The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, `yieldToken`, and the yield-accounting adapter cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
+The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, and the ERC-4626 `yieldToken` cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
 
 There is no protocol-level maximum path length. Governance is trusted to configure an executable typed path; transaction gas and `minDownstreamAttemptGas` provide the practical bound. An excessively long or expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset. Route review and gas-threshold benchmarking remain governance responsibilities.
 
@@ -691,28 +718,36 @@ backingAssetToDeploy = backingAssetOut - keeperRewardTokens
 
 If normalized backing output does not exceed crvUSD sold, gross entry profit and keeper compensation are zero and the transaction cannot pass any positive entry margin. Reward conversion rounds down so decimal normalization cannot overpay the keeper.
 
-V3 then calculates the final yield-share minimum after subtracting the reward:
+V3 applies an execution-quality floor separately from the hard trusted-profit floor. For every typed route step, it quotes the actual measured step input immediately before execution through that venue's canonical view method:
 
 ```text
-profitFloor = sharesRequiredForTrustedAssets(
-    crvUsdSold + entryMargin
+quotedOut = quote(step, actualStepInput)
+
+stepMinOut = floor(
+    quotedOut * (10_000 - step.executionBufferBps) / 10_000
 )
 
-executionFloor = expectedFinalShares
-    * (1 - maxExecutionSlippageBps)
-
-protocolMinShares = max(profitFloor, executionFloor)
+actualStepOut >= stepMinOut
 ```
 
-`expectedFinalShares` comes from the configured target AMM quote, each typed path preview, the expected profit-share reward, and the terminal yield-deployment preview. Actual shares are measured by balance delta. Share count is not compared directly with deposited underlying because a yield-token share need not equal one underlying unit. `sharesRequiredForTrustedAssets` converts the required approved-underlying units into shares through the configured vault or adapter; it does not derive a dollar price from the crvUSD target AMM.
+Examples are Curve `get_dy()` for a swap, the typed converter's deterministic quote for a stable wrapper conversion, and ERC-4626 `previewDeposit()` for the terminal deposit. Actual output is always measured by balance delta. Governance configures `executionBufferBps` per step, bounded only by the `10_000` bps denominator; deterministic converters and standards-compliant same-transaction ERC-4626 deposits can use zero, while swap steps receive a benchmarked nonzero allowance. The separately stored target AMM configuration carries its own `executionBufferBps` and uses the same quote/minimum equation for the initial crvUSD-to-target swap.
 
-The fallback branch separately enforces a target-output execution floor against the target AMM quote, then applies its realized post-reward target-backing floor. The full-route share floor is not reused for fallback.
+After all steps, V3 independently enforces:
+
+```text
+normalizeDown(yieldToken.convertToAssets(actualYieldSharesReceived))
+    >= crvUsdSold + entryMargin
+```
+
+The quote-relative step floor prevents a favorable upstream spread from masking unnecessarily poor downstream execution. The final trusted-value floor prevents an accurately quoted but economically bad route from consuming principal. `downstreamExpansionPath.maxRouteLossBps` separately limits normalized route-wide conversion loss. These checks protect different failure modes and do not require a duplicate global `maxExecutionSlippageBps` parameter.
+
+The fallback branch separately enforces the target AMM's quote-relative output floor, then applies its realized post-reward target-backing floor. The full-route trusted-value postcondition is not reused for fallback.
 
 ### Expansion postconditions
 
 ```text
 fully deployed:
-trustedBackingValue(yieldSharesReceived)
+normalizeDown(yieldToken.convertToAssets(yieldSharesReceived))
 >= crvUsdSold
  + entryMargin
 
@@ -747,7 +782,7 @@ crvUsdReceived - keeperReward
  + selectedExitMargin
 ```
 
-The implementation still needs an asset-specific adapter interface and exact rounding direction. Expansion must round required shares up, reward-token conversion down, and surplus calculations down.
+Reward-token conversion and every trusted-value normalization round down. Exact-asset direct buyback uses ERC-4626 `previewWithdraw()` as an upward/conservative share bound, while expansion and surplus solvency use actual post-action shares valued downward through `convertToAssets()`.
 
 ## Asymmetric timing and carry
 
@@ -848,7 +883,7 @@ At `10,000` crvUSD and the initial `0.5 bps` entry margin, the minimum guarantee
 
 Open keepers are an explicit design choice. V3 cannot prevent an account from using flash liquidity to move the target AMM, call `expand()` or `contractViaAmm()`, and reverse the market trade afterward.
 
-The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the configured vault or adapter accounting itself is compromised. A real depeg of an approved backing asset is governance collateral risk rather than target-AMM price manipulation.
+The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the fixed ERC-4626 vault accounting itself is compromised. A real depeg of an approved backing asset remains outside nominal accounting.
 
 The execution-quality floor prevents the configured route from performing materially worse than the quote visible when V3 executes. It cannot detect a malicious keeper that moved the AMM before the V3 transaction and restores it afterward. Preventing that completely would require a trusted price reference, auction, private order flow, or keeper whitelist. Those mechanisms are outside the current open-keeper design.
 
@@ -1147,7 +1182,7 @@ event Executed(
 14. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
 15. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 16. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
-17. A path update preserves the deployment's fixed target asset, backing asset, yield token, and accounting adapter.
+17. A path update preserves the deployment's fixed target asset, backing asset, and ERC-4626 yield token.
 18. Every external conversion is non-reentrant and uses measured balance deltas.
 19. Only the governance owner can execute arbitrary targets or calldata.
 20. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
@@ -1157,6 +1192,8 @@ event Executed(
 24. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
 25. A failed or below-minimum expansion cannot extend the normal-exit timer.
 26. Direct buyback never redeems yield shares for payout value that available `undeployedBacking` can satisfy.
+27. Trusted yield valuation uses ERC-4626 `convertToAssets()` and downward normalization; it never rounds backing upward.
+28. Any action that removes yield shares computes trusted value spent from the complete pre/post held-share positions and actual deltas.
 
 ## Risks
 
@@ -1182,7 +1219,7 @@ A USDT-facing AMM combined with an sUSDS yield position crosses USDT, DAI, USDS,
 
 ### Oracle and preview manipulation
 
-Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the configured backing adapter, final nominal-profit assertions, deadlines, available inventory, and the total deployed-exposure bound. Governance is responsible for approving a vault or adapter whose share-to-underlying accounting is acceptable for backing.
+Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the fixed vault's ERC-4626 conversion functions, final nominal-profit assertions, deadlines, available inventory, and the total deployed-exposure bound. Governance is responsible for approving a vault whose share-to-underlying accounting is acceptable for backing.
 
 ### MEV
 
@@ -1218,10 +1255,8 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 
 The following are deliberately unresolved:
 
-- initial downstream-path `maxRouteLossBps`;
+- initial downstream-path `maxRouteLossBps` plus target-AMM and per-step `executionBufferBps` values, calibrated against the implemented venues;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- the execution-quality benchmark used in addition to the hard profit floor;
-- exact adapter interface and rounding rules for converting supported yield shares into trusted underlying units;
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
 
 ## Sources
@@ -1263,3 +1298,7 @@ FeeSplitter excess_receiver: 0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00"
 [11] https://eth.blockscout.com/address/0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b?tab=contract — Curve CowSwapBurner verified source
     > "sellToken: sell_token"
     > "buyToken: buy_token"
+[12] https://eips.ethereum.org/EIPS/eip-4626 — ERC-4626 Tokenized Vaults standard
+    > "MUST round down towards 0"
+    > "MUST return as close to and no more than the exact amount of Vault shares that would be minted in a deposit call in the same transaction"
+    > "MUST return as close to and no fewer than the exact amount of Vault shares that would be burned in a withdraw call in the same transaction"
