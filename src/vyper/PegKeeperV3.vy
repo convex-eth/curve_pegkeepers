@@ -11,6 +11,7 @@ interface ERC20:
     def decimals() -> uint256: view
     def approve(_spender: address, _amount: uint256): nonpayable
     def transfer(_recipient: address, _amount: uint256): nonpayable
+    def transferFrom(_sender: address, _recipient: address, _amount: uint256): nonpayable
 
 interface ControllerFactory:
     def stablecoin() -> address: view
@@ -91,6 +92,12 @@ event KeeperBuyback:
     crv_usd_received: uint256
     gross_profit: uint256
     keeper_reward: uint256
+    early_exit: bool
+
+event DirectBuyback:
+    caller: indexed(address)
+    crv_usd_received: uint256
+    yield_token_paid: uint256
     early_exit: bool
 
 event SurplusClaimed:
@@ -367,6 +374,124 @@ def available_expansion() -> uint256:
 @view
 def _is_early_exit() -> bool:
     return self.deployed_crvusd > 0 and block.timestamp < self.last_expansion_at + self.min_deployment_time
+
+
+@internal
+@view
+def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
+    assert _crv_usd_amount > 0, "crvUSD amount=0"
+    deployed_before: uint256 = self.deployed_crvusd
+    assert _crv_usd_amount <= deployed_before, "exposure amount"
+
+    accounted_before: uint256 = self.accounted_yield_token_units
+    assert YIELD_TOKEN.balanceOf(self) >= accounted_before, "insufficient yield balance"
+
+    early_exit: bool = self._is_early_exit()
+    exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
+    if early_exit:
+        exit_margin_ppm = self.early_exit_min_profit_ppm
+
+    denominator: uint256 = PPM + exit_margin_ppm
+    payout_budget: uint256 = (
+        _crv_usd_amount / denominator * PPM
+        + (_crv_usd_amount % denominator) * PPM / denominator
+    )
+    payout_assets: uint256 = payout_budget / BACKING_MULTIPLIER
+    assert payout_assets > 1, "payout too small"
+
+    yield_token_out: uint256 = YIELD_TOKEN.convertToShares(payout_assets - 1)
+    assert yield_token_out > 0, "payout too small"
+    assert yield_token_out <= accounted_before, "insufficient yield"
+
+    trusted_before: uint256 = self._trusted_yield_value(accounted_before)
+    trusted_after: uint256 = self._trusted_yield_value(accounted_before - yield_token_out)
+    assert trusted_before >= trusted_after, "yield value increased"
+    trusted_value_removed: uint256 = trusted_before - trusted_after
+    required_exit_profit: uint256 = (
+        trusted_value_removed / PPM * exit_margin_ppm
+        + (trusted_value_removed % PPM) * exit_margin_ppm / PPM
+    )
+    assert _crv_usd_amount >= trusted_value_removed, "exit margin"
+    assert _crv_usd_amount - trusted_value_removed >= required_exit_profit, "exit margin"
+
+    trusted_total_before: uint256 = self._trusted_backing_value()
+    assert trusted_total_before >= trusted_value_removed, "insufficient backing"
+    assert (
+        trusted_total_before - trusted_value_removed
+        >= deployed_before - _crv_usd_amount
+    ), "insufficient backing"
+
+    return yield_token_out, required_exit_profit, early_exit
+
+
+@external
+@view
+def previewBuyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
+    return self._preview_buyback(_crv_usd_amount)
+
+
+@external
+@nonreentrant("lock")
+def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.direct_buyback_paused, "direct buyback paused"
+
+    expected_yield_token_out: uint256 = 0
+    ignored_exit_profit: uint256 = 0
+    early_exit: bool = False
+    expected_yield_token_out, ignored_exit_profit, early_exit = self._preview_buyback(_crv_usd_amount)
+    assert expected_yield_token_out >= _min_yield_token_out, "min yield out"
+
+    accounted_before: uint256 = self.accounted_yield_token_units
+    deployed_before: uint256 = self.deployed_crvusd
+    trusted_yield_before: uint256 = self._trusted_yield_value(accounted_before)
+    crv_usd_before: uint256 = CRV_USD.balanceOf(self)
+    caller_crv_usd_before: uint256 = CRV_USD.balanceOf(msg.sender)
+    yield_token_before: uint256 = YIELD_TOKEN.balanceOf(self)
+    caller_yield_before: uint256 = YIELD_TOKEN.balanceOf(msg.sender)
+
+    CRV_USD.transferFrom(msg.sender, self, _crv_usd_amount)
+    crv_usd_after: uint256 = CRV_USD.balanceOf(self)
+    caller_crv_usd_after: uint256 = CRV_USD.balanceOf(msg.sender)
+    assert crv_usd_after >= crv_usd_before, "bad crvUSD receipt"
+    crv_usd_received: uint256 = crv_usd_after - crv_usd_before
+    assert crv_usd_received == _crv_usd_amount, "bad crvUSD receipt"
+    assert caller_crv_usd_before >= caller_crv_usd_after, "bad crvUSD spend"
+    assert caller_crv_usd_before - caller_crv_usd_after == _crv_usd_amount, "bad crvUSD spend"
+
+    ERC20(YIELD_TOKEN.address).transfer(msg.sender, expected_yield_token_out)
+    yield_token_after: uint256 = YIELD_TOKEN.balanceOf(self)
+    caller_yield_after: uint256 = YIELD_TOKEN.balanceOf(msg.sender)
+    assert yield_token_before >= yield_token_after, "bad yield spend"
+    yield_token_spent: uint256 = yield_token_before - yield_token_after
+    assert yield_token_spent == expected_yield_token_out, "bad yield spend"
+    assert caller_yield_after >= caller_yield_before, "bad yield receipt"
+    yield_token_received: uint256 = caller_yield_after - caller_yield_before
+    assert yield_token_received == expected_yield_token_out, "bad yield receipt"
+    assert yield_token_received >= _min_yield_token_out, "min yield out"
+
+    accounted_after: uint256 = accounted_before - yield_token_spent
+    trusted_yield_after: uint256 = self._trusted_yield_value(accounted_after)
+    assert trusted_yield_before >= trusted_yield_after, "yield value increased"
+    trusted_value_removed: uint256 = trusted_yield_before - trusted_yield_after
+
+    exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
+    if early_exit:
+        exit_margin_ppm = self.early_exit_min_profit_ppm
+    required_exit_profit: uint256 = (
+        trusted_value_removed / PPM * exit_margin_ppm
+        + (trusted_value_removed % PPM) * exit_margin_ppm / PPM
+    )
+    assert crv_usd_received >= trusted_value_removed, "exit margin"
+    assert crv_usd_received - trusted_value_removed >= required_exit_profit, "exit margin"
+
+    deployed_after: uint256 = deployed_before - crv_usd_received
+    self.accounted_yield_token_units = accounted_after
+    self.deployed_crvusd = deployed_after
+    assert self._trusted_backing_value() >= deployed_after, "insufficient backing"
+
+    log DirectBuyback(msg.sender, crv_usd_received, yield_token_received, early_exit)
+    return yield_token_received
 
 
 @external

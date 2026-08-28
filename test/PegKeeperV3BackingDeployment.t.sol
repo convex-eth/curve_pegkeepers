@@ -115,6 +115,7 @@ contract ExecutionYieldToken is ExpansionToken {
     uint256 public previewRedeemPpm = 1_000_000;
     uint256 public executionRedeemPpm = 1_000_000;
     uint256 public postRedeemAssetValuePpm;
+    uint256 public postTransferAssetValuePpm;
 
     constructor(ExpansionToken backing_) ExpansionToken(18) {
         backing = backing_;
@@ -137,6 +138,17 @@ contract ExecutionYieldToken is ExpansionToken {
 
     function setPostRedeemAssetValue(uint256 postRedeemPpm) external {
         postRedeemAssetValuePpm = postRedeemPpm;
+    }
+
+    function setPostTransferAssetValue(uint256 postTransferPpm) external {
+        postTransferAssetValuePpm = postTransferPpm;
+    }
+
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+        if (postTransferAssetValuePpm != 0) assetValuePpm = postTransferAssetValuePpm;
+        return true;
     }
 
     function previewDeposit(uint256 assets) external view returns (uint256) {

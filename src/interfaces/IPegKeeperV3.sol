@@ -43,6 +43,9 @@ interface IPegKeeperV3 {
         uint256 keeperReward,
         bool earlyExit
     );
+    event DirectBuyback(
+        address indexed caller, uint256 crvUsdReceived, uint256 yieldTokenPaid, bool earlyExit
+    );
     event SurplusClaimed(
         address indexed caller,
         address indexed receiver,
@@ -133,6 +136,13 @@ interface IPegKeeperV3 {
             uint256 keeperReward,
             bool deployedToYield
         );
+    function previewBuyback(uint256 crvUsdAmount)
+        external
+        view
+        returns (uint256 expectedYieldTokenOut, uint256 requiredExitProfit, bool earlyExit);
+    function buyback(uint256 crvUsdAmount, uint256 minYieldTokenOut)
+        external
+        returns (uint256 yieldTokenOut);
     function previewUndeployedContraction(uint256 targetAmount)
         external
         view

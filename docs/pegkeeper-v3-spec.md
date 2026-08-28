@@ -401,7 +401,7 @@ A direct-buyback call always transfers the deployment's fixed final `yieldToken`
 10. Reduce `deployedCrvUsd` by crvUSD received, retain it as idle inventory, and emit the yield-token amount paid.
 ```
 
-A preliminary interface is:
+The implemented interface is:
 
 ```solidity
 function buyback(
@@ -461,6 +461,8 @@ function previewBuyback(uint256 crvUsdAmount)
 ```
 
 The preview is advisory. Execution uses measured deltas and post-transaction profitability checks. The caller's `minYieldTokenOut` can only make execution stricter.
+
+The Vyper `0.3.10` implementation solves the selected-margin payout budget without overflow-prone full-width multiplication, denormalizes it downward into backing-asset native units, subtracts the specified one-native-unit haircut, and passes that amount to `convertToShares()`. Execution measures exact crvUSD spending/receipt and exact yield-token spending/receipt on both sides of each transfer. It snapshots the complete accounted yield position before either token call and values the remaining accounted position after the yield transfer, so any conversion-rate change triggered during transfer is included in the realized payout value. A stale or non-standard token behavior that violates the quoted margin, exact deltas, or final principal invariant reverts the complete transaction.
 
 ### Routing integration
 

@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can now spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. New-expansion downstream isolation and direct yield-token buyback remain for later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. Direct buyback now accepts exact crvUSD from any caller and transfers only the fixed yield token, with a conservative `convertToShares()` quote, caller minimum output, measured two-sided token deltas, whole-position post-transfer valuation, the selected exit margin, and the final principal invariant; it never executes either stored route or spends undeployed target backing. New-expansion downstream isolation remains for a later verified slice.
 
 ## Toolchain
 
@@ -164,6 +164,8 @@ test/
 ├── PegKeeperLifecycle.t.sol
 ├── PegKeeperV3BackingDeploymentFork.t.sol
 ├── PegKeeperV3BackingDeployment.t.sol
+├── PegKeeperV3DirectBuybackFork.t.sol
+├── PegKeeperV3DirectBuyback.t.sol
 ├── PegKeeperV3ExpansionFork.t.sol
 ├── PegKeeperV3Expansion.t.sol
 ├── PegKeeperV3Foundation.t.sol
@@ -254,6 +256,14 @@ Exercises exact accounted yield-token contraction through the stored typed route
 ### `PegKeeperV3YieldContractionForkTest`
 
 Creates live sUSDS backing and then contracts it through sUSDS redemption, canonical USDS-to-DAI conversion, Curve 3pool DAI-to-USDT exchange, and the live USDT/crvUSD target AMM at block `25,851,930`. It verifies the production four-step contraction route, preview/execution parity, measured yield and crvUSD deltas, bounded keeper reward, whole-position value removal, exposure reduction, unchanged maturity time, and the final principal invariant.
+
+### `PegKeeperV3DirectBuybackTest`
+
+Exercises the immutable direct `crvUSD -> yieldToken` edge. It verifies early and mature conservative quotes, exact crvUSD receipt and yield-token payout, caller minimum output, directional and global pauses, exposure and accounted-inventory bounds, donation isolation, no target-backing or maturity-timer changes, full-exposure contraction, non-additive ERC-4626 floor rounding, post-transfer conversion-rate changes, atomic rollback, surplus growth, and fuzzed principal preservation across input amounts and conversion rates.
+
+### `PegKeeperV3DirectBuybackForkTest`
+
+Creates live sUSDS backing and executes direct crvUSD-to-sUSDS buyback at block `25,851,930`. It verifies the live sUSDS `convertToShares()` quote, exact crvUSD and sUSDS balance deltas, whole-position `convertToAssets()` value removed, caller receipt, accounted-unit and deployed-exposure reductions, unchanged target/intermediate balances and maturity time, selected early-exit profit, and the final principal invariant without executing either typed route.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 
