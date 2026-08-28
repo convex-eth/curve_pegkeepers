@@ -36,8 +36,8 @@ Intermediate assets inside the downstream conversion remain transient. Only the 
 8. Expand immediately whenever at least the target-AMM leg is locally non-loss-making after reward and satisfies the configured fallback margin.
 9. Prevent routine rapid expansion/contraction churn while allowing early contraction at a sufficiently profitable distressed exit.
 10. Allow governance to replace broken or obsolete swap paths without replacing V3.
-11. Include first-class directional pauses, shutdown, and migration controls.
-12. Give the governance owner an unrestricted external-call escape hatch for urgent recovery and migration.
+11. Allow expansion to be paused while contraction remains available for a slow wind-down.
+12. Give the governance owner an unrestricted external-call escape hatch for urgent recovery or migration.
 
 ## Non-goals
 
@@ -70,7 +70,7 @@ V3 is not intended to:
 
 ### Governance
 
-Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, trade caps, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes. The governance owner can also make an arbitrary external call through `execute()` when a typed path or normal migration flow is insufficient.
+Governance configures debt capacity, the target AMM, route endpoints, paths, execution constraints, profitability thresholds, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes. The governance owner can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
 
 ### Emergency admin
 
@@ -116,8 +116,6 @@ minDeploymentTime
 minExpansionAmount
 lastExpansionAt
 
-maxExpansionPerCall
-maxBuybackPerCall
 maxDeployedCrvUsd
 minDownstreamAttemptGas
 
@@ -126,10 +124,9 @@ backingDeploymentPaused
 directBuybackPaused
 undeployedContractionPaused
 yieldContractionPaused
-shutdown
 ```
 
-The exact storage representation is deferred until the implementation language and path-step bounds are selected.
+The exact storage representation is deferred until the implementation language and route encoding are selected.
 
 ## Supply accounting and Factory integration
 
@@ -196,7 +193,7 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 ```text
 1. Verify expansion is enabled.
 2. Do not require the target AMM spot price to remain close to its EMA. A sharp upward move in crvUSD is the opportunity V3 is meant to act on.
-3. Verify the keeper's requested amount is at least `minExpansionAmount` and within idle crvUSD, per-call, and max-deployed limits.
+3. Verify the keeper's requested amount is at least `minExpansionAmount`, no greater than idle crvUSD, and within the remaining `maxDeployedCrvUsd` capacity.
 4. Sell crvUSD into the designated target AMM.
 5. Receive the target asset.
 6. Attempt the configured target-to-yield path in an isolated, typed, `onlySelf` call with protocol-calculated minima. That subcall includes full-route balance measurement, keeper payment in the backing asset, terminal yield deployment, and the final yield-backing floor.
@@ -219,7 +216,7 @@ The initial design does not require a separate aggregate crvUSD oracle trigger. 
 
 An aggregate trigger could reject a locally profitable sale because a broader oracle is stale, slow, or reports crvUSD near one dollar. That recreates an oracle-coupled liveness condition without uniquely improving the nominal backing invariant. A keeper can manufacture a local target-AMM opportunity even when broader crvUSD markets are balanced, but the manipulation must still leave V3 with the configured realized margin after reward and pay the attacker's round-trip costs. The remaining concern is bounded rent leakage or unwanted supply cycling, not an unaccounted principal loss.
 
-This decision should be revisited only if simulation or live operation identifies a concrete cross-market externality that realized final profitability and flow limits do not bound. Aggregate crvUSD observations may still be useful for monitoring and governance alerts without gating the core transaction.
+This decision should be revisited only if simulation or live operation identifies a concrete cross-market externality that realized final profitability and the total deployed-exposure bound do not contain. Aggregate crvUSD observations may still be useful for monitoring and governance alerts without gating the core transaction.
 
 A preliminary interface is:
 
@@ -290,7 +287,7 @@ function deployUndeployedBacking(uint256 targetAmount)
     returns (uint256 targetSpent, uint256 yieldSharesReceived);
 ```
 
-This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them. The caller chooses an exact `targetAmount` no greater than `undeployedBacking`. There is no separate maintenance per-call maximum: an amount whose quote, route-loss, surplus, or final-backing checks are unacceptable simply reverts.
+This is a separate maintenance action, not another crvUSD expansion. It does not increase `deployedCrvUsd`, reset `lastExpansionAt`, or pay a percentage reward on pre-existing protocol assets. It uses only `undeployedBacking`; unsolicited target tokens are excluded unless governance explicitly reconciles them. The caller chooses an exact `targetAmount` no greater than `undeployedBacking`. There is no separate maintenance action-size maximum: an amount whose quote, route-loss, surplus, or final-backing checks fail simply reverts.
 
 Later route fees are paid only from existing protocol surplus:
 
@@ -331,7 +328,7 @@ Direct buyback provides one-sided downward liquidity through a deterministic bac
 
 ```text
 1. Verify direct buyback is enabled.
-2. Verify the requested crvUSD amount is within deployed-crvUSD and per-call limits.
+2. Verify the requested crvUSD amount does not exceed `deployedCrvUsd` or available trusted backing.
 3. Determine whether V3 is in the mature or young deployment state.
 4. Select the normal exit margin in the mature state or the higher early exit margin in the young state.
 5. Calculate the maximum trusted backing value payable while preserving that margin.
@@ -402,7 +399,7 @@ For yield backing:
 1. Verify keeper buyback is enabled.
 2. Determine whether V3 is in the mature or young deployment state.
 3. Select the normal or early exit margin accordingly.
-4. Verify the keeper's requested yield-share amount is within per-call, backing, and deployed-crvUSD bounds.
+4. Verify the keeper's requested yield-share amount is within the available yield backing and cannot reduce more than the current `deployedCrvUsd` exposure.
 5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS and then use a configured USDS/crvUSD venue without passing through USDT.
 6. Calculate gross exit profit as crvUSD received minus the trusted backing value of yield-token shares spent.
 7. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperReward`, and pay it to `msg.sender` in crvUSD.
@@ -567,7 +564,6 @@ minExpansionAmount <= crvUsdAmount
 
 crvUsdAmount <= min(
     idleCrvUsd,
-    maxExpansionPerCall,
     maxDeployedCrvUsd - deployedCrvUsd
 )
 ```
@@ -578,7 +574,7 @@ The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(shares)` 
 
 Under-sizing may leave a second profitable action available, and a flat per-call cap can be collected again if another complete profitable call succeeds. This is accepted: each reward is a percentage of independently realized post-route gross profit, each call leaves V3 with its configured post-reward margin, and the keeper pays additional gas. `minExpansionAmount` blocks true dust without adding quote probes or a full-path search.
 
-`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. Trade and rolling-flow caps remain protocol controls rather than keeper inputs.
+`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. There is no separate per-call action-size maximum or rolling-flow throttle: idle inventory, available backing, and `maxDeployedCrvUsd` are the actual exposure bounds. This does not remove the independent per-call cap on keeper compensation.
 
 ## Profitability and execution controls
 
@@ -647,7 +643,7 @@ DAO-consolidated profit
 
 The local branch result is the onchain safety invariant. DAO-consolidated profit is an offchain route-selection and governance metric. Routes that return equivalent backing to V3 should prefer fees accruing to the DAO over fees retained by external LPs, but fee recapture must never weaken V3's `minOut` or final backing floor. Pool fee ownership is configuration-dependent and must be rechecked before governance installs or updates a route.
 
-Optional depeg or venue-health checks may later protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence. A configured backing-quality guard may veto an action that would increase exposure despite nominal final value, while contraction, redemption, migration, and shutdown paths that reduce exposure remain available. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
+Optional depeg or venue-health checks may later protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence. A configured backing-quality guard may veto an action that would increase exposure despite nominal final value, while contraction, redemption, slow wind-down, and owner recovery actions that reduce exposure remain available. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
 
 For a successful full-route expansion, V3 calculates the keeper reward from the realized backing-asset output immediately before yield deployment:
 
@@ -944,18 +940,16 @@ Required controls:
 - pause undeployed backing deployment without pausing target-only expansion;
 - pause direct buyback;
 - pause keeper buyback;
-- global shutdown;
-- lower trade and total-deployment caps immediately;
-- governance updates to trade and total-deployment caps;
+- lower `maxDeployedCrvUsd` to stop further exposure growth;
+- governance updates to `maxDeployedCrvUsd`;
 - atomic governance replacement of the target AMM, endpoints, and paths;
 - fee-receiver update;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, and `minDownstreamAttemptGas`;
-- first-class migration of the yield-token position;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
-- expansion-disabled contraction-only offboarding mode.
+- expansion pause for contraction-only slow wind-down.
 
-Shutdown should stop new expansion while preserving a controlled path for reacquiring crvUSD and reducing deployed exposure.
+Setting `expansionPaused = true` is the complete slow-wind-down switch. It blocks new crvUSD sales but does not disable direct buyback or either keeper contraction path. Reacquired crvUSD remains idle and governance may lower the Factory ceiling to burn it. V3 does not need a separate global-shutdown state or a prescribed migration state machine.
 
 ## Owner execute escape hatch
 
@@ -968,13 +962,15 @@ function execute(address target, uint256 value, bytes calldata data)
     returns (bytes memory result);
 ```
 
-This function exists for failures that the typed routes and normal migration functions cannot handle quickly enough. Examples include:
+This function exists for failures that typed routes and slow wind-down cannot handle directly. It is also the one-off migration mechanism. Examples include:
 
 - loss of confidence in the current yield token or one of its underlying stablecoins;
 - a vault, pool, or route changing behavior;
 - an urgent migration to a replacement token or venue;
 - recovery of tokens or approvals not anticipated by the original implementation;
 - interacting with a one-off rescue contract approved by the DAO.
+
+V3 applies no additional delay or migration-state precondition to `execute()`: once the governance owner invokes it, the ordinary external call executes in that transaction.
 
 `execute()` performs a normal external `call`, not `delegatecall`. It bubbles the target's revert data and returns the target's return data. It has no target allowlist because an allowlist would defeat its role as a general recovery mechanism.
 
@@ -1052,9 +1048,9 @@ event Executed(
 10. Active paths always connect the configured endpoints.
 11. Successful downstream execution leaves no material unaccounted intermediate-token balance.
 12. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.
-13. Deployment of undeployed backing cannot consume more than available surplus or exceed its per-call loss bound.
+13. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
 14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
-15. Disabling expansion never disables the governance-approved contraction and offboarding paths unless global shutdown explicitly does so.
+15. Disabling expansion never disables direct buyback or the governance-approved contraction paths.
 16. A path update replaces only a complete, validated, endpoint-compatible configuration.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
@@ -1090,15 +1086,15 @@ A USDT-facing AMM combined with an sUSDS yield position crosses USDT, DAI, USDS,
 
 ### Oracle and preview manipulation
 
-Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the configured backing adapter, final nominal-profit assertions, deadlines, and transaction-size caps. Governance is responsible for approving a vault or adapter whose share-to-underlying accounting is acceptable for backing.
+Target-AMM spot quotes and ERC-4626 previews can be manipulated or stale. V3 does not use the target-AMM spot as the dollar valuation source. It relies on actual balance deltas, the configured backing adapter, final nominal-profit assertions, deadlines, available inventory, and the total deployed-exposure bound. Governance is responsible for approving a vault or adapter whose share-to-underlying accounting is acceptable for backing.
 
 ### MEV
 
-Keeper swaps through the external target AMM can be surrounded by flash-liquidity trades. Internal minimums, post-trade profitability checks, and bounded size prevent protocol loss under the configured accounting but do not guarantee capture of all transient spread. This residual value leakage is accepted to preserve open keeper participation.
+Keeper swaps through the external target AMM can be surrounded by flash-liquidity trades. Internal minimums, post-trade profitability checks, available inventory, and `maxDeployedCrvUsd` prevent principal loss under the configured accounting but do not guarantee capture of all transient spread. This residual value leakage is accepted to preserve open keeper participation.
 
 ### Keeper under-sizing
 
-A keeper may choose less than the maximum profitable amount and leave a second opportunity available. It may then earn another capped reward from a later independently profitable call. This can leak more execution spread than a single optimally sized call, but the keeper bears extra gas and every completed action must leave V3 with its configured post-reward margin. `minExpansionAmount`, size caps, and open competition are considered sufficient for the initial design. Under-sizing can reduce immediate peg response but cannot weaken final profitability or backing checks.
+A keeper may choose less than the maximum profitable amount and leave a second opportunity available. It may then earn another capped reward from a later independently profitable call. This can leak more execution spread than a single optimally sized call, but the keeper bears extra gas and every completed action must leave V3 with its configured post-reward margin. `minExpansionAmount`, the total deployment bound, and open competition are considered sufficient for the initial design. Under-sizing can reduce immediate peg effect, but it cannot make an uneconomic action pass.
 
 ### Exit-delay liveness
 
@@ -1120,7 +1116,7 @@ A backing-depeg guard is a possible later risk-control layer, not core V3 accoun
 
 For a USDT-facing deployment, candidate observations include a robust USDT/USD oracle and time-weighted USDT/USDC or USDT/USDS markets that are independent of the designated crvUSD/USDT execution AMM. A production design would need explicit staleness rules, minimum liquidity and observation windows, treatment of disagreement between references, and protection against correlated stablecoin failures. No single comparison to another governance-approved stablecoin proves dollar parity.
 
-Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or underlying while preserving contraction, redemption, migration, and shutdown operations that reduce that exposure. For a yield token, the relevant checks are the approved underlying's external value and the vault's actual redemption behavior; an illiquid share-market quote or `convertToAssets()` alone is not a complete depeg test.
+Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or underlying while preserving contraction, redemption, slow wind-down, and owner recovery actions that reduce that exposure. For a yield token, the relevant checks are the approved underlying's external value and the vault's actual redemption behavior; an illiquid share-market quote or `convertToAssets()` alone is not a complete depeg test.
 
 ## Remaining deferred decisions
 
@@ -1128,14 +1124,12 @@ The following are deliberately unresolved:
 
 - initial downstream-path `maxRouteLossBps`;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- maximum per-call and rolling flow limits;
 - the execution-quality benchmark used in addition to the hard profit floor;
 - exact adapter interface and rounding rules for converting supported yield shares into trusted underlying units;
 - whether the direct buyback interface should be registered in Curve routing infrastructure;
 - whether exact-output route adapters are needed;
 - how surplus is separated between yield and execution spread;
 - whether V3 supports one yield token permanently or permits endpoint migration;
-- the final shutdown and migration transaction sequence.
 
 ## Sources
 
