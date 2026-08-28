@@ -86,7 +86,7 @@ Any account can sell crvUSD directly to V3 through the buyback function while th
 
 ### Fee receiver
 
-The fee receiver receives only realized surplus above the amount required to support outstanding deployed crvUSD and pending obligations. Principal yield-token shares cannot be withdrawn as fees.
+The fee receiver is the governance-configured crvUSD `FeeSplitter`. It receives idle crvUSD only against realized surplus above the amount required to support outstanding externalized crvUSD and pending obligations. Backing tokens and principal yield-token shares are never withdrawn as fees.
 
 ## State model
 
@@ -142,11 +142,15 @@ Idle crvUSD
 Undeployed backing or yield-token position
     -> contraction
 Idle crvUSD
+
+Idle crvUSD
+    -> surplus claim
+FeeSplitter
 ```
 
 `expand()` deploys idle Factory-allocated crvUSD. It does not mint directly under the current Factory interface. The initial V3 design intentionally keeps this allocation model and does not add lazy mint or burn authority.
 
-Unused allocated crvUSD and crvUSD received during contraction remain idle in V3 rather than circulating in markets. They can be reused in a later expansion. Under the current ControllerFactory allocation pattern, governance controls the approved amount and the Factory mints that amount to the strategy.[2] In V3 supply accounting, only the portion actually sold or deposited becomes active market supply. Governance can lower the Factory ceiling when it wants idle crvUSD burned.
+Unused allocated crvUSD and crvUSD received during contraction remain idle in V3 rather than circulating in markets. They can be reused in a later expansion or, to the extent supported by realized surplus, transferred to the FeeSplitter. Under the current ControllerFactory allocation pattern, governance controls the approved amount and the Factory mints that amount to the strategy.[2] In V3 supply accounting, only the portion sold through expansion or distributed as crvUSD fees becomes active externalized supply. Governance can lower the Factory ceiling when it wants idle crvUSD burned.
 
 A burn-only timer would not prevent market churn. Reacquiring crvUSD already removes it from active circulation; waiting to destroy the idle tokens changes Factory accounting but does not postpone the economic contraction. The timer must therefore gate use of the yield position for buyback, not merely the later burn transaction. Once crvUSD has been reacquired, governance may burn it immediately by lowering the Factory ceiling.
 
@@ -184,7 +188,7 @@ deployedCrvUsd <= Factory allocation
 deployedCrvUsd <= trustedBackingValue
 ```
 
-Expansion increases `deployedCrvUsd` by the crvUSD sold regardless of whether the action finishes in target asset or yield token. Direct buyback decreases it by crvUSD received from the user; keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. Idle crvUSD backs itself; the combined trusted value of the undeployed backing and yield position must cover the portion currently deployed into the market after rewards, later conversion costs, and fee claims.
+`deployedCrvUsd` is the amount of V3's accounted crvUSD allocation that has been externalized from V3 and therefore requires the approved backing portfolio. It is broader than only crvUSD sold through an AMM. Expansion increases it by crvUSD sold; a surplus claim increases it by crvUSD transferred to the FeeSplitter. Direct buyback decreases it by crvUSD received from the user, and keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. Idle crvUSD backs itself; the combined trusted value of undeployed backing and the yield position must cover all externalized crvUSD after rewards, later conversion costs, and fee claims.
 
 ## Expansion lifecycle
 
@@ -934,44 +938,65 @@ Here `trustedBackingValue` is the normalized value of accounted undeployed USDT 
 
 Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, buyback waterfalls, share-price appreciation, and fee claims, without strengthening the principal invariant.
 
-A fee withdrawal transfers source backing rather than performing another V3 conversion. Each claim calculates the maximum withdrawable amount from combined trusted backing, rounds principal requirements against the fee receiver, and must leave `trustedBackingValue >= deployedCrvUsd`. Existing action events provide enough data for offchain reporting to estimate retained execution profit and yield carry without adding consensus-critical surplus buckets.
-
-```solidity
-function claimSurplus(uint256 maxTrustedValue)
-    external
-    returns (uint256 targetTransferred, uint256 yieldSharesTransferred);
-```
-
-The caller selects only a maximum normalized value; it cannot select the asset source or recipient. V3 uses this deterministic waterfall:
+V3 realizes that surplus for governance by transferring idle crvUSD to the configured FeeSplitter and increasing `deployedCrvUsd` by exactly the amount transferred. It does not remove USDT, USDS, or sUSDS from the backing portfolio. Let `F` be the crvUSD fee payment:
 
 ```text
-claimValue = min(maxTrustedValue, protocolSurplus)
+trustedBackingAfter = trustedBackingBefore
+deployedCrvUsdAfter = deployedCrvUsdBefore + F
 
-1. Transfer as much claim value as possible from accounted USDT.
-2. If claim value remains, transfer sUSDS shares whose trusted value is
-   no greater than the remainder, rounding the share amount down.
-3. Leave any terminal rounding dust in V3.
-4. Recompute trusted backing from actual post-transfer balances.
-5. Require both:
-   - trustedBackingBefore - trustedBackingAfter <= claimValue;
-   - trustedBackingAfter >= deployedCrvUsd.
+surplusAfter
+    = trustedBackingAfter - deployedCrvUsdAfter
+    = surplusBefore - F
 ```
 
-USDT goes first because it is idle, earns no vault carry, and can be removed without a vault call. The remaining sUSDS keeps earning while it supports outstanding principal. This mirrors direct buyback's source order, but a surplus claim transfers sUSDS shares directly rather than redeeming them because the fee receiver—not the V3 core—owns fee conversion policy.
+The fee payment therefore converts fungible backing surplus into additional fully backed externalized crvUSD. It leaves the backing invested while consuming the same amount of surplus through the liability side of the accounting.
 
-Share calculations must use the trusted value of the **remaining** post-transfer share balance rather than assuming `convertToAssets(totalShares - sharesTransferred) + convertToAssets(sharesTransferred) == convertToAssets(totalShares)`. ERC-4626 floor rounding need not be additive. The candidate share amount is rounded down, the actual share delta is measured, and `trustedValue` in `SurplusClaimed` is the observed `trustedBackingBefore - trustedBackingAfter`; the final value-cap and principal checks catch any remaining rounding edge.
+```solidity
+function claimSurplus(uint256 maxCrvUsdAmount)
+    external
+    returns (uint256 crvUsdTransferred);
+```
 
-The initial `feeReceiver` should be Curve's current `FeeCollector`, not the crvUSD mint-market `FeeSplitter`. V2's `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting them inside the PegKeeper.[8] The current `FeeCollector` is designed to collect arbitrary ERC-20 fee assets and has crvUSD as its target token.[9] Its current CowSwap burner creates sell orders for each supplied fee token into that target, so USDT and sUSDS can remain source assets when V3 claims profit.[11]
+The function is permissionless, but the caller selects only a maximum amount. The recipient is fixed by governance and the function uses no swap route. V3 calculates:
 
-Fee conversion is asynchronous and epoch-gated. A caller must later include each received source token in `FeeCollector.collect()`, and a token can remain in the collector or burner until a viable CowSwap order executes. V3 treats transfer to the configured receiver as fee settlement; it does not depend on or account for the later conversion outcome.[9][11]
+```text
+eligibleIdleCrvUsd
+    = min(
+        actual crvUSD balance,
+        max(Factory allocation - deployedCrvUsd, 0)
+      )
 
-At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose `fee_receiver()` was the `FeeCollector` at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`. The collector's live `target()` was crvUSD and its `burner()` was the generic CowSwap burner at `0xC0fC3dDfec95ca45A0D2393F518D3EA1ccF44f8b`.[9][11]
+crvUsdTransferred
+    = min(
+        maxCrvUsdAmount,
+        protocolSurplus,
+        eligibleIdleCrvUsd,
+        maxDeployedCrvUsd - deployedCrvUsd
+      )
+```
 
-The separate mint-market `FeeSplitter` is crvUSD-specific: it claims controller fees, reads its crvUSD balance, and distributes that token by receiver weights.[10] Pointing V3 directly at it would therefore require V3 to convert surplus to crvUSD first. That would duplicate the `FeeCollector` burner, add route and market-price dependencies to fee claiming, and couple profit extraction to contraction execution. V3 instead transfers USDT first and then sUSDS to the configured `FeeCollector`; conversion to crvUSD occurs in the existing fee infrastructure.
+Execution then:
 
-At Ethereum block `25,851,058`, ControllerFactory's `fee_receiver()` was the `FeeSplitter` at `0x2dFd89449faff8a532790667baB21cF733C064f2`. Its two configured receiver weights were `5,000` each: `0xE8d1E2531761406Af1615A6764B0d5fF52736F56` and the `FeeCollector`; the latter was also the excess receiver.[10] This confirms the two contracts serve different layers: mint-market fees reach the splitter already as crvUSD, whereas PegKeeper profit can reach the collector in its source token.
+```text
+1. Require expansionPaused == false.
+2. Snapshot trustedBackingValue and deployedCrvUsd.
+3. Calculate crvUsdTransferred from protocol state and revert if it is zero.
+4. Increase deployedCrvUsd by crvUsdTransferred.
+5. Transfer that exact idle crvUSD amount to the configured FeeSplitter.
+6. Require deployedCrvUsd <= Factory allocation and maxDeployedCrvUsd.
+7. Require trustedBackingValue >= deployedCrvUsd.
+8. Verify the actual crvUSD balance delta equals crvUsdTransferred.
+```
 
-`claimSurplus()` is permissionless to call but always pays the configured receiver. A future receiver update must point to a contract capable of handling both fixed backing tokens or governance must stop fee claims until it is.
+`deployedCrvUsd` consequently means all accounted crvUSD externalized from V3 and requiring external backing, not only crvUSD sold in expansion. The amount increases through either an AMM expansion or a FeeSplitter payout and decreases when direct buyback or keeper contraction returns crvUSD to V3. The sum of eligible idle inventory and externalized exposure is conserved by the fee transfer; arbitrary crvUSD donations cannot increase the Factory-allocation or exposure-cap bounds.
+
+The fee claim does not reset `lastExpansionAt`. Resetting the global maturity timer for a fee transfer would let permissionless dust claims delay normal contraction. The claim is nevertheless disabled by `expansionPaused` because it increases externalized crvUSD exposure. This preserves `expansionPaused = true` as the complete contraction-only wind-down switch.
+
+The configured initial receiver is Curve's crvUSD `FeeSplitter`. Its dispatch logic reads and distributes its crvUSD balance, so directly transferred V3 fees join the same crvUSD-denominated revenue flow as ControllerFactory mint-market fees.[10] At Ethereum block `25,851,058`, ControllerFactory's `fee_receiver()` was the FeeSplitter at `0x2dFd89449faff8a532790667baB21cF733C064f2`. Its two configured receiver weights were `5,000` each: `0xE8d1E2531761406Af1615A6764B0d5fF52736F56` and `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the latter FeeCollector was also the excess receiver.[10]
+
+V2 uses a different revenue path despite being part of the crvUSD system. Its `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting or sending crvUSD.[8] At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose receiver was the generic FeeCollector at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the collector's CowSwap burner converts source fee tokens toward its crvUSD target.[9][11] V2 therefore bypasses the FeeSplitter, while V3 deliberately reaches it by paying crvUSD directly.
+
+A governance update may replace `feeReceiver`, but normal surplus claims always transfer crvUSD. Governance must point it to a contract whose accounting and distribution flow accept direct crvUSD transfers; changing the receiver does not change the exposure or backing equations.
 
 ## Curve compatibility
 
@@ -1006,7 +1031,7 @@ Required controls:
 - owner-only arbitrary external execution for urgent recovery;
 - expansion pause for contraction-only slow wind-down.
 
-Setting `expansionPaused = true` is the complete slow-wind-down switch. It blocks new crvUSD sales but does not disable direct buyback or either keeper contraction path. Reacquired crvUSD remains idle and governance may lower the Factory ceiling to burn it. V3 does not need a separate global-shutdown state or a prescribed migration state machine.
+Setting `expansionPaused = true` is the complete slow-wind-down switch. It blocks new crvUSD sales and crvUSD surplus claims because both increase externalized exposure, but it does not disable direct buyback or either keeper contraction path. Reacquired crvUSD remains idle and governance may lower the Factory ceiling to burn it. V3 does not need a separate global-shutdown state or a prescribed migration state machine.
 
 ## Owner execute escape hatch
 
@@ -1086,9 +1111,8 @@ event PathsUpdated(bytes32 expansionHash, bytes32 contractionHash);
 event DirectionPaused(uint8 indexed direction, bool paused);
 event SurplusClaimed(
     address indexed receiver,
-    uint256 targetTransferred,
-    uint256 yieldSharesTransferred,
-    uint256 trustedValue
+    uint256 crvUsdTransferred,
+    uint256 deployedCrvUsdAfter
 );
 event Executed(
     address indexed target,
@@ -1100,13 +1124,13 @@ event Executed(
 
 ## Invariants
 
-1. `deployedCrvUsd` never exceeds configured capacity.
-2. Expansion cannot spend more idle crvUSD than V3 owns.
+1. `deployedCrvUsd` includes both AMM-sold crvUSD and crvUSD paid to the FeeSplitter, and never exceeds Factory allocation or configured capacity.
+2. Expansion and surplus claims cannot spend more eligible idle crvUSD than V3 owns.
 3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
-4. `undeployedBacking` changes only through measured fallback retention, measured spending, successful typed deployment, governance reconciliation, or surplus withdrawal.
+4. `undeployedBacking` changes only through measured fallback retention, measured spending, successful typed deployment, or governance reconciliation.
 5. Unsolicited token transfers never increase accounted backing automatically.
 6. Keeper rewards equal the configured percentage of realized gross profit for the selected branch, clamped by `maxKeeperReward` per call and rounded down.
-7. Keeper rewards and fee claims cannot consume required principal or the configured protocol margin.
+7. Keeper rewards and fee claims cannot consume required principal; a fee claim increases `deployedCrvUsd` only by an equal or smaller amount of protocol surplus.
 8. Caller-supplied minimums can only make execution stricter.
 9. Callers cannot choose routes, venues, output recipients, or reward recipients.
 10. Active paths always connect the configured endpoints.
@@ -1114,12 +1138,12 @@ event Executed(
 12. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.
 13. Deployment of undeployed backing cannot consume more than available surplus or exceed its path-configured loss bound.
 14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
-15. Disabling expansion never disables direct buyback or the governance-approved contraction paths.
+15. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
 16. A path update preserves the deployment's fixed target asset, backing asset, yield token, and accounting adapter.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
 19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
-20. Combined trusted backing remaining after rewards, later deployment costs, and fee claims is never below `deployedCrvUsd`.
+20. Combined trusted backing remaining after rewards, later deployment costs, and crvUSD fee claims is never below `deployedCrvUsd`.
 21. Expansion is not delayed when either approved branch satisfies its entry floor.
 22. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
 23. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
