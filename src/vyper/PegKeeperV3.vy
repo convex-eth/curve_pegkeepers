@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: foundation, measured target-only expansion, and fixed-AMM undeployed-backing contraction.
+@dev Incremental implementation: foundation, target-only expansion/contraction, and crvUSD surplus settlement.
 """
 
 interface ERC20:
@@ -65,6 +65,16 @@ event KeeperBuyback:
     gross_profit: uint256
     keeper_reward: uint256
     early_exit: bool
+
+event SurplusClaimed:
+    caller: indexed(address)
+    receiver: indexed(address)
+    crv_usd_transferred: uint256
+    deployed_crv_usd_after: uint256
+
+event FeeReceiverUpdated:
+    old_receiver: indexed(address)
+    new_receiver: indexed(address)
 
 
 version: public(constant(String[8])) = "3.0.0"
@@ -539,6 +549,72 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     )
 
     return target_spent, crv_usd_received, keeper_reward
+
+
+@external
+@nonreentrant("lock")
+def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.expansion_paused, "expansion paused"
+
+    trusted_backing: uint256 = self._trusted_backing_value()
+    surplus: uint256 = 0
+    if trusted_backing > self.deployed_crvusd:
+        surplus = trusted_backing - self.deployed_crvusd
+
+    crv_usd_balance_before: uint256 = CRV_USD.balanceOf(self)
+    allocation: uint256 = FACTORY.debt_ceiling(self)
+    allocation_remaining: uint256 = 0
+    if allocation > self.deployed_crvusd:
+        allocation_remaining = allocation - self.deployed_crvusd
+
+    local_capacity_remaining: uint256 = 0
+    if self.max_deployed_crvusd > self.deployed_crvusd:
+        local_capacity_remaining = self.max_deployed_crvusd - self.deployed_crvusd
+
+    crv_usd_transferred: uint256 = _max_crv_usd_amount
+    if crv_usd_transferred > surplus:
+        crv_usd_transferred = surplus
+    if crv_usd_transferred > crv_usd_balance_before:
+        crv_usd_transferred = crv_usd_balance_before
+    if crv_usd_transferred > allocation_remaining:
+        crv_usd_transferred = allocation_remaining
+    if crv_usd_transferred > local_capacity_remaining:
+        crv_usd_transferred = local_capacity_remaining
+    assert crv_usd_transferred > 0, "no surplus claim"
+
+    deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
+    self.deployed_crvusd = deployed_crv_usd_after
+
+    receiver_balance_before: uint256 = CRV_USD.balanceOf(self.fee_receiver)
+    CRV_USD.transfer(self.fee_receiver, crv_usd_transferred)
+    crv_usd_balance_after: uint256 = CRV_USD.balanceOf(self)
+    receiver_balance_after: uint256 = CRV_USD.balanceOf(self.fee_receiver)
+    assert crv_usd_balance_before >= crv_usd_balance_after, "bad fee spend"
+    assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred, "bad fee spend"
+    assert receiver_balance_after >= receiver_balance_before, "bad fee receipt"
+    assert receiver_balance_after - receiver_balance_before == crv_usd_transferred, "bad fee receipt"
+
+    assert deployed_crv_usd_after <= allocation, "factory allocation"
+    assert deployed_crv_usd_after <= self.max_deployed_crvusd, "max deployed"
+    assert self._trusted_backing_value() >= deployed_crv_usd_after, "insufficient backing"
+
+    log SurplusClaimed(
+        msg.sender,
+        self.fee_receiver,
+        crv_usd_transferred,
+        deployed_crv_usd_after,
+    )
+    return crv_usd_transferred
+
+
+@external
+def set_fee_receiver(_new_fee_receiver: address):
+    assert msg.sender == self.admin, "not admin"
+    assert _new_fee_receiver != empty(address), "fee receiver=0"
+    old_fee_receiver: address = self.fee_receiver
+    self.fee_receiver = _new_fee_receiver
+    log FeeReceiverUpdated(old_fee_receiver, _new_fee_receiver)
 
 
 @external

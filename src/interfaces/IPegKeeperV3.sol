@@ -33,6 +33,13 @@ interface IPegKeeperV3 {
         uint256 keeperReward,
         bool earlyExit
     );
+    event SurplusClaimed(
+        address indexed caller,
+        address indexed receiver,
+        uint256 crvUsdTransferred,
+        uint256 deployedCrvUsdAfter
+    );
+    event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 
     function version() external view returns (string memory);
 
@@ -82,6 +89,7 @@ interface IPegKeeperV3 {
         uint256 minDownstreamAttemptGas,
         uint256 fallbackSettlementGasReserve
     ) external;
+    function set_fee_receiver(address newFeeReceiver) external;
     function available_expansion() external view returns (uint256);
     function expand(uint256 crvUsdAmount)
         external
@@ -104,6 +112,7 @@ interface IPegKeeperV3 {
     function contractUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
+    function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     function execute(address target, uint256 value, bytes calldata data)
         external
         payable

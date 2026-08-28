@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can now reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Typed downstream yield deployment, yield-backed buyback and contraction, and surplus settlement remain for later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement now sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Typed downstream yield deployment and yield-backed buyback and contraction remain for later verified slices.
 
 ## Toolchain
 
@@ -165,6 +165,8 @@ test/
 ├── PegKeeperV3ExpansionFork.t.sol
 ├── PegKeeperV3Expansion.t.sol
 ├── PegKeeperV3Foundation.t.sol
+├── PegKeeperV3SurplusFork.t.sol
+├── PegKeeperV3Surplus.t.sol
 ├── PegKeeperV3UndeployedContractionFork.t.sol
 └── PegKeeperV3UndeployedContraction.t.sol
 ```
@@ -214,6 +216,14 @@ Exercises the fixed-AMM reverse path against deterministic local tokens. It veri
 ### `PegKeeperV3UndeployedContractionForkTest`
 
 Creates a target-only USDT backing position through the live target AMM, then pushes crvUSD below peg and contracts `50,000 USDT` through the reverse pool direction. It verifies the no-return USDT approval path, measured crvUSD output and reward, early-exit margin, accounted-backing reduction, deployed-exposure reduction, and final principal invariant at block `25,837,866`.
+
+### `PegKeeperV3SurplusTest`
+
+Verifies liability-side surplus settlement against deterministic local state. Claims are bounded by the caller maximum, fungible protocol surplus, actual idle crvUSD, remaining Factory allocation, and remaining local exposure capacity. The suite also verifies exact receiver and contract balance deltas, exposure accounting, pause semantics, zero-claim rejection, timer preservation, and the inability of crvUSD donations to bypass Factory capacity.
+
+### `PegKeeperV3SurplusForkTest`
+
+Creates realized USDT backing surplus through the live USDT/crvUSD expansion path, then permissionlessly transfers `5 crvUSD` of bounded surplus to Curve's live FeeSplitter. It verifies the FeeSplitter balance delta, idle-inventory reduction, exact exposure increase, equal surplus reduction, unchanged maturity timer, and final principal invariant at block `25,837,866`.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 

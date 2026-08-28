@@ -1104,7 +1104,7 @@ crvUsdTransferred
 Execution then:
 
 ```text
-1. Require expansionPaused == false.
+1. Require allExecutionPaused == false and expansionPaused == false.
 2. Snapshot trustedBackingValue and deployedCrvUsd.
 3. Calculate crvUsdTransferred from protocol state and revert if it is zero.
 4. Increase deployedCrvUsd by crvUsdTransferred.
