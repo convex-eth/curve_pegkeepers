@@ -423,6 +423,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
     function _createUndeployedBacking() internal {
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        daiUsds.setOutputPpm(999_999);
         vm.startPrank(governance);
         pegKeeper.set_expansion_config(0, 500_000, 100_000);
         pegKeeper.set_direction_paused(5, false);
@@ -431,12 +432,15 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         vm.stopPrank();
         vm.prank(keeper);
         pegKeeper.expand(MIN_EXPANSION);
+        daiUsds.setOutputPpm(1_000_000);
     }
 
     function _createAdditionalUndeployedBacking() internal {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        daiUsds.setOutputPpm(999_999);
         vm.prank(keeper);
         pegKeeper.expand(MIN_EXPANSION);
+        daiUsds.setOutputPpm(1_000_000);
     }
 
     function _installPaths(uint256 maxRouteLossBps) internal {

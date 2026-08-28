@@ -344,8 +344,10 @@ contract PegKeeperV3YieldContractionTest is Test {
         pegKeeper.set_direction_paused(0, false);
         pegKeeper.set_direction_paused(1, false);
         vm.stopPrank();
+        daiUsds.setOutputPpm(999_999);
         vm.prank(expansionKeeper);
         pegKeeper.expand(EXPANSION_AMOUNT);
+        daiUsds.setOutputPpm(1_000_000);
         vm.prank(expansionKeeper);
         pegKeeper.deployUndeployedBacking(TARGET_TO_DEPLOY);
     }

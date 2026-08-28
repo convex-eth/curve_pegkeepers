@@ -115,8 +115,6 @@ contract PegKeeperV3DirectBuybackForkTest is Test {
     function _deployAndFundYield() internal returns (IPegKeeperV3 pegKeeper) {
         pegKeeper = _deploy();
         RoutePool localUsdsCrvUsdPool = new RoutePool(USDS, CRVUSD);
-        vm.prank(governance);
-        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath(localUsdsCrvUsdPool));
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
@@ -133,6 +131,8 @@ contract PegKeeperV3DirectBuybackForkTest is Test {
         IStableSwap2Pool(USDT_POOL).exchange(0, 1, 10_000_000e6, 0);
         vm.prank(keeper);
         pegKeeper.expand(EXPANSION_AMOUNT);
+        vm.prank(governance);
+        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath(localUsdsCrvUsdPool));
         vm.prank(keeper);
         pegKeeper.deployUndeployedBacking(TARGET_AMOUNT);
         assertGe(pegKeeper.accounted_yield_token_units(), 900e18);

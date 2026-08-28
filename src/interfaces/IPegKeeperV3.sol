@@ -136,6 +136,14 @@ interface IPegKeeperV3 {
             uint256 keeperReward,
             bool deployedToYield
         );
+    function executeExpansionPath(uint256 targetAmount, uint256 crvUsdSold, address keeper)
+        external
+        returns (
+            uint256 backingAssetReceived,
+            uint256 yieldTokenReceived,
+            uint256 grossProfit,
+            uint256 keeperReward
+        );
     function previewBuyback(uint256 crvUsdAmount)
         external
         view

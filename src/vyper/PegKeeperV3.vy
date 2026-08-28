@@ -635,6 +635,65 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     target_received: uint256 = target_after_swap - target_before
     assert target_received >= target_minimum, "target minimum"
 
+    downstream_succeeded: bool = False
+    downstream_response: Bytes[128] = empty(Bytes[128])
+    yield_balance_before_attempt: uint256 = YIELD_TOKEN.balanceOf(self)
+    if len(self.expansion_path) > 0:
+        available_attempt_gas: uint256 = msg.gas
+        assert available_attempt_gas >= self.min_downstream_attempt_gas, "downstream gas"
+        forwarded_gas: uint256 = available_attempt_gas - self.fallback_settlement_gas_reserve
+        downstream_succeeded, downstream_response = raw_call(
+            self,
+            _abi_encode(
+                target_received,
+                crv_usd_sold,
+                msg.sender,
+                method_id=method_id("executeExpansionPath(uint256,uint256,address)"),
+            ),
+            gas=forwarded_gas,
+            max_outsize=128,
+            revert_on_failure=False,
+        )
+
+    if downstream_succeeded:
+        backing_asset_received: uint256 = 0
+        yield_token_received: uint256 = 0
+        gross_profit: uint256 = 0
+        keeper_reward: uint256 = 0
+        backing_asset_received, yield_token_received, gross_profit, keeper_reward = _abi_decode(
+            downstream_response,
+            (uint256, uint256, uint256, uint256),
+        )
+
+        target_after_attempt: uint256 = TARGET_ASSET.balanceOf(self)
+        assert target_after_swap >= target_after_attempt, "bad target spend"
+        assert target_after_swap - target_after_attempt == target_received, "bad target spend"
+        assert target_after_attempt == target_before, "bad retained target"
+        yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
+        assert yield_balance_after >= yield_balance_before_attempt, "bad yield output"
+        assert yield_token_received > 0, "yield output=0"
+        assert yield_balance_after - yield_balance_before_attempt == yield_token_received, "bad yield output"
+
+        self.accounted_yield_token_units += yield_token_received
+        self.deployed_crvusd = deployed_after
+        self.last_expansion_at = block.timestamp
+        assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
+        assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+
+        log Expanded(
+            msg.sender,
+            crv_usd_sold,
+            target_received,
+            backing_asset_received,
+            yield_token_received,
+            gross_profit,
+            keeper_reward,
+            0,
+            True,
+            block.timestamp + self.min_deployment_time,
+        )
+        return crv_usd_sold, 0, yield_token_received, keeper_reward, True
+
     target_value: uint256 = self._normalize_target(target_received)
     gross_profit: uint256 = 0
     if target_value > crv_usd_sold:
@@ -947,6 +1006,60 @@ def contraction_path_step(_index: uint256) -> RouteStep:
 
 
 @internal
+def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
+    token_in: ERC20 = ERC20(_step.token_in)
+    token_out: ERC20 = ERC20(_step.token_out)
+    input_balance_before: uint256 = token_in.balanceOf(self)
+    output_balance_before: uint256 = token_out.balanceOf(self)
+    quoted_output: uint256 = 0
+    minimum_output: uint256 = 0
+
+    token_in.approve(_step.venue, 0)
+    token_in.approve(_step.venue, _amount_in)
+
+    if _step.kind == STEP_CURVE_SWAP:
+        quoted_output = CurveRoutePool(_step.venue).get_dy(
+            _step.pool_index_in,
+            _step.pool_index_out,
+            _amount_in,
+        )
+        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
+        CurveRoutePool(_step.venue).exchange(
+            _step.pool_index_in,
+            _step.pool_index_out,
+            _amount_in,
+            minimum_output,
+        )
+    elif _step.kind == STEP_DAI_USDS_CONVERTER:
+        minimum_output = _amount_in
+        if _step.token_in == DaiUsds(_step.venue).dai():
+            DaiUsds(_step.venue).daiToUsds(self, _amount_in)
+        else:
+            DaiUsds(_step.venue).usdsToDai(self, _amount_in)
+    elif _step.kind == STEP_ERC4626_DEPOSIT:
+        quoted_output = ERC4626Route(_step.venue).previewDeposit(_amount_in)
+        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
+        ERC4626Route(_step.venue).deposit(_amount_in, self)
+    else:
+        quoted_output = ERC4626Route(_step.venue).previewRedeem(_amount_in)
+        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
+        ERC4626Route(_step.venue).redeem(_amount_in, self, self)
+
+    token_in.approve(_step.venue, 0)
+    input_balance_after: uint256 = token_in.balanceOf(self)
+    output_balance_after: uint256 = token_out.balanceOf(self)
+    assert input_balance_before >= input_balance_after, "bad step spend"
+    assert input_balance_before - input_balance_after == _amount_in, "bad step spend"
+    assert output_balance_after >= output_balance_before, "bad step output"
+    amount_out: uint256 = output_balance_after - output_balance_before
+    if _step.kind == STEP_DAI_USDS_CONVERTER:
+        assert amount_out == minimum_output, "converter output"
+    else:
+        assert amount_out >= minimum_output, "step output"
+    return amount_out
+
+
+@internal
 def _execute_route(_initial_amount: uint256, _expansion: bool) -> uint256:
     amount_in: uint256 = _initial_amount
     path_length: uint256 = len(self.contraction_path)
@@ -955,63 +1068,68 @@ def _execute_route(_initial_amount: uint256, _expansion: bool) -> uint256:
     for i in range(MAX_ROUTE_STEPS):
         if i >= path_length:
             break
-
         step: RouteStep = empty(RouteStep)
         if _expansion:
             step = self.expansion_path[i]
         else:
             step = self.contraction_path[i]
-        token_in: ERC20 = ERC20(step.token_in)
-        token_out: ERC20 = ERC20(step.token_out)
-        input_balance_before: uint256 = token_in.balanceOf(self)
-        output_balance_before: uint256 = token_out.balanceOf(self)
-        quoted_output: uint256 = 0
-        minimum_output: uint256 = 0
-
-        token_in.approve(step.venue, 0)
-        token_in.approve(step.venue, amount_in)
-
-        if step.kind == STEP_CURVE_SWAP:
-            quoted_output = CurveRoutePool(step.venue).get_dy(
-                step.pool_index_in,
-                step.pool_index_out,
-                amount_in,
-            )
-            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
-            CurveRoutePool(step.venue).exchange(
-                step.pool_index_in,
-                step.pool_index_out,
-                amount_in,
-                minimum_output,
-            )
-        elif step.kind == STEP_DAI_USDS_CONVERTER:
-            minimum_output = amount_in
-            if step.token_in == DaiUsds(step.venue).dai():
-                DaiUsds(step.venue).daiToUsds(self, amount_in)
-            else:
-                DaiUsds(step.venue).usdsToDai(self, amount_in)
-        elif step.kind == STEP_ERC4626_DEPOSIT:
-            quoted_output = ERC4626Route(step.venue).previewDeposit(amount_in)
-            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
-            ERC4626Route(step.venue).deposit(amount_in, self)
-        else:
-            quoted_output = ERC4626Route(step.venue).previewRedeem(amount_in)
-            minimum_output = quoted_output * (BPS - step.execution_buffer_bps) / BPS
-            ERC4626Route(step.venue).redeem(amount_in, self, self)
-
-        token_in.approve(step.venue, 0)
-        input_balance_after: uint256 = token_in.balanceOf(self)
-        output_balance_after: uint256 = token_out.balanceOf(self)
-        assert input_balance_before >= input_balance_after, "bad step spend"
-        assert input_balance_before - input_balance_after == amount_in, "bad step spend"
-        assert output_balance_after >= output_balance_before, "bad step output"
-        amount_in = output_balance_after - output_balance_before
-        if step.kind == STEP_DAI_USDS_CONVERTER:
-            assert amount_in == minimum_output, "converter output"
-        else:
-            assert amount_in >= minimum_output, "step output"
-
+        amount_in = self._execute_route_step(step, amount_in)
     return amount_in
+
+
+@external
+def executeExpansionPath(
+    _target_amount: uint256,
+    _crv_usd_sold: uint256,
+    _keeper: address,
+) -> (uint256, uint256, uint256, uint256):
+    assert msg.sender == self, "not self"
+    assert len(self.expansion_path) > 0, "empty expansion path"
+
+    amount_in: uint256 = _target_amount
+    backing_asset_received: uint256 = 0
+    gross_profit: uint256 = 0
+    keeper_reward: uint256 = 0
+    path_length: uint256 = len(self.expansion_path)
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= path_length:
+            break
+        step: RouteStep = self.expansion_path[i]
+        if i == path_length - 1:
+            backing_asset_received = amount_in
+            backing_value: uint256 = backing_asset_received * BACKING_MULTIPLIER
+            if backing_value > _crv_usd_sold:
+                gross_profit = backing_value - _crv_usd_sold
+            keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+            if keeper_reward_value > self.max_keeper_reward:
+                keeper_reward_value = self.max_keeper_reward
+            keeper_reward = keeper_reward_value / BACKING_MULTIPLIER
+            assert keeper_reward <= backing_asset_received, "reward exceeds backing"
+            if keeper_reward > 0:
+                keeper_balance_before: uint256 = BACKING_ASSET.balanceOf(_keeper)
+                BACKING_ASSET.transfer(_keeper, keeper_reward)
+                keeper_balance_after: uint256 = BACKING_ASSET.balanceOf(_keeper)
+                assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
+                assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+            amount_in = backing_asset_received - keeper_reward
+        amount_in = self._execute_route_step(step, amount_in)
+
+    yield_token_received: uint256 = amount_in
+    assert yield_token_received > 0, "yield output=0"
+    trusted_yield_received: uint256 = (
+        YIELD_TOKEN.convertToAssets(yield_token_received) * BACKING_MULTIPLIER
+    )
+    target_value: uint256 = _target_amount * TARGET_MULTIPLIER
+    route_retained_value: uint256 = trusted_yield_received + keeper_reward * BACKING_MULTIPLIER
+    conversion_cost: uint256 = 0
+    if target_value > route_retained_value:
+        conversion_cost = target_value - route_retained_value
+    assert conversion_cost <= (
+        target_value * self.expansion_max_route_loss_bps / BPS
+    ), "route loss"
+    entry_margin: uint256 = _crv_usd_sold * self.entry_min_profit_ppm / PPM
+    assert trusted_yield_received >= _crv_usd_sold + entry_margin, "entry margin"
+    return backing_asset_received, yield_token_received, gross_profit, keeper_reward
 
 
 @external

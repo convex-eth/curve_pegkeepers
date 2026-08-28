@@ -61,8 +61,6 @@ contract PegKeeperV3YieldContractionForkTest is Test {
 
     function test_liveSusdsYieldContractionToCrvUsd() public {
         IPegKeeperV3 pegKeeper = _deploy();
-        vm.prank(governance);
-        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath());
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
@@ -79,6 +77,8 @@ contract PegKeeperV3YieldContractionForkTest is Test {
         IStableSwap2Pool(USDT_POOL).exchange(0, 1, 10_000_000e6, 0);
         vm.prank(keeper);
         pegKeeper.expand(EXPANSION_AMOUNT);
+        vm.prank(governance);
+        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath());
         vm.prank(keeper);
         pegKeeper.deployUndeployedBacking(TARGET_TO_DEPLOY);
 

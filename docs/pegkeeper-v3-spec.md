@@ -260,11 +260,11 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
 ```
 
-The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, terminal yield-acquisition, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
+The downstream call is not an arbitrary keeper-controlled call. `expand()` invokes the ABI-visible `executeExpansionPath(targetAmount, crvUsdSold, keeper)` entry point only through a call to itself; every external caller is rejected. The helper uses the active typed path, exact temporary approvals, the original expansion caller as the fixed reward recipient, and a bounded forwarded-gas amount. Any route, reward, terminal yield-acquisition, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned target or yield-token deltas are inconsistent with the outer snapshots, the outer expansion reverts entirely rather than accepting fallback after state has committed.
 
 This gas policy is not a reward for deploying `undeployedBacking`. It is a transaction-safety rule for the downstream attempt inside `expand()`. Immediately before the isolated subcall, V3 requires `gasleft() >= minDownstreamAttemptGas`, where `minDownstreamAttemptGas` is governance-changeable. Its initial value is selected only after implementation benchmarks and should include ample headroom over the measured worst-case full route, call overhead, failed-attempt handling, fallback accounting, token payment, storage writes, and event emission. Expansion cannot be enabled with an uninitialized zero threshold, and a materially different downstream path must be activated with a compatible threshold.
 
-A minimum `gasleft()` check alone is insufficient if the downstream subcall can consume everything after the check. V3 must also bound forwarded gas or preserve a non-forwarded `fallbackSettlementGasReserve` so it can catch failure, calculate the fallback reward, record `undeployedBacking`, and finish the outer call. The expected threshold may be on the order of several hundred thousand gas, but the specification does not assign a number before measurement. Governance should update the threshold when activating a materially different downstream path. Neither the minimum nor the reserve is paid to the caller.
+A minimum `gasleft()` check alone is insufficient if the downstream subcall can consume everything after the check. V3 therefore forwards at most the available attempt gas minus `fallbackSettlementGasReserve`; an out-of-gas downstream call returns failure while the preserved outer gas remains available to calculate the fallback reward, record `undeployedBacking`, and finish the outer call. The expected threshold may be on the order of several hundred thousand gas, but the specification does not assign a number before measurement. Governance should update the threshold when activating a materially different downstream path. Neither the minimum nor the reserve is paid to the caller.
 
 ### No aggregate crvUSD trigger
 
@@ -274,7 +274,7 @@ An aggregate trigger could reject a locally profitable sale because a broader or
 
 This decision should be revisited only if simulation or live operation identifies a concrete cross-market externality that realized final profitability and the total deployed-exposure bound do not contain. Aggregate crvUSD observations may still be useful for monitoring and governance alerts without gating the core transaction.
 
-A preliminary interface is:
+The implemented public keeper interface is:
 
 ```solidity
 function expand(uint256 crvUsdAmount) external returns (
@@ -305,6 +305,26 @@ function previewExpansion(uint256 crvUsdAmount)
 ```
 
 The preview is advisory. A downstream quote can become stale or the route can revert during execution; the state-changing call selects the branch from actual call success and realized balance deltas.
+
+For a completed downstream attempt, the keeper reward is calculated from the measured backing asset present immediately before the terminal yield-acquisition step. The reward is transferred in backing-asset native units before that final step. The route-loss check excludes that deliberate reward from conversion loss while still requiring the final yield position alone to preserve principal plus the entry margin:
+
+```text
+completedRouteValue
+    = trustedYieldValue(yieldTokenReceived)
+    + normalize(actualBackingRewardPaid)
+
+conversionCost
+    = max(normalize(targetReceived) - completedRouteValue, 0)
+
+conversionCost
+    <= normalize(targetReceived)
+       * downstreamExpansionPath.maxRouteLossBps / 10_000
+
+trustedYieldValue(yieldTokenReceived)
+    >= crvUsdSold + entryMargin
+```
+
+The outer call accounts only the exact final yield-token balance increase returned by the successful helper. Pre-existing target, intermediate, backing, and yield-token donations remain outside current-call accounting. Existing `undeployedBacking` is never combined with the new target receipt.
 
 ### Fallback profit and keeper payment
 

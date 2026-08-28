@@ -10,11 +10,15 @@ import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
 import {RoutePool} from "./PegKeeperV3Routes.t.sol";
 
-interface IERC4626Live {
+interface IERC4626ExpansionLive {
     function convertToAssets(uint256 shares) external view returns (uint256);
 }
 
-contract PegKeeperV3BackingDeploymentForkTest is Test {
+interface IERC20Allowance {
+    function allowance(address owner, address spender) external view returns (uint256);
+}
+
+contract PegKeeperV3DownstreamExpansionForkTest is Test {
     uint256 internal constant FORK_BLOCK = 25_851_930;
 
     address internal constant FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
@@ -35,12 +39,10 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
     uint256 internal constant ERC4626_REDEEM = 3;
     uint256 internal constant ALLOCATION = 1_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
-    uint256 internal constant TARGET_AMOUNT = 1_000e6;
 
     address internal governance = makeAddr("governance");
     address internal emergencyAdmin = makeAddr("emergencyAdmin");
     address internal keeper = makeAddr("keeper");
-    address internal caller = makeAddr("caller");
 
     function setUp() public {
         string memory rpcUrl =
@@ -48,50 +50,57 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
         vm.createSelectFork(rpcUrl, FORK_BLOCK);
     }
 
-    function test_liveUsdtToSusdsBackingDeployment() public {
+    function test_liveExpansionRoutesUsdtThroughUsdsIntoSusds() public {
         IPegKeeperV3 pegKeeper = _deploy();
         RoutePool localUsdsCrvUsdPool = new RoutePool(USDS, CRVUSD);
+        vm.prank(governance);
+        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath(localUsdsCrvUsdPool));
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
         vm.startPrank(governance);
-        pegKeeper.set_expansion_config(0, 500_000, 100_000);
+        pegKeeper.set_expansion_config(0, 1_500_000, 300_000);
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
-        pegKeeper.set_direction_paused(1, false);
         vm.stopPrank();
 
-        deal(USDT, address(this), 10_000_000e6);
-        IUSDT(USDT).approve(USDT_POOL, 10_000_000e6);
-        IStableSwap2Pool(USDT_POOL).exchange(0, 1, 10_000_000e6, 0);
+        uint256 purchaseAmount = 10_000_000e6;
+        deal(USDT, address(this), purchaseAmount);
+        IUSDT(USDT).approve(USDT_POOL, purchaseAmount);
+        IStableSwap2Pool(USDT_POOL).exchange(0, 1, purchaseAmount, 0);
+
+        uint256 keeperUsdsBefore = IERC20(USDS).balanceOf(keeper);
+        uint256 protocolSusdsBefore = IERC20(SUSDS).balanceOf(address(pegKeeper));
         vm.prank(keeper);
-        pegKeeper.expand(EXPANSION_AMOUNT);
-        vm.prank(governance);
-        pegKeeper.setPaths(_expansionPath(), 100, _contractionPath(localUsdsCrvUsdPool));
+        (
+            uint256 sold,
+            uint256 retained,
+            uint256 yieldReceived,
+            uint256 reward,
+            bool deployedToYield
+        ) = pegKeeper.expand(EXPANSION_AMOUNT);
 
-        uint256 undeployedBefore = pegKeeper.undeployed_backing();
-        uint256 trustedBefore = pegKeeper.trusted_backing_value();
-        uint256 deployedBefore = pegKeeper.deployed_crvusd();
-        uint256 expansionTime = pegKeeper.last_expansion_at();
-        uint256 yieldBefore = IERC20(SUSDS).balanceOf(address(pegKeeper));
-        assertGe(pegKeeper.protocol_surplus(), 1e18);
-        assertGe(undeployedBefore, TARGET_AMOUNT);
-
-        vm.prank(caller);
-        (uint256 targetSpent, uint256 yieldReceived) =
-            pegKeeper.deployUndeployedBacking(TARGET_AMOUNT);
-
-        uint256 trustedYieldReceived = IERC4626Live(SUSDS).convertToAssets(yieldReceived);
-        assertEq(targetSpent, TARGET_AMOUNT);
+        assertEq(sold, EXPANSION_AMOUNT);
+        assertEq(retained, 0);
         assertGt(yieldReceived, 0);
-        assertEq(IERC20(SUSDS).balanceOf(address(pegKeeper)) - yieldBefore, yieldReceived);
+        assertGt(reward, 0);
+        assertTrue(deployedToYield);
+        assertEq(IERC20(USDS).balanceOf(keeper) - keeperUsdsBefore, reward);
+        assertEq(IERC20(SUSDS).balanceOf(address(pegKeeper)) - protocolSusdsBefore, yieldReceived);
         assertEq(pegKeeper.accounted_yield_token_units(), yieldReceived);
-        assertEq(pegKeeper.undeployed_backing(), undeployedBefore - TARGET_AMOUNT);
-        assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
-        assertEq(pegKeeper.last_expansion_at(), expansionTime);
-        assertGe(trustedYieldReceived, 990e18);
-        assertLe(trustedBefore - pegKeeper.trusted_backing_value(), 10e18);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+        assertEq(pegKeeper.deployed_crvusd(), EXPANSION_AMOUNT);
+        assertEq(IERC20(USDT).balanceOf(address(pegKeeper)), 0);
+        assertEq(IERC20(DAI).balanceOf(address(pegKeeper)), 0);
+        assertEq(IERC20(USDS).balanceOf(address(pegKeeper)), 0);
+        assertGe(
+            IERC4626ExpansionLive(SUSDS).convertToAssets(yieldReceived),
+            EXPANSION_AMOUNT + EXPANSION_AMOUNT * 50 / 1_000_000
+        );
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+        assertEq(IERC20Allowance(USDT).allowance(address(pegKeeper), THREE_POOL), 0);
+        assertEq(IERC20Allowance(DAI).allowance(address(pegKeeper), DAI_USDS), 0);
+        assertEq(IERC20Allowance(USDS).allowance(address(pegKeeper), SUSDS), 0);
     }
 
     function _expansionPath() internal pure returns (IPegKeeperV3.RouteStep[] memory path) {
@@ -151,7 +160,7 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
         });
     }
 
-    function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
+    function _deploy() internal returns (IPegKeeperV3 pegKeeper) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         bytes memory constructorArgs = abi.encode(
             FACTORY,
@@ -166,7 +175,6 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;
-
         assembly ("memory-safe") {
             deployed := create(0, add(initCode, 0x20), mload(initCode))
             if iszero(deployed) {
@@ -175,6 +183,6 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
                 revert(0, size)
             }
         }
-        deployedPegKeeper = IPegKeeperV3(deployed);
+        pegKeeper = IPegKeeperV3(deployed);
     }
 }
