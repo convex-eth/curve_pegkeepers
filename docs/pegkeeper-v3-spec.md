@@ -213,6 +213,8 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 
 The downstream call must not be an arbitrary keeper-controlled call. It uses the active typed path, exact temporary approvals, fixed recipients, and an implementation-level gas reserve or fixed forwarded-gas policy so a keeper cannot deliberately starve the downstream attempt and force the more favorable fallback branch. Any route, reward, deposit, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned deltas are inconsistent with outer balance checks, the outer expansion reverts entirely rather than accepting fallback after state has committed.
 
+This gas policy is not a reward for deploying `undeployedBacking`. It is a transaction-safety rule for the downstream attempt inside `expand()`. The implementation should require enough gas for a benchmarked downstream allowance plus a separate outer settlement reserve, forward no more than the downstream allowance to the `onlySelf` subcall, and preserve the outer reserve to catch failure, calculate the fallback reward, record `undeployedBacking`, and emit final events. The numeric `downstreamGasLimit` and `fallbackSettlementGasReserve` remain implementation benchmarks; neither amount is paid to the caller.
+
 ### No aggregate crvUSD trigger
 
 The initial design does not require a separate aggregate crvUSD oracle trigger. Expansion acceptance is determined by exact amount bounds, protocol-calculated route minima, realized post-reward profitability for the selected terminal branch, final trusted-backing checks, and configured exposure limits.
@@ -278,7 +280,7 @@ normalize(targetAssetRetained)
     >= crvUsdSold + fallbackEntryMargin
 ```
 
-The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: `undeployedBacking` may instead be used directly for contraction. With an illustrative `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding when the flat cap does not bind, and more when it does.
+The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: `undeployedBacking` may instead be used directly for contraction. With the initial `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding when the flat cap does not bind, and more when it does.
 
 ### Later undeployed backing deployment
 
@@ -643,7 +645,7 @@ DAO-consolidated profit
 
 The local branch result is the onchain safety invariant. DAO-consolidated profit is an offchain route-selection and governance metric. Routes that return equivalent backing to V3 should prefer fees accruing to the DAO over fees retained by external LPs, but fee recapture must never weaken V3's `minOut` or final backing floor. Pool fee ownership is configuration-dependent and must be rechecked before governance installs or updates a route.
 
-Optional depeg or venue-health checks may still protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence and must not override a transaction that already proves sufficient realized final value. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
+Optional depeg or venue-health checks may later protect the non-crvUSD conversion path, but they must be independent from the target AMM's crvUSD spot/EMA divergence. A configured backing-quality guard may veto an action that would increase exposure despite nominal final value, while contraction, redemption, migration, and shutdown paths that reduce exposure remain available. Caller minimums can only make execution stricter; they cannot weaken protocol minimums.
 
 For a successful full-route expansion, V3 calculates the keeper reward from the realized backing-asset output immediately before yield deployment:
 
@@ -659,6 +661,8 @@ keeperRewardValue = min(
 keeperRewardTokens = denormalizeDown(keeperRewardValue)
 backingAssetToDeploy = backingAssetOut - keeperRewardTokens
 ```
+
+`backingAssetOut` is the actual balance delta after the crvUSD-to-target AMM swap and every successful downstream stablecoin conversion. Target-AMM fees, downstream pool fees, converter loss, and slippage are therefore already deducted before `grossEntryProfit` and the reward are calculated. The terminal yield deposit is then checked from the actual share delta and cannot weaken the final backing floor.
 
 If normalized backing output does not exceed crvUSD sold, gross entry profit and keeper compensation are zero and the transaction cannot pass any positive entry margin. Reward conversion rounds down so decimal normalization cannot overpay the keeper.
 
@@ -850,7 +854,37 @@ keeperReward = min(
 )
 ```
 
-For fully deployed expansion, `grossProfit` is normalized backing asset received immediately before terminal yield deployment minus crvUSD sold, and the keeper is paid in that backing asset. For fallback expansion, it is normalized target asset received minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `undeployedBacking`. `maxKeeperReward` is stored in normalized 18-decimal backing-value units and token conversion rounds down. For either keeper contraction source, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD. Direct buyback and `deployUndeployedBacking()` callers receive no separate percentage reward.
+The initial governance-changeable settings are:
+
+```text
+keeperProfitShareBps = 3_000  // 30%
+maxKeeperReward      = 20e18  // $20 normalized backing value
+```
+
+The raw percentage reward reaches the cap when realized gross profit reaches:
+
+```text
+$20 / 30% = $66.6667
+```
+
+There is no single cap-triggering notional because gross profit depends on the realized spread. Representative notionals are:
+
+| Realized gross-profit rate | Notional that produces `$66.6667` gross profit |
+|---:|---:|
+| `0.5 bps` | `$1,333,333` |
+| `1 bps` | `$666,667` |
+| `2 bps` | `$333,333` |
+| `5 bps` | `$133,333` |
+| `10 bps` | `$66,667` |
+| `50 bps` | `$13,333` |
+
+At the initial entry floor, V3 must retain `0.5 bps` after the uncapped `30%` reward. The minimum gross-profit rate is therefore `0.5 / 70% = 0.714286 bps`, which reaches the `$20` cap at approximately `$933,333` notional. An action with a larger realized gross spread reaches the cap at a smaller notional.
+
+For the initial `10,000 crvUSD` minimum expansion, a branch executing at exactly that floor realizes approximately `$0.7143` gross profit, pays approximately `$0.2143` to the keeper, and retains `$0.50` for V3. The minimum action size is therefore an anti-dust and timer-reset bound, not a guarantee that the reward covers mainnet gas; keepers act only when actual size and spread make the capped reward worthwhile.
+
+For fully deployed expansion, `grossProfit` is normalized backing asset received immediately before terminal yield deployment minus crvUSD sold, and the keeper is paid in that backing asset. For fallback expansion, it is normalized target asset actually received after target-AMM fees and slippage minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `undeployedBacking`. A failed downstream subcall rolls back its token conversions, so it changes caller gas cost but does not leave partial downstream route loss in V3. `maxKeeperReward` is stored in normalized 18-decimal backing-value units and token conversion rounds down. For either keeper contraction source, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD.
+
+One `expand()` call pays one branch reward. It does not pay separate rewards for the first crvUSD-to-target swap and the downstream target-to-yield conversion. Direct buyback and `deployUndeployedBacking()` callers receive no percentage reward. No explicit gas reimbursement is added to any branch; a keeper decides whether the realized reward, capped at `$20`, covers transaction gas and execution risk.
 
 The high profit-share rate supports smaller economically useful calls, while `maxKeeperReward` prevents a large dislocation from paying an excessive single reward. The cap is intentionally per call rather than split-invariant. A keeper may collect the cap more than once by executing multiple transactions, including a same-block batch, but each successful call must independently realize profit through its selected branch and leave V3 with principal plus its configured post-reward margin. Since expected entry spreads are only a few basis points and most strategy return is intended to come from holding the yield position, this is treated as bounded rent leakage rather than a solvency issue.
 
@@ -915,7 +949,7 @@ Required controls:
 - delayed target-AMM and path replacement;
 - immediate cancellation of a pending path;
 - fee-receiver update;
-- governance updates to `minDeploymentTime`, `minExpansionAmount`, and the entry and exit margin parameters;
+- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, and `maxKeeperReward`;
 - first-class migration of the yield-token position;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
@@ -1093,9 +1127,8 @@ Any later guard should be directional. It may stop expansion or downstream deplo
 
 The following are deliberately unresolved:
 
-- initial `keeperProfitShareBps` and flat `maxKeeperReward`;
 - initial `maxUndeployedBacking`, `maxBackingDeployPerCall`, `maxBackingDeploymentLossBps`, and required backing reserve;
-- exact downstream isolated-call gas policy and minimum gas reserve;
+- benchmarked numeric `downstreamGasLimit` and `fallbackSettlementGasReserve` for the isolated downstream attempt;
 - whether a successful expansion should always attempt a separate capped deployment of undeployed backing or leave flushing to `deployUndeployedBacking()`;
 - final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
 - path length bound;
