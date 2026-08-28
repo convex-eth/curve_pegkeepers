@@ -142,9 +142,21 @@ interface IPegKeeperV3 {
             uint256 expectedKeeperReward,
             bool earlyExit
         );
+    function previewKeeperBuyback(uint256 yieldTokenAmount)
+        external
+        view
+        returns (
+            uint256 expectedCrvUsdOut,
+            uint256 expectedGrossProfit,
+            uint256 expectedKeeperReward,
+            bool earlyExit
+        );
     function contractUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
+    function contractViaAmm(uint256 yieldTokenAmount)
+        external
+        returns (uint256 yieldTokenSpent, uint256 crvUsdReceived, uint256 keeperReward);
     function deployUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 yieldTokenReceived);

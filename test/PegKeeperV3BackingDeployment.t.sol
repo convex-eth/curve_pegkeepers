@@ -112,6 +112,9 @@ contract ExecutionYieldToken is ExpansionToken {
     uint256 public previewSharesPpm = 1_000_000;
     uint256 public executionSharesPpm = 1_000_000;
     uint256 public assetValuePpm = 1_000_000;
+    uint256 public previewRedeemPpm = 1_000_000;
+    uint256 public executionRedeemPpm = 1_000_000;
+    uint256 public postRedeemAssetValuePpm;
 
     constructor(ExpansionToken backing_) ExpansionToken(18) {
         backing = backing_;
@@ -127,6 +130,15 @@ contract ExecutionYieldToken is ExpansionToken {
         assetValuePpm = valuePpm;
     }
 
+    function setRedeemRates(uint256 previewPpm, uint256 executionPpm) external {
+        previewRedeemPpm = previewPpm;
+        executionRedeemPpm = executionPpm;
+    }
+
+    function setPostRedeemAssetValue(uint256 postRedeemPpm) external {
+        postRedeemAssetValuePpm = postRedeemPpm;
+    }
+
     function previewDeposit(uint256 assets) external view returns (uint256) {
         return assets * previewSharesPpm / 1_000_000;
     }
@@ -138,7 +150,7 @@ contract ExecutionYieldToken is ExpansionToken {
     }
 
     function previewRedeem(uint256 shares) external view returns (uint256) {
-        return shares * assetValuePpm / 1_000_000;
+        return shares * previewRedeemPpm / 1_000_000;
     }
 
     function redeem(uint256 shares, address receiver, address owner)
@@ -147,8 +159,9 @@ contract ExecutionYieldToken is ExpansionToken {
     {
         require(owner == msg.sender, "owner");
         balanceOf[owner] -= shares;
-        assets = shares * assetValuePpm / 1_000_000;
+        assets = shares * executionRedeemPpm / 1_000_000;
         backing.mint(receiver, assets);
+        if (postRedeemAssetValuePpm != 0) assetValuePpm = postRedeemAssetValuePpm;
     }
 
     function convertToAssets(uint256 shares) external view returns (uint256) {

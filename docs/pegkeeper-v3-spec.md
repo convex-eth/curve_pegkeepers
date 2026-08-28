@@ -507,7 +507,7 @@ For yield backing:
 2. Determine whether V3 is in the mature or young deployment state.
 3. Select the normal or early exit margin accordingly.
 4. Verify the keeper's requested yield-token amount is within the available yield backing and cannot reduce more than the current `deployedCrvUsd` exposure.
-5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS and then use a configured USDS/crvUSD venue; for sfrxUSD it may first swap to frxUSD.
+5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS, convert through DAI and a stablecoin venue, and then use the designated target AMM; for sfrxUSD it may first swap to frxUSD.
 6. Calculate gross exit profit as crvUSD received minus the trusted backing value removed by the yield-token units spent.
 7. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperReward`, and pay it to `msg.sender` in crvUSD.
 8. Verify the net crvUSD retained after the reward exceeds the trusted backing value spent by the selected exit margin.
@@ -515,7 +515,7 @@ For yield backing:
 10. Keep the remaining recovered crvUSD idle.
 ```
 
-A preliminary interface is:
+The implemented keeper-contraction interface is:
 
 ```solidity
 function contractUndeployedBacking(uint256 targetAmount)
@@ -529,7 +529,17 @@ function contractViaAmm(uint256 yieldTokenAmount)
 
 The keeper chooses only the exact target amount or yield-token units. V3 calculates every route minimum, realized profit, and reward internally. The two contraction paths have separate venues, limits, and pause controls; failure of the downstream expansion route does not disable either undeployed backing contraction or a healthy yield-to-crvUSD route.
 
-The keeper's proposed fallback should also be previewable:
+Yield-token contraction values units leaving from the complete accounted position rather than treating `convertToAssets()` as additive:
+
+```text
+preYieldValue = normalizeDown(yieldToken.convertToAssets(accountedYieldTokenUnitsBefore))
+postYieldValue = normalizeDown(yieldToken.convertToAssets(accountedYieldTokenUnitsAfter))
+trustedValueRemoved = preYieldValue - postYieldValue
+```
+
+This pre/post difference is authoritative for the exposure bound, realized gross profit, selected post-reward margin, and final principal check. `convertToAssets(yieldTokenSpent)` is not interchangeable because ERC-4626 floor rounding can make it differ from the whole-position value change. Execution snapshots the pre-route position and re-reads the remaining position after route execution, so a conversion-rate update triggered by the unwind is included in realized accounting. It spends exactly the requested accounted units, measures final crvUSD by V3's balance delta, pays the keeper only from realized gross profit, reduces `deployedCrvUsd` by net retained crvUSD capped at the current exposure, and leaves `lastExpansionAt` unchanged. The yield branch emits `KeeperBuyback` with `backingToken = backingAsset`, `backingSpent = 0`, and the measured `yieldTokenSpent`.
+
+The keeper fallback is previewable:
 
 ```solidity
 function previewKeeperBuyback(uint256 yieldTokenAmount)
@@ -694,6 +704,8 @@ For every step:
 7. Feed the measured output into the next step.
 
 Successful downstream deployment and contraction calls must consume the entire routed input except for bounded rounding dust. A failed isolated downstream expansion attempt consumes none of the target input and leaves it available for the accounted fallback branch.
+
+`contractViaAmm()` executes the stored contraction path through the same bounded typed executor. Its first measured step consumes the fixed yield token and its last measured step produces crvUSD. Curve steps enforce `get_dy()`-relative minima, the canonical converter requires exact one-for-one native-unit output, and ERC-4626 deposit or redeem steps enforce their respective preview-relative minima. Any failed step, non-exact top-level yield spend, incorrect final crvUSD delta, insufficient post-reward margin, or principal-invariant failure reverts the complete transaction and all temporary approvals.
 
 After a target-to-yield route completes, V3 compares normalized target input with the trusted backing-asset value of measured final yield-token units and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
 
@@ -1302,6 +1314,8 @@ event Executed(
 29. A fully deployed expansion succeeds only when the configured route itself ends with a measured balance increase in the fixed `yieldToken`; V3 performs no implicit post-route deposit.
 30. The terminal yield-acquisition step and first yield-unwind step are typed route data with fixed tokens, venues, protocol minima, and V3 as recipient.
 31. `accountedYieldTokenUnits` changes only by measured protocol receipts and outflows, never exceeds V3's actual yield-token balance, and excludes unsolicited transfers.
+32. Yield-token contraction spends exactly the requested accounted units, values the outflow from the complete pre/post accounted positions, and cannot remove trusted value greater than current deployed exposure.
+33. Successful yield-token contraction reduces `deployedCrvUsd` only by net retained crvUSD, capped at current exposure, and never changes `lastExpansionAt`.
 
 ## Risks
 

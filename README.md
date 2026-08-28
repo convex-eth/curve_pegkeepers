@@ -115,7 +115,7 @@ The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5
 
 The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can now deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. New-expansion downstream isolation, yield-backed buyback, and yield contraction remain for later verified slices.
+The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target AMM pair, target asset, backing asset, and final yield token; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the fixed target AMM, enforces the Factory and local exposure bounds, calculates a measured fallback keeper reward, and records retained target assets as `undeployedBacking`. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can now spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. New-expansion downstream isolation and direct yield-token buyback remain for later verified slices.
 
 ## Toolchain
 
@@ -172,7 +172,9 @@ test/
 ├── PegKeeperV3SurplusFork.t.sol
 ├── PegKeeperV3Surplus.t.sol
 ├── PegKeeperV3UndeployedContractionFork.t.sol
-└── PegKeeperV3UndeployedContraction.t.sol
+├── PegKeeperV3UndeployedContraction.t.sol
+├── PegKeeperV3YieldContractionFork.t.sol
+└── PegKeeperV3YieldContraction.t.sol
 ```
 
 `PegKeeperV2.vy` and `PegKeeperOffboarding.vy` were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline). `PegKeeperV3.vy` is the new implementation developed in this repository. All three pin Vyper `0.3.10`.
@@ -244,6 +246,14 @@ Executes accounted target backing through typed Curve, canonical DaiUsds, ERC-46
 ### `PegKeeperV3BackingDeploymentForkTest`
 
 Creates live USDT fallback backing and then permissionlessly routes `1,000 USDT` through Curve 3pool to DAI, the canonical DaiUsds converter to USDS, and the live sUSDS deposit endpoint at block `25,851,930`. It verifies measured sUSDS receipt and accounting, exact undeployed-target reduction, unchanged crvUSD exposure and maturity timer, bounded conversion cost, and final principal preservation.
+
+### `PegKeeperV3YieldContractionTest`
+
+Exercises exact accounted yield-token contraction through the stored typed route. It verifies early and mature previews, whole-position pre/post ERC-4626 valuation, all four route-step kinds, the exact `16`-step bound, quote-relative Curve and vault minima, canonical converter output, exact temporary approval cleanup, donation isolation, permissionless pause controls, bounded rewards, net exposure reduction, full-exit capping, unchanged maturity time, and atomic rollback on failed route economics.
+
+### `PegKeeperV3YieldContractionForkTest`
+
+Creates live sUSDS backing and then contracts it through sUSDS redemption, canonical USDS-to-DAI conversion, Curve 3pool DAI-to-USDT exchange, and the live USDT/crvUSD target AMM at block `25,851,930`. It verifies the production four-step contraction route, preview/execution parity, measured yield and crvUSD deltas, bounded keeper reward, whole-position value removal, exposure reduction, unchanged maturity time, and the final principal invariant.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 

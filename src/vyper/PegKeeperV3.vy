@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: core accounting/actions plus bounded typed route validation and backing deployment.
+@dev Incremental implementation: core accounting/actions plus bounded typed route execution.
 """
 
 interface ERC20:
@@ -321,6 +321,12 @@ def _trusted_backing_value() -> uint256:
     return target_value + self._normalize_backing(backing_amount)
 
 
+@internal
+@view
+def _trusted_yield_value(_yield_token_units: uint256) -> uint256:
+    return self._normalize_backing(YIELD_TOKEN.convertToAssets(_yield_token_units))
+
+
 @external
 @view
 def trusted_backing_value() -> uint256:
@@ -385,6 +391,55 @@ def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, 
     if keeper_reward > self.max_keeper_reward:
         keeper_reward = self.max_keeper_reward
 
+    return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
+
+
+@internal
+@view
+def _preview_contraction_path(_yield_token_amount: uint256) -> uint256:
+    amount_out: uint256 = _yield_token_amount
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= len(self.contraction_path):
+            break
+        step: RouteStep = self.contraction_path[i]
+        if step.kind == STEP_CURVE_SWAP:
+            amount_out = CurveRoutePool(step.venue).get_dy(
+                step.pool_index_in,
+                step.pool_index_out,
+                amount_out,
+            )
+        elif step.kind == STEP_DAI_USDS_CONVERTER:
+            pass
+        elif step.kind == STEP_ERC4626_DEPOSIT:
+            amount_out = ERC4626Route(step.venue).previewDeposit(amount_out)
+        else:
+            amount_out = ERC4626Route(step.venue).previewRedeem(amount_out)
+    return amount_out
+
+
+@external
+@view
+def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uint256, bool):
+    assert _yield_token_amount > 0, "yield amount=0"
+    assert _yield_token_amount <= self.accounted_yield_token_units, "insufficient yield"
+    assert len(self.contraction_path) > 0, "empty contraction path"
+
+    trusted_value_before: uint256 = self._trusted_yield_value(
+        self.accounted_yield_token_units
+    )
+    trusted_value_after: uint256 = self._trusted_yield_value(
+        self.accounted_yield_token_units - _yield_token_amount
+    )
+    trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
+    assert trusted_value_removed <= self.deployed_crvusd, "exposure amount"
+
+    expected_crv_usd: uint256 = self._preview_contraction_path(_yield_token_amount)
+    gross_profit: uint256 = 0
+    if expected_crv_usd > trusted_value_removed:
+        gross_profit = expected_crv_usd - trusted_value_removed
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    if keeper_reward > self.max_keeper_reward:
+        keeper_reward = self.max_keeper_reward
     return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
 
 
@@ -767,13 +822,20 @@ def contraction_path_step(_index: uint256) -> RouteStep:
 
 
 @internal
-def _execute_expansion_path(_target_amount: uint256) -> uint256:
-    amount_in: uint256 = _target_amount
+def _execute_route(_initial_amount: uint256, _expansion: bool) -> uint256:
+    amount_in: uint256 = _initial_amount
+    path_length: uint256 = len(self.contraction_path)
+    if _expansion:
+        path_length = len(self.expansion_path)
     for i in range(MAX_ROUTE_STEPS):
-        if i >= len(self.expansion_path):
+        if i >= path_length:
             break
 
-        step: RouteStep = self.expansion_path[i]
+        step: RouteStep = empty(RouteStep)
+        if _expansion:
+            step = self.expansion_path[i]
+        else:
+            step = self.contraction_path[i]
         token_in: ERC20 = ERC20(step.token_in)
         token_out: ERC20 = ERC20(step.token_out)
         input_balance_before: uint256 = token_in.balanceOf(self)
@@ -845,7 +907,7 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
     yield_balance_before: uint256 = YIELD_TOKEN.balanceOf(self)
     assert target_balance_before >= self.undeployed_backing, "target accounting"
 
-    self._execute_expansion_path(_target_amount)
+    self._execute_route(_target_amount, True)
 
     target_balance_after: uint256 = TARGET_ASSET.balanceOf(self)
     yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
@@ -882,6 +944,94 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
         conversion_cost,
     )
     return target_spent, yield_token_received
+
+
+@external
+@nonreentrant("lock")
+def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
+    assert not self.all_execution_paused, "all execution paused"
+    assert not self.yield_contraction_paused, "yield contraction paused"
+    assert _yield_token_amount > 0, "yield amount=0"
+    assert _yield_token_amount <= self.accounted_yield_token_units, "insufficient yield"
+    assert len(self.contraction_path) > 0, "empty contraction path"
+
+    accounted_before: uint256 = self.accounted_yield_token_units
+    trusted_value_before: uint256 = self._trusted_yield_value(accounted_before)
+    quoted_value_after: uint256 = self._trusted_yield_value(
+        accounted_before - _yield_token_amount
+    )
+    quoted_value_removed: uint256 = trusted_value_before - quoted_value_after
+    assert quoted_value_removed <= self.deployed_crvusd, "exposure amount"
+
+    yield_balance_before: uint256 = YIELD_TOKEN.balanceOf(self)
+    crv_usd_before: uint256 = CRV_USD.balanceOf(self)
+    assert yield_balance_before >= accounted_before, "yield accounting"
+
+    route_output: uint256 = self._execute_route(_yield_token_amount, False)
+
+    yield_balance_after: uint256 = YIELD_TOKEN.balanceOf(self)
+    crv_usd_after_swap: uint256 = CRV_USD.balanceOf(self)
+    assert yield_balance_before >= yield_balance_after, "bad yield spend"
+    yield_token_spent: uint256 = yield_balance_before - yield_balance_after
+    assert yield_token_spent == _yield_token_amount, "bad yield spend"
+    assert crv_usd_after_swap >= crv_usd_before, "bad crvUSD delta"
+    crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
+    assert crv_usd_received == route_output, "bad crvUSD output"
+
+    trusted_value_after: uint256 = self._trusted_yield_value(
+        accounted_before - yield_token_spent
+    )
+    assert trusted_value_before >= trusted_value_after, "bad yield value"
+    trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
+    assert trusted_value_removed <= self.deployed_crvusd, "exposure amount"
+
+    gross_profit: uint256 = 0
+    if crv_usd_received > trusted_value_removed:
+        gross_profit = crv_usd_received - trusted_value_removed
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    if keeper_reward > self.max_keeper_reward:
+        keeper_reward = self.max_keeper_reward
+
+    if keeper_reward > 0:
+        keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
+        CRV_USD.transfer(msg.sender, keeper_reward)
+        keeper_balance_after: uint256 = CRV_USD.balanceOf(msg.sender)
+        assert keeper_balance_after >= keeper_balance_before, "bad reward delta"
+        assert keeper_balance_after - keeper_balance_before == keeper_reward, "bad reward receipt"
+
+    crv_usd_after_reward: uint256 = CRV_USD.balanceOf(self)
+    assert crv_usd_after_swap >= crv_usd_after_reward, "bad reward spend"
+    assert crv_usd_after_swap - crv_usd_after_reward == keeper_reward, "bad reward spend"
+    assert crv_usd_after_reward >= crv_usd_before, "bad retained crvUSD"
+    net_crv_usd: uint256 = crv_usd_after_reward - crv_usd_before
+
+    early_exit: bool = self._is_early_exit()
+    exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
+    if early_exit:
+        exit_margin_ppm = self.early_exit_min_profit_ppm
+    exit_margin: uint256 = trusted_value_removed * exit_margin_ppm / PPM
+    assert net_crv_usd >= trusted_value_removed + exit_margin, "exit margin"
+
+    self.accounted_yield_token_units = accounted_before - yield_token_spent
+    exposure_reduction: uint256 = net_crv_usd
+    if exposure_reduction > self.deployed_crvusd:
+        exposure_reduction = self.deployed_crvusd
+    self.deployed_crvusd -= exposure_reduction
+
+    assert YIELD_TOKEN.balanceOf(self) >= self.accounted_yield_token_units, "yield accounting"
+    assert self._trusted_backing_value() >= self.deployed_crvusd, "insufficient backing"
+
+    log KeeperBuyback(
+        msg.sender,
+        BACKING_ASSET.address,
+        0,
+        yield_token_spent,
+        crv_usd_received,
+        gross_profit,
+        keeper_reward,
+        early_exit,
+    )
+    return yield_token_spent, crv_usd_received, keeper_reward
 
 
 @external
