@@ -51,7 +51,7 @@ When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM p
 The current V3 design is asymmetric:
 
 - **Above peg:** a permissionless keeper sells idle Factory-allocated crvUSD into a designated crvUSD/stablecoin AMM. V3 prefers to deploy the proceeds through the configured yield route, but a downstream failure leaves the target stablecoin as approved accounted backing instead of reverting the peg-critical swap.
-- **Below peg:** users can sell crvUSD directly to V3 against available approved backing.
+- **Below peg:** users can sell crvUSD directly to V3. The payout waterfall always uses `undeployedBacking` first and redeems yield shares only for any remaining value, so users never select the backing source and may receive both target and underlying stablecoins.
 - **Fallback below peg:** if direct buyback flow does not arrive, a keeper can buy crvUSD using either undeployed backing or an independently configured yield-unwind path.
 
 For a USDT-facing sUSDS implementation:
@@ -66,7 +66,7 @@ Yield contraction:   sUSDS -> USDS -> crvUSD
 
 Undeployed backing is an intentional terminal accounting state; intermediate DAI and USDS balances remain transient route assets. The core invariant counts normalized `undeployedBacking` (USDT) plus the trusted USDS value represented by sUSDS. Unsolicited token transfers do not enter accounting automatically.
 
-The downstream expansion and yield contraction paths are separately updatable through delayed governance. Routes use typed Curve-swap, exact-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. Undeployed-backing contraction uses the designated target AMM directly and does not depend on the downstream yield route.
+The downstream expansion and yield contraction paths are separately updatable through a three-day commit/apply governance delay. Emergency cancellation and directional pauses remain immediate. Routes use typed Curve-swap, exact-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. There is no protocol-level path-length cap; governance is trusted to configure a path that fits transaction gas and the benchmarked `minDownstreamAttemptGas`. Undeployed-backing contraction uses the designated target AMM directly and does not depend on the downstream yield route.
 
 The governance owner also has a separate unrestricted `execute(target, value, calldata)` escape hatch. It can move or convert assets through a one-off recovery path if a configured venue breaks or governance loses confidence in the held yield token or an underlying stablecoin. This power belongs only to the DAO owner, not keepers or the emergency admin. The DAO already controls crvUSD minting and protocol configuration, so the function does not introduce a new trusted actor; it makes that existing governance authority directly usable for urgent recovery.
 

@@ -327,49 +327,50 @@ The initial design does not combine old `undeployedBacking` with a newly rewarde
 
 ## Direct buyback lifecycle
 
-Direct buyback provides one-sided downward liquidity against an explicitly selected protocol backing source. The caller may select only a fixed entry point and amount, never a route, venue, recipient, or accounting value.
+Direct buyback provides one-sided downward liquidity through a deterministic backing waterfall. The caller chooses only the crvUSD amount and token-specific minimum outputs; V3 always pays `undeployedBacking` first and redeems yield backing only for the remaining trusted value. The caller cannot select a backing source, route, venue, recipient, or accounting value.
 
 ```text
 1. Verify direct buyback is enabled.
-2. Transfer crvUSD from the caller to V3.
-3. Bound the transaction by deployed crvUSD and the per-call buyback limit.
-4. Determine whether V3 is in the mature or young deployment state.
-5. Select the normal exit margin in the mature state or the higher early exit margin in the young state.
-6. Determine whether the called entry point spends undeployed backing or redeems yield backing.
-7. Determine the maximum backing amount that may be spent while preserving the selected margin.
-8. Measure the exact approved backing transferred to the caller.
-9. Verify the crvUSD received exceeds the trusted backing value spent by the selected margin.
-10. Decrease `undeployedBacking` when the undeployed backing entry point is used.
-11. Reduce deployedCrvUsd by the crvUSD reacquired.
-12. Retain the crvUSD as idle inventory.
-13. Emit the shares spent, target asset paid, crvUSD reacquired, and whether early exit was used.
+2. Verify the requested crvUSD amount is within deployed-crvUSD and per-call limits.
+3. Determine whether V3 is in the mature or young deployment state.
+4. Select the normal exit margin in the mature state or the higher early exit margin in the young state.
+5. Calculate the maximum trusted backing value payable while preserving that margin.
+6. Transfer crvUSD from the caller to V3.
+7. Allocate as much payout value as possible from `undeployedBacking` and decrease its accounting by the exact target amount paid.
+8. If value remains, redeem only enough yield shares to pay the remainder in the approved underlying.
+9. Transfer the target asset, underlying asset, or both to the caller.
+10. Enforce the caller's token-specific minimums and measure actual backing outputs by balance delta.
+11. Verify the received crvUSD exceeds total trusted backing value paid by the selected margin.
+12. Reduce `deployedCrvUsd` by the crvUSD received and retain it as idle inventory.
+13. Emit both payout amounts, yield shares redeemed, and whether early exit was used.
 ```
 
 A preliminary interface is:
 
 ```solidity
-function buybackFromUndeployedBacking(
+function buyback(
     uint256 crvUsdAmount,
-    uint256 minTargetOut
-) external returns (uint256 targetOut, uint256 targetSpent);
-
-function buybackFromYield(
-    uint256 crvUsdAmount,
+    uint256 minTargetOut,
     uint256 minUnderlyingOut
-) external returns (uint256 underlyingOut, uint256 yieldSharesSpent);
+) external returns (
+    uint256 targetOut,
+    uint256 underlyingOut,
+    uint256 yieldSharesRedeemed
+);
 ```
 
-The undeployed backing entry point pays the configured target asset directly and does not depend on the downstream yield route. The yield-backed entry point redeems the configured yield token and pays its configured approved underlying, such as USDS from sUSDS; it does not need to reconstruct USDT. Each call reverts if its selected backing source cannot produce an acceptable output.
+If `undeployedBacking` can satisfy the complete quote, `underlyingOut` and `yieldSharesRedeemed` are zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and redeems yield shares for the remainder. If no undeployed backing exists, the complete payout comes from yield underlying. The call reverts unless combined trusted output and each caller minimum pass.
 
 The direct quote should be previewable:
 
 ```solidity
-function previewBuybackFromUndeployedBacking(uint256 crvUsdAmount)
+function previewBuyback(uint256 crvUsdAmount)
     external
     view
     returns (
         uint256 expectedTargetOut,
-        uint256 maxBackingSpent,
+        uint256 expectedUnderlyingOut,
+        uint256 expectedYieldSharesRedeemed,
         uint256 requiredExitProfit,
         bool earlyExit
     );
@@ -377,7 +378,7 @@ function previewBuybackFromUndeployedBacking(uint256 crvUsdAmount)
 
 The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
 
-Caller minimums are retained here because the direct buyback caller supplies crvUSD and receives the backing output. The effective minimum is the greater of the user's minimum and V3's internally calculated protocol minimum. Passing zero cannot weaken V3's floor.
+Caller minimums are retained because the direct buyback caller supplies crvUSD and may receive two different backing tokens. The effective minimums are the caller's token-specific floors combined with V3's internally calculated total trusted-value floor. Passing zero for either token cannot weaken V3's floor.
 
 ## Keeper buyback fallback
 
@@ -516,14 +517,19 @@ A path is valid only when:
 9. An ERC-4626 redeem step uses the vault share token as `tokenIn` and `vault.asset()` as `tokenOut`.
 10. Execution-buffer parameters remain within governance-set maxima.
 11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
-12. The path length is bounded.
-13. No venue, token, or endpoint is zero.
+12. No venue, token, or endpoint is zero.
 
 Changing the target AMM, target asset, backing asset, or yield token requires applying a complete compatible configuration bundle. Governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched.
+
+There is no protocol-level maximum path length. Governance is trusted to configure an executable typed path; transaction gas and `minDownstreamAttemptGas` provide the practical bound. An excessively long or expensive downstream path can make the downstream branch unusable, but it cannot compromise fallback accounting: the isolated branch fails and expansion retains the target asset. Route review and gas-threshold benchmarking remain governance responsibilities.
 
 ### Path governance
 
 Path replacement is a privileged operation capable of directing the protocol's full conversion flow. It should use delayed two-step governance:
+
+```text
+PATH_UPDATE_DELAY = 3 days
+```
 
 ```solidity
 function commitPaths(
@@ -535,9 +541,11 @@ function applyPaths() external;
 function cancelPendingPaths() external;
 ```
 
-`commitPaths` validates and stores the pending configuration hash and activation time. `applyPaths` validates again before replacing both active paths atomically.
+`commitPaths` validates and stores the pending configuration hash with `activationTime = block.timestamp + 3 days`. `applyPaths` validates again and can replace both active paths atomically only after that timestamp. Complete target-AMM or endpoint configuration bundles use the same delay.
 
 The emergency admin may disable a path immediately but cannot apply a new one.
+
+Three days is long enough for public review and cancellation while remaining tolerable because a broken downstream path does not stop target-only expansion, and independent contraction and owner recovery remain available. The delay is an operational mistake-detection window, not protection against a malicious DAO owner: the same owner retains unrestricted `execute()` authority.
 
 ### Path execution
 
@@ -1010,9 +1018,9 @@ event UndeployedBackingDeployed(
 event DirectBuyback(
     address indexed caller,
     uint256 crvUsdReceived,
-    address backingToken,
-    uint256 backingPaid,
-    uint256 yieldSharesSpent,
+    uint256 targetPaid,
+    uint256 underlyingPaid,
+    uint256 yieldSharesRedeemed,
     bool earlyExit
 );
 
@@ -1057,7 +1065,7 @@ event Executed(
 13. Deployment of undeployed backing cannot consume more than available surplus or exceed its per-call loss bound.
 14. Deployment of undeployed backing never changes `deployedCrvUsd` or `lastExpansionAt`.
 15. Disabling expansion never disables the governance-approved contraction and offboarding paths unless global shutdown explicitly does so.
-16. A path update cannot bypass its governance delay.
+16. A path update cannot bypass the three-day governance delay.
 17. Every external conversion is non-reentrant and uses measured balance deltas.
 18. Only the governance owner can execute arbitrary targets or calldata.
 19. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
@@ -1066,6 +1074,7 @@ event Executed(
 22. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
 23. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
 24. A failed or below-minimum expansion cannot extend the normal-exit timer.
+25. Direct buyback never redeems yield shares for payout value that available `undeployedBacking` can satisfy.
 
 ## Risks
 
@@ -1129,9 +1138,6 @@ The following are deliberately unresolved:
 
 - initial downstream-path `maxRouteLossBps`;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- final direct-buyback surface for selecting undeployed backing versus yield-underlying payout;
-- path length bound;
-- governance delay duration;
 - maximum per-call and rolling flow limits;
 - the execution-quality benchmark used in addition to the hard profit floor;
 - exact adapter interface and rounding rules for converting supported yield shares into trusted underlying units;
