@@ -113,9 +113,21 @@ The timing model uses one global `lastExpansionAt`, with no tranches or maturity
 
 The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5%` annualized stablecoin yield, that earns approximately `2.19` to `2.74 bps` for assets that reached the yield token. Undeployed target-asset backing earns no such carry, but it uses the same global timer because the timer is an anti-churn control rather than per-position yield accounting. Every exit must still pass its final-value check.
 
-The complete current draft is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and remaining deferred decisions.
+The complete implemented specification is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and the remaining deployment-specific governance decisions.
 
-The production implementation is proceeding in verified Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target asset, backing asset, and final yield token; validates a governance-replaceable target AMM against the fixed crvUSD/target pair and discovers either index order; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls, atomic governance/emergency-role rotation, atomic economic/lifecycle policy updates, advisory branch-aware expansion previews, and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the active target AMM and then attempts the configured target-to-yield path in a bounded-gas self-call. A successful attempt spends only the newly received target asset, pays one measured reward in the backing asset immediately before terminal yield acquisition, and accounts the exact yield-token delta. Route, reward, route-loss, or final-margin failure rolls back only the isolated attempt and settles the original target receipt through the measured fallback branch while preserving a configured outer gas reserve. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. Direct buyback accepts exact crvUSD from any caller and transfers only the fixed yield token, with a conservative `convertToShares()` quote, caller minimum output, measured two-sided token deltas, whole-position post-transfer valuation, the selected exit margin, and the final principal invariant; it never executes either stored route or spends undeployed target backing.
+The production implementation is complete in independently reviewed Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target asset, backing asset, and final yield token; validates a governance-replaceable target AMM against the fixed crvUSD/target pair and discovers either index order; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls, atomic governance/emergency-role rotation, atomic economic/lifecycle policy updates, advisory branch-aware expansion previews, and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the active target AMM and then attempts the configured target-to-yield path in a bounded-gas self-call. A successful attempt spends only the newly received target asset, pays one measured reward in the backing asset immediately before terminal yield acquisition, and accounts the exact yield-token delta. Route, reward, route-loss, or final-margin failure rolls back only the isolated attempt and settles the original target receipt through the measured fallback branch while preserving a configured outer gas reserve. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. Direct buyback accepts exact crvUSD from any caller and transfers only the fixed yield token, with a conservative `convertToShares()` quote, caller minimum output, measured two-sided token deltas, whole-position post-transfer valuation, the selected exit margin, and the final principal invariant; it never executes either stored route or spends undeployed target backing.
+
+## V3 release package
+
+V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
+
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-explicit deployment with constructor, runtime-size, and fully-paused startup verification;
+- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting current-mainnet simulation of the complete USDT → DAI → USDS → sUSDS expansion;
+- [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
+- [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
+- [`docs/pegkeeper-v3-release-checklist.md`](docs/pegkeeper-v3-release-checklist.md): explicit governance decisions, reproducible gates, deployment, activation, and monitoring sequence.
+
+The latest release canary passed at mainnet block `25,854,106`. No deployment or activation transaction is broadcast by the release package. Governance must approve capacity, Factory allocation, route buffers, route-loss tolerance, and bounded-gas values before deployment and must enable expansion last.
 
 ## Toolchain
 
@@ -124,7 +136,7 @@ The production implementation is proceeding in verified Vyper `0.3.10` slices. T
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The verified `PegKeeperV3` deployed runtime is `21,387` bytes, leaving `3,189` bytes below the EIP-170 limit of `24,576`; `PegKeeperV3RuntimeSizeTest` and `forge build --sizes` enforce and report that bound.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. `forge build --sizes` reports the `21,387`-byte compiler runtime template. Vyper appends a `224`-byte constructor-specialized immutable data section, so the authoritative deployed runtime measured after actual construction is `21,611` bytes, leaving `2,965` bytes below EIP-170. Full initcode, including the nine static constructor arguments, is `22,967` bytes, leaving `26,185` bytes below EIP-3860. `PegKeeperV3RuntimeSizeTest`, `PegKeeperV3DeploymentTest`, and the release-manifest verifier enforce these bounds.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -145,7 +157,15 @@ ETH_RPC_URL=https://your-archive-rpc.example make test
 
 ```text
 docs/
+├── pegkeeper-v3-release-checklist.md
 └── pegkeeper-v3-spec.md
+deployments/mainnet/
+└── PegKeeperV3-release.json
+script/
+├── DeployPegKeeperV3.s.sol
+└── PegKeeperV3ReleaseCanary.s.sol
+scripts/
+└── verify-release-manifest.py
 src/
 ├── interfaces/
 │   ├── IControllerFactory.sol
@@ -168,6 +188,7 @@ test/
 ├── PegKeeperV3BackingDeployment.t.sol
 ├── PegKeeperV3DirectBuybackFork.t.sol
 ├── PegKeeperV3DirectBuyback.t.sol
+├── PegKeeperV3Deployment.t.sol
 ├── PegKeeperV3DownstreamExpansionFork.t.sol
 ├── PegKeeperV3DownstreamExpansion.t.sol
 ├── PegKeeperV3ExpansionFork.t.sol
@@ -225,7 +246,11 @@ Verifies the atomic governance policy surface, margin ordering and ppm bounds, k
 
 ### `PegKeeperV3RuntimeSizeTest`
 
-Loads the compiled deployed bytecode and fails if `PegKeeperV3` exceeds the `24,576`-byte EIP-170 runtime limit.
+Deploys the exact creation artifact with all nine static constructor arguments, checks the full initcode against EIP-3860, then checks the constructor-specialized deployed runtime against EIP-170. It also pins both release sizes to detect artifact drift.
+
+### `PegKeeperV3DeploymentTest`
+
+Runs the canonical deployment helper against deterministic endpoints and verifies every constructor field, Factory stablecoin discovery, fully paused startup, configured capacity, and the deployed EIP-170 bound.
 
 ### `PegKeeperV3ExpansionForkTest`
 

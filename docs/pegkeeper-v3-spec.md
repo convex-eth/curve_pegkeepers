@@ -1,8 +1,8 @@
 # PegKeeper V3 specification
 
-Status: design draft
+Status: implementation-complete release candidate; not deployed.
 
-This document records the current V3 direction. It is intentionally narrower than a complete implementation specification. Unresolved parameters and integration details are listed at the end rather than guessed.
+This document records the implemented V3 architecture and its remaining deployment-specific governance decisions. The release package does not broadcast deployment or activation transactions.
 
 ## Summary
 
@@ -127,7 +127,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The complete runtime is `21,387` bytes, `3,189` bytes below the EIP-170 limit, and an executable artifact-size test prevents regression above that limit.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `21,387` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `21,611` bytes, `2,965` bytes below EIP-170. Full initcode is `22,967` bytes, `26,185` bytes below EIP-3860. Executable runtime/initcode tests and the release-manifest verifier prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -1439,13 +1439,17 @@ For a USDT-facing deployment, candidate observations include a robust USDT/USD o
 
 Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or backing asset while preserving contraction, route-defined unwind, slow wind-down, and owner recovery actions that reduce that exposure. For a yield token, the relevant checks are the approved backing asset's external value, the final token's accounting behavior, and actual unwind-route liquidity; an illiquid yield-token market quote or `convertToAssets()` alone is not a complete depeg test.
 
-## Remaining deferred decisions
+## Remaining deployment decisions
 
-The following are deliberately unresolved:
+The code and fixed route representation are complete. Governance still must approve deployment-specific numeric values:
 
 - initial downstream-path `maxRouteLossBps` plus target-AMM and per-step `executionBufferBps` values, calibrated against the implemented venues;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- exact Curve-router ABI/canary requirements and whether to register the fixed `crvUSD`/`yieldToken` buyback edge;
+- initial local maximum deployment capacity and Factory debt ceiling/allocation.
+
+The initial release does not register a Curve-router adapter for the fixed `crvUSD`/`yieldToken` buyback edge. Direct buyback remains available only through the explicit `buyback()` interface, which returns the fixed yield token and preserves measured accounting. Router compatibility may be proposed later without expanding the initial release surface.
+
+The release manifest, current-mainnet canary, reproducible deployment script, and ordered activation procedure are maintained in `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md`. Deployment and activation remain explicit governance/operator actions; the release package does not broadcast them.
 
 ## Sources
 

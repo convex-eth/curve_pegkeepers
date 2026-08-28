@@ -1,0 +1,157 @@
+{
+  "status": "release_candidate_not_deployed",
+  "generatedAtUtc": "2026-08-28T13:42:43Z",
+  "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
+  "productionSourceCommit": "cd238c0440ec4ec0569290957b548236aa156ed7",
+  "compiler": {
+    "language": "Vyper",
+    "version": "0.3.10+commit.9136169",
+    "optimizer": "codesize",
+    "evmVersion": "shanghai"
+  },
+  "source": {
+    "path": "src/vyper/PegKeeperV3.vy",
+    "sha256": "63800a505cb2cbf8f0616d1ea0338b88db6a0756f56b3c16120da5f744abe6f7"
+  },
+  "artifact": {
+    "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
+    "compilerCreationBytes": 22679,
+    "compilerCreationKeccak256": "0xd4395eafed4c28e1ac1dd5977fc1e13d37ec90d55a2eff630199801081a8cb3a",
+    "constructorArgsBytes": 288,
+    "fullInitCodeBytes": 22967,
+    "eip3860LimitBytes": 49152,
+    "fullInitCodeMarginBytes": 26185,
+    "runtimeTemplateBytes": 21387,
+    "runtimeTemplateKeccak256": "0xe554698c8a0cac9b6e57cbb463b48e04a1c13013780611aa99f2264293f48e93",
+    "deployedRuntimeBytes": 21611,
+    "eip170LimitBytes": 24576,
+    "deployedRuntimeMarginBytes": 2965,
+    "abiFunctions": 62,
+    "abiEvents": 13
+  },
+  "verification": {
+    "forgeVersion": "1.7.1",
+    "solidityVersion": "0.8.30",
+    "testsPassed": 153,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "deploymentTest": "pass",
+    "runtimeSizeTest": "pass",
+    "abiParity": "pass",
+    "releaseGates": "pass"
+  },
+  "candidateConstructor": {
+    "factory": "0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC",
+    "targetAmm": "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4",
+    "targetAsset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "backingAsset": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+    "yieldToken": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+    "feeReceiver": "0x2dFd89449faff8a532790667baB21cF733C064f2",
+    "admin": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
+    "emergencyAdmin": "0x467947EE34aF926cF1DCac093870f613C96B1E0c",
+    "maxDeployedCrvUsd": null,
+    "operatorConfirmationRequired": true
+  },
+  "candidatePaths": {
+    "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
+    "expansionSteps": [
+      {
+        "kind": "CURVE_SWAP",
+        "venue": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+        "tokenIn": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "tokenOut": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "poolIndexIn": 2,
+        "poolIndexOut": 0,
+        "canaryExecutionBufferBps": 5
+      },
+      {
+        "kind": "DAI_USDS_CONVERTER",
+        "venue": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
+        "tokenIn": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "tokenOut": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "poolIndexIn": 0,
+        "poolIndexOut": 0,
+        "canaryExecutionBufferBps": 0
+      },
+      {
+        "kind": "ERC4626_DEPOSIT",
+        "venue": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+        "tokenIn": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "tokenOut": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+        "poolIndexIn": 0,
+        "poolIndexOut": 0,
+        "canaryExecutionBufferBps": 5
+      }
+    ],
+    "contractionPathHash": "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986",
+    "contractionSteps": [
+      {
+        "kind": "ERC4626_REDEEM",
+        "venue": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+        "tokenIn": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+        "tokenOut": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "poolIndexIn": 0,
+        "poolIndexOut": 0,
+        "canaryExecutionBufferBps": 5
+      },
+      {
+        "kind": "DAI_USDS_CONVERTER",
+        "venue": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
+        "tokenIn": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+        "tokenOut": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "poolIndexIn": 0,
+        "poolIndexOut": 0,
+        "canaryExecutionBufferBps": 0
+      },
+      {
+        "kind": "CURVE_SWAP",
+        "venue": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
+        "tokenIn": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "tokenOut": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "poolIndexIn": 0,
+        "poolIndexOut": 2,
+        "canaryExecutionBufferBps": 5
+      },
+      {
+        "kind": "CURVE_SWAP",
+        "venue": "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4",
+        "tokenIn": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "tokenOut": "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
+        "poolIndexIn": 0,
+        "poolIndexOut": 1,
+        "canaryExecutionBufferBps": 5
+      }
+    ],
+    "canaryExpansionMaxRouteLossBps": 100,
+    "productionCalibrationRequired": true
+  },
+  "latestMainnetCanary": {
+    "block": 25854106,
+    "script": "script/PegKeeperV3ReleaseCanary.s.sol",
+    "result": "pass",
+    "simulatedCrvUsdSold": "100000000000000000000000",
+    "simulatedSusdsReceived": "90284563076899029685845",
+    "simulatedContractionQuoteSusds": "9028456307689902968584",
+    "simulatedContractionQuoteCrvUsd": "9994657368958299570872",
+    "targetAmmExecutionBufferBps": 0,
+    "minDownstreamAttemptGas": 1500000,
+    "fallbackSettlementGasReserve": 300000,
+    "broadcast": false
+  },
+  "deployment": {
+    "address": null,
+    "transactionHash": null,
+    "fullInitCodeKeccak256": null,
+    "deployedCodeKeccak256": null,
+    "factoryDebtCeiling": null,
+    "verified": false,
+    "activated": false
+  },
+  "activationBlockers": [
+    "Governance must confirm feeReceiver, admin, and emergencyAdmin.",
+    "Governance must select maxDeployedCrvUsd and the Factory debt ceiling.",
+    "Target-AMM and per-step buffers, route-loss tolerance, and gas reserve values require production calibration and approval.",
+    "A fresh current-block canary must pass immediately before broadcast and again before activation.",
+    "Deployment and activation transactions require explicit operator approval; this release package does not broadcast them."
+  ]
+}
