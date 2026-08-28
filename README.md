@@ -53,7 +53,7 @@ When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM p
 The current V3 design is asymmetric:
 
 - **Above peg:** a permissionless keeper sells idle Factory-allocated crvUSD into a designated crvUSD/stablecoin AMM. V3 prefers to deploy the proceeds through the configured yield route, but a downstream failure leaves the target stablecoin as approved accounted backing instead of reverting the peg-critical swap.
-- **Below peg:** users can sell crvUSD directly to V3. The payout waterfall always uses `undeployedBacking` first and executes the configured first yield-unwind step only for any remaining trusted-value budget, so users never select the backing source and may receive both target and backing stablecoins.
+- **Below peg:** users can sell crvUSD directly to V3. The payout waterfall always uses `undeployedBacking` first and transfers the fixed final yield-bearing token directly for any remaining trusted-value budget. V3 performs no withdrawal or swap for direct buyback; the user may unwrap or trade the received yield token independently.
 - **Fallback below peg:** if direct buyback flow does not arrive, a keeper can buy crvUSD using either undeployed backing or an independently configured yield-unwind path.
 
 For a USDT-facing sUSDS implementation:
@@ -77,15 +77,15 @@ Yield unwind:         sfrxUSD -> frxUSD through a configured Curve step
 
 Undeployed backing is an intentional terminal accounting state; intermediate DAI and USDS balances remain transient route assets. The core invariant counts normalized `undeployedBacking` (USDT) plus the trusted USDS value represented by sUSDS. Unsolicited token transfers do not enter accounting automatically.
 
-The downstream expansion and yield contraction paths are separately updatable through atomic governance execution. V3 adds no contract-level route timelock because the DAO proposal already has a seven-day voting period. Emergency directional pauses remain immediate. Routes use typed Curve-swap, exact-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. The terminal yield-acquisition action is part of the route: V3 does not append a hardcoded vault deposit after route execution. A successful expansion path must end in the deployment's fixed yield-bearing token, whether that token is acquired by deposit or swap. There is no protocol-level path-length cap; governance is trusted to configure a path that fits transaction gas and the benchmarked `minDownstreamAttemptGas`. The target asset, accounting backing asset, and final yield token are fixed for the deployment; route updates may replace venues but must preserve those endpoints. A different yield token requires deploying a new V3. Undeployed-backing contraction uses the designated target AMM directly and does not depend on the downstream yield route.
+The downstream expansion and yield contraction paths are separately updatable through atomic governance execution. V3 adds no contract-level route timelock because the DAO proposal already has a seven-day voting period. Emergency directional pauses remain immediate. Routes use typed Curve-swap, canonical DaiUsds-converter, and ERC-4626 steps rather than caller-provided routers or arbitrary calldata. The DaiUsds step directly calls `daiToUsds(address(this), amount)` or `usdsToDai(address(this), amount)`, requires a measured 1:1 output, and permits no keeper-selected recipient or calldata. The terminal yield-acquisition action is part of the route: V3 does not append a hardcoded vault deposit after route execution. A successful expansion path must end in the deployment's fixed yield-bearing token, whether that token is acquired by deposit or swap. There is no protocol-level path-length cap; governance is trusted to configure a path that fits transaction gas and the benchmarked `minDownstreamAttemptGas`. The target asset, accounting backing asset, and final yield token are fixed for the deployment; route updates may replace venues but must preserve those endpoints. A different yield token requires deploying a new V3. Undeployed-backing contraction uses the designated target AMM directly and does not depend on the downstream yield route.
 
-Configured paths remain exact-input and use protocol-calculated minimum outputs. The target AMM and each typed step compare measured output with that venue's same-transaction quote reduced by a configured `executionBufferBps`; the final trusted-value profit floor and downstream `maxRouteLossBps` remain independent checks. No duplicate global execution-slippage parameter or generic exact-output swap adapter is needed. Direct buyback spends undeployed target backing first, then sizes a conservative exact yield-token input through `convertToShares()` and executes the configured first unwind step. The user receives its measured backing-asset output subject to token minimums; V3 values the actual pre/post yield position through `convertToAssets()`.
+Configured paths remain exact-input and use protocol-calculated minimum outputs. The target AMM and each typed step compare measured output with that venue's same-transaction quote reduced by a configured `executionBufferBps`; the final trusted-value profit floor and downstream `maxRouteLossBps` remain independent checks. No duplicate global execution-slippage parameter or generic exact-output swap adapter is needed. Direct buyback spends undeployed target backing first, then sizes a conservative final-yield-token payout through `convertToShares()` and transfers that token directly. V3 prices the actual pre/post yield-token position through `convertToAssets()`; the user handles any later unwrap or swap.
 
 The governance owner also has a separate unrestricted `execute(target, value, calldata)` escape hatch. It can move or convert assets through a one-off recovery path if a configured venue breaks or governance loses confidence in the held yield token or an underlying stablecoin. This power belongs only to the DAO owner, not keepers or the emergency admin. The DAO already controls crvUSD minting and protocol configuration, so the function does not introduce a new trusted actor; it makes that existing governance authority directly usable for urgent recovery.
 
 V3 does not require the target crvUSD AMM spot price to remain close to its EMA or pass a separate aggregate crvUSD oracle trigger. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. Exact amount bounds, protocol-calculated route minima, realized post-reward profitability, final backing checks, and exposure limits gate execution. After the target swap, V3 attempts the fixed downstream path in an isolated call. Success finishes in yield backing; failure rolls back only the downstream attempt and retains the target asset as `undeployedBacking`. The keeper cannot select the branch, route, minima, or recipient, and an implementation gas reserve prevents deliberate fallback through gas starvation.
 
-V3 treats governance-approved backing stablecoins as one-dollar assets for PegKeeper accounting. The fixed final yield token must expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `asset() == backingAsset`; it need not accept deposits or withdrawals itself. V3 values its actual held units through `convertToAssets()` and rounds trusted value down. Raw token count is never assumed to equal backing assets, and acquisition/unwind behavior comes from typed route steps rather than an accounting adapter. This permits an sUSDS route ending in an ERC-4626 deposit and an sfrxUSD route ending in a Curve swap. The target AMM spot is not used to price the final position. This matches the Factory trust model: the Factory mints an allocation to an approved PegKeeper but does not independently inspect or mark to market what that PegKeeper acquires. A real depeg or redemption failure is therefore governance collateral risk, handled initially through pauses, slow wind-down, and the owner execute escape hatch—not something the nominal profit check can detect. A future optional guard could compare USDT against independent USDT/USD, USDT/USDC, or USDT/USDS references and separately check yield-underlying and redemption health. It should not use crvUSD as the backing-quality reference or block risk-reducing exits.
+V3 treats governance-approved backing stablecoins as one-dollar assets for PegKeeper accounting. The fixed final yield token must expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `asset() == backingAsset`; it need not accept deposits or withdrawals itself. V3 values its explicitly accounted yield-token units through `convertToAssets()` and rounds trusted value down. Accounted units increase and decrease only through measured protocol routes or transfers; unsolicited tokens do not become backing. Raw token count is never assumed to equal backing assets, and acquisition/unwind behavior comes from typed route steps rather than an accounting adapter. This permits an sUSDS route ending in an ERC-4626 deposit and an sfrxUSD route ending in a Curve swap. The target AMM spot is not used to price the final position. This matches the Factory trust model: the Factory mints an allocation to an approved PegKeeper but does not independently inspect or mark to market what that PegKeeper acquires. A real depeg or redemption failure is therefore governance collateral risk, handled initially through pauses, slow wind-down, and the owner execute escape hatch—not something the nominal profit check can detect. A future optional guard could compare USDT against independent USDT/USD, USDT/USDC, or USDT/USDS references and separately check yield-underlying and redemption health. It should not use crvUSD as the backing-quality reference or block risk-reducing exits.
 
 `trustedBackingValue` is accounted undeployed USDT plus the current USDS-equivalent value represented by V3's sUSDS shares; it uses current `convertToAssets()` value rather than only the historical deposit. Yield appreciation and retained execution profit are not split into separate onchain buckets. Both contribute to `protocolSurplus = max(trustedBackingValue - deployedCrvUsd, 0)`. In direct buyback, deployed exposure falls by crvUSD received while trusted backing falls only by backing paid, so surplus increases by `crvUsdReceived - trustedBackingPaid`. Paying USDT first often leaves sUSDS behind, but only combined backing above remaining deployed exposure is profit; the leftover shares still support principal until `deployedCrvUsd` reaches zero. `deployedCrvUsd` means all accounted crvUSD externalized from V3 and requiring that backing, not only crvUSD sold through an AMM. Permissionless `claimSurplus(maxCrvUsdAmount)` transfers idle crvUSD directly to Curve's `FeeSplitter` and increases `deployedCrvUsd` by the exact amount transferred. Trusted backing stays invested while surplus falls by the same amount through the increased exposure. The claim cannot exceed protocol surplus, eligible idle inventory, Factory allocation, or `maxDeployedCrvUsd`, and it is disabled whenever expansion is paused.
 
@@ -143,6 +143,7 @@ docs/
 src/
 ├── interfaces/
 │   ├── IControllerFactory.sol
+│   ├── IDaiUsds.sol
 │   ├── IERC20.sol
 │   ├── IPegKeeperOffboarding.sol
 │   ├── IPegKeeperRegulator.sol
@@ -153,14 +154,15 @@ src/
     ├── PegKeeperOffboarding.vy
     └── PegKeeperV2.vy
 test/
+├── DaiUsdsConverter.t.sol
 └── PegKeeperLifecycle.t.sol
 ```
 
 The Vyper contracts were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline) and pins `# pragma version 0.3.10`.
 
-## Pinned fork
+## Pinned forks
 
-Tests fork Ethereum at block `25,837,866`.
+The V2 lifecycle tests fork Ethereum at block `25,837,866`. The DaiUsds integration test uses block `25,851,930`, matching the live converter and yield-token evidence in the V3 specification.
 
 | Contract | Address |
 | --- | --- |
@@ -170,6 +172,7 @@ Tests fork Ethereum at block `25,837,866`.
 | Ownership agent | `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
 | Emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
 | USDT/crvUSD pool | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` |
+| DaiUsds converter | `0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A` |
 
 Current V2 PegKeepers covered by the retirement test:
 
@@ -180,6 +183,10 @@ Current V2 PegKeepers covered by the retirement test:
 - GHO: `0x53876B157DeCf04389eEd66c7C29d73863f8C50b`
 
 ## Tests
+
+### `test_liveEndpointsAndExactRoundTrip`
+
+Calls the canonical DaiUsds converter through `IDaiUsds`, verifies its live DAI and USDS endpoints, converts `1,000 DAI` to exactly `1,000 USDS`, and converts the result back to exactly `1,000 DAI`. This covers the no-return directional ABI used by `StepKind.DaiUsdsConverter`.
 
 ### `test_retireAllCurrentPegKeepers`
 
