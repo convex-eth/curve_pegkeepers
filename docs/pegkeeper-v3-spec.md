@@ -82,7 +82,7 @@ Any account can call the expansion and fallback contraction functions. V3 does n
 
 ### Arbitrageur or user
 
-Any account can sell crvUSD directly to V3 through the buyback function while that direction is enabled. The caller receives the target asset, the fixed yield token, or both and pays only the direct transaction gas; no route executes. No additional keeper reward is paid for this direct trade.
+Any account can sell crvUSD directly to V3 through the buyback function while that direction is enabled. The caller receives only the fixed yield token and pays the direct transaction gas; no route executes. No additional keeper reward is paid for this direct trade.
 
 ### Fee receiver
 
@@ -380,22 +380,25 @@ The initial design does not combine old `undeployedBacking` with a newly rewarde
 
 ## Direct buyback lifecycle
 
-Direct buyback provides one-sided downward liquidity through a deterministic backing waterfall. The caller chooses only the crvUSD amount and token-specific minimum outputs; V3 always pays `undeployedBacking` first and transfers the final `yieldToken` directly for any remaining trusted-value budget. The caller cannot select the backing source, payout tokens, recipient, or accounting value, and no route is executed.
+Direct buyback provides one-sided downward liquidity through one fixed routing edge:
+
+```text
+crvUSD -> yieldToken
+```
+
+A direct-buyback call always transfers the deployment's fixed final `yieldToken`; it never returns `targetAsset`, never returns two tokens, and never executes the acquisition or contraction route. The caller chooses only the crvUSD input amount and a minimum yield-token output. It cannot select the backing source, payout token, recipient, route, or accounting value.
 
 ```text
 1. Verify direct buyback is enabled.
-2. Verify the requested crvUSD amount does not exceed `deployedCrvUsd` or available trusted backing.
-3. Determine whether V3 is in the mature or young deployment state.
-4. Select the normal exit margin in the mature state or the higher early exit margin in the young state.
-5. Calculate the maximum trusted backing value payable while preserving that margin.
-6. Transfer crvUSD from the caller to V3.
-7. Allocate as much payout value as possible from `undeployedBacking` and decrease its accounting by the exact target amount paid.
-8. If value remains, use `convertToShares()` only to derive a downward-rounded yield-token amount whose measured trusted value cannot exceed the remaining budget.
-9. Transfer that final yield token directly to the caller; V3 performs no withdrawal, redemption, or swap for direct buyback.
-10. Enforce `minTargetOut` and `minYieldTokenOut` and measure both token outputs by balance delta.
-11. Recompute the trusted value removed from the complete pre/post yield position and verify the received crvUSD exceeds total trusted backing spent by the selected margin.
-12. Reduce `deployedCrvUsd` by the crvUSD received and retain it as idle inventory.
-13. Emit both payout amounts and whether early exit was used.
+2. Verify the requested crvUSD amount does not exceed `deployedCrvUsd`, the trusted capacity of `accountedYieldTokenUnits`, or available trusted backing.
+3. Determine whether V3 is in the mature or young deployment state and select the corresponding exit margin.
+4. Calculate the maximum trusted payout value that preserves that margin.
+5. Use `convertToShares()` only to derive a downward-rounded `yieldTokenOut` whose measured trusted value cannot exceed the payout budget.
+6. Transfer crvUSD from the caller to V3 and transfer exactly `yieldTokenOut` to the caller. V3 performs no withdrawal, redemption, or swap.
+7. Enforce `minYieldTokenOut`, measure actual yield-token spending and caller receipt by balance delta, and decrease `accountedYieldTokenUnits` by the measured amount spent.
+8. Recompute trusted value removed from the complete pre/post accounted yield position.
+9. Verify crvUSD received exceeds trusted backing spent by the selected margin and that remaining trusted backing covers remaining `deployedCrvUsd`.
+10. Reduce `deployedCrvUsd` by crvUSD received, retain it as idle inventory, and emit the yield-token amount paid.
 ```
 
 A preliminary interface is:
@@ -403,36 +406,33 @@ A preliminary interface is:
 ```solidity
 function buyback(
     uint256 crvUsdAmount,
-    uint256 minTargetOut,
     uint256 minYieldTokenOut
-) external returns (
-    uint256 targetOut,
-    uint256 yieldTokenOut
-);
+) external returns (uint256 yieldTokenOut);
 ```
 
-If `undeployedBacking` can satisfy the complete trusted-value budget, `yieldTokenOut` is zero. If it can satisfy only part, V3 pays all applicable undeployed backing first and transfers a protocol-sized amount of the final yield token. If no undeployed backing exists, the complete payout is the final yield token. The caller receives sUSDS, sfrxUSD, or the deployment's other fixed yield-bearing token and may unwrap or swap it independently. Direct buyback does not depend on acquisition-route or contraction-route availability.
+The caller receives sUSDS, sfrxUSD, or the deployment's other fixed yield-bearing token and may unwrap or swap it independently. Direct buyback does not depend on target inventory or acquisition-route or contraction-route availability. If insufficient accounted yield tokens exist, the quote is unavailable; V3 does not fall through to target-asset payment.
 
-No binary search, exact-output adapter, or yield unwind is required. V3 derives `yieldTokenOut` conservatively from the remaining trusted-value budget. The initial candidate uses `convertToShares(max(denormalizeDown(remainingBudget) - 1, 0))`; the one-native-unit haircut covers the possible non-additive floor increment, and the final measured pre/post trusted-value check remains authoritative. If that check would still exceed the budget, the call reverts rather than overpaying from principal.
+No binary search, exact-output adapter, or yield unwind is required. V3 derives `yieldTokenOut` conservatively from the trusted payout budget. The initial candidate uses `convertToShares(max(denormalizeDown(payoutBudget) - 1, 0))`; the one-native-unit haircut covers the possible non-additive floor increment, and the final measured pre/post trusted-value check remains authoritative. If that check would still exceed the budget, the call reverts rather than overpaying from principal.
 
 The payout is priced only through the fixed trusted accounting interface:
 
 ```text
 preYieldValue
-    = normalizeDown(yieldToken.convertToAssets(preAccountedYieldTokenUnits))
+    = normalizeDown(
+        yieldToken.convertToAssets(preAccountedYieldTokenUnits)
+      )
 
 postYieldValue
-    = normalizeDown(yieldToken.convertToAssets(postAccountedYieldTokenUnits))
+    = normalizeDown(
+        yieldToken.convertToAssets(postAccountedYieldTokenUnits)
+      )
 
-yieldValuePaid
-    = preYieldValue - postYieldValue
-
-P = normalizeDown(targetOut) + yieldValuePaid
+P = preYieldValue - postYieldValue
 ```
 
-`convertToShares()` is only a conservative sizing helper. The whole accounted-position pre/post `convertToAssets()` difference is authoritative because floor-rounded conversions are not necessarily additive. No AMM quote, ERC-4626 withdrawal preview, or market price is used to value the yield token for direct buyback.
+`convertToShares()` is only a conservative sizing helper. The whole accounted-position pre/post `convertToAssets()` difference is authoritative because floor-rounded conversions are not necessarily additive. No AMM quote, ERC-4626 withdrawal preview, or market price is used to value the direct payout.
 
-Direct buyback retains its exit spread as additional protocol surplus. Let `C` be crvUSD received and `P` be the trusted value removed from `undeployedBacking` plus the pre/post trusted value removed from the yield position:
+Direct buyback retains its exit spread as additional protocol surplus. Let `C` be crvUSD received and `P` be the trusted value of yield tokens paid:
 
 ```text
 surplusBefore = trustedBackingBefore - deployedCrvUsdBefore
@@ -445,25 +445,44 @@ surplusAfter - surplusBefore
     = directBuybackProfit
 ```
 
-The exit condition requires `C >= P + selectedExitMargin`. With the configured positive normal or early margin, `C > P`, so a successful direct buyback increases surplus by at least that margin; a future zero-margin setting would permit break-even but never reduce surplus. Because the payout waterfall spends the target asset first, the residual portfolio will often contain mostly the fixed yield token. In the USDT/sUSDS example, that means sUSDS units, but those units are not a separate profit bucket. They support any remaining `deployedCrvUsd`; only combined trusted backing above the remaining deployed amount is surplus. Once `deployedCrvUsd == 0`, all remaining trusted backing is surplus, subject to no other obligations.
+The exit condition requires `C >= P + selectedExitMargin`. With the configured positive normal or early margin, `C > P`, so a successful direct buyback increases surplus by at least that margin; a future zero-margin setting would permit break-even but never reduce surplus.
 
-The direct quote should be previewable:
+The direct quote is fixed-token and previewable:
 
 ```solidity
 function previewBuyback(uint256 crvUsdAmount)
     external
     view
     returns (
-        uint256 expectedTargetOut,
         uint256 expectedYieldTokenOut,
         uint256 requiredExitProfit,
         bool earlyExit
     );
 ```
 
-The preview is advisory. Execution uses balance deltas and post-transaction profitability checks.
+The preview is advisory. Execution uses measured deltas and post-transaction profitability checks. The caller's `minYieldTokenOut` can only make execution stricter.
 
-Caller minimums are retained because the direct buyback caller supplies crvUSD and may receive the target asset, the final yield token, or both. The effective minimums are the caller's token-specific floors combined with V3's internally calculated trusted-spend and final-profit checks. Passing zero for either token cannot weaken V3's floor.
+### Routing integration
+
+A buyback that returns two unrelated ERC-20 outputs is a poor fit for ordinary routing infrastructure, and a state-changing `coins()` list is also unsafe because route graphs, indexers, and cached integrations treat an edge's tokens as fixed. Yield-only direct buyback avoids both problems.
+
+If V3 exposes or is wrapped by a Curve-style routing surface, the pair is immutable for the deployment:
+
+```text
+coins(0) = crvUSD
+coins(1) = yieldToken
+```
+
+A change from sUSDS to sfrxUSD still requires a new V3 deployment. A quote can become stale in amount, but it cannot become stale in output-token identity.
+
+### Undeployed target cleanup
+
+`undeployedBacking` is never paid through direct buyback and never changes its advertised routing pair. It remains ordinary trusted backing and can be handled by either existing permissionless keeper path:
+
+- `contractUndeployedBacking(targetAmount)` swaps target asset to crvUSD and earns the configured keeper share only from realized contraction profit; or
+- `deployUndeployedBacking(targetAmount)` sends target asset through the configured expansion route to the fixed yield token, pays no percentage reward, and executes only when route-loss, surplus, and final principal checks pass.
+
+Small target dust may remain accounted indefinitely without blocking yield-token buybacks. It can accumulate into an economical keeper action or be handled during wind-down or owner recovery. No dust threshold, dynamic coin list, or direct-buyback source switch is required.
 
 ## Keeper buyback fallback
 
@@ -675,7 +694,7 @@ After a target-to-yield route completes, V3 compares normalized target input wit
 
 ### Exact-input routing and route-defined yield handling
 
-The configurable paths are exact-input. Expansion routes the keeper's exact crvUSD amount, later deployment routes an exact target amount, and keeper contraction routes an exact target amount or yield-token amount. Each route step measures output and enforces a protocol-calculated `minOut`; none needs a generic exact-output swap adapter. Direct buyback executes no route: after exhausting `undeployedBacking`, it transfers a protocol-sized amount of the fixed `yieldToken` directly to the caller.
+The configurable paths are exact-input. Expansion routes the keeper's exact crvUSD amount, later deployment routes an exact target amount, and keeper contraction routes an exact target amount or yield-token amount. Each route step measures output and enforces a protocol-calculated `minOut`; none needs a generic exact-output swap adapter. Direct buyback executes no route and always transfers a protocol-sized amount of the fixed `yieldToken` directly to the caller; it never consumes `undeployedBacking`.
 
 Yield acquisition and keeper unwind follow their configured step kinds. An ERC-4626 deployment may use `deposit()` and `redeem()`. A non-depositable token such as sfrxUSD may instead be acquired and unwound through typed Curve swaps while still using its read-only conversion interface for trusted accounting. Direct buyback avoids both cases by returning the fixed final yield-bearing token itself.
 
@@ -833,7 +852,7 @@ normalize(targetAssetRetainedAfterReward)
 
 ```text
 crvUsdReceived
->= trustedBackingValue(backingSpent)
+>= trustedYieldValuePaid
  + selectedExitMargin
 ```
 
@@ -1043,7 +1062,7 @@ protocolSurplus
 
 Here `trustedBackingValue` is the normalized value of accounted `targetAsset` plus the current `backingAsset`-equivalent value represented by `accountedYieldTokenUnits`. It uses the fixed yield token's current `convertToAssets()` value, not merely historical acquisition cost, so accrued yield is included. For the USDT/sUSDS example, those two components are accounted USDT and the current USDS-equivalent value of accounted sUSDS units.
 
-Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, buyback waterfalls, yield-token exchange-rate appreciation, and fee claims, without strengthening the principal invariant.
+Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, independent backing-source outflows, yield-token exchange-rate appreciation, and fee claims, without strengthening the principal invariant.
 
 V3 realizes that surplus for governance by transferring idle crvUSD to the configured FeeSplitter and increasing `deployedCrvUsd` by exactly the amount transferred. It does not remove the configured target asset, backing asset, or yield token from the backing portfolio. Let `F` be the crvUSD fee payment:
 
@@ -1123,7 +1142,7 @@ function get_dy(int128 i, int128 j, uint256 dx) external view returns (uint256);
 function exchange(int128 i, int128 j, uint256 dx, uint256 minDy) external returns (uint256);
 ```
 
-Only the crvUSD-to-target-asset direction is directly executable. Upward expansion remains keeper-driven through the external target AMM. Unsupported directions must return no quote or revert consistently; exact router compatibility requires targeted integration testing before this surface is finalized.
+Only the crvUSD-to-yield-token direction is directly executable. The advertised pair is fixed for the V3 deployment even while target asset remains in `undeployedBacking`. Upward expansion and target-asset cleanup remain keeper-driven through their designated routes. Unsupported directions must return no quote or revert consistently; exact router compatibility requires targeted integration testing before this surface is finalized.
 
 V3 should not publish fake LP balances, virtual prices, or TVL merely to resemble StableSwap.
 
@@ -1203,7 +1222,6 @@ event UndeployedBackingDeployed(
 event DirectBuyback(
     address indexed caller,
     uint256 crvUsdReceived,
-    uint256 targetPaid,
     uint256 yieldTokenPaid,
     bool earlyExit
 );
@@ -1262,7 +1280,7 @@ event Executed(
 23. `lastExpansionAt` changes only after a successful expansion of at least `minExpansionAmount`.
 24. Contraction during the young deployment state always satisfies `earlyExitMinProfitPpm`.
 25. A failed or below-minimum expansion cannot extend the normal-exit timer.
-26. Direct buyback pays available `undeployedBacking` first, then transfers the fixed `yieldToken` directly; it never executes a yield-unwind route.
+26. Direct buyback transfers only the fixed `yieldToken`; it never consumes `undeployedBacking`, changes output-token identity, or executes a yield-unwind route.
 27. Trusted yield valuation uses the fixed yield token's `convertToAssets()` and downward normalization; it never rounds backing upward.
 28. Any action that removes yield-token units computes trusted value spent from the complete pre/post accounted positions and actual deltas.
 29. A fully deployed expansion succeeds only when the configured route itself ends with a measured balance increase in the fixed `yieldToken`; V3 performs no implicit post-route deposit.
@@ -1331,7 +1349,7 @@ The following are deliberately unresolved:
 
 - initial downstream-path `maxRouteLossBps` plus target-AMM and per-step `executionBufferBps` values, calibrated against the implemented venues;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
-- whether the direct buyback interface should be registered in Curve routing infrastructure;
+- exact Curve-router ABI/canary requirements and whether to register the fixed `crvUSD`/`yieldToken` buyback edge;
 
 ## Sources
 
