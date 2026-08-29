@@ -20,10 +20,10 @@ FACTORY_INTERFACE_ARTIFACT_PATH = ROOT / "out/IPegKeeperV3Factory.sol/IPegKeeper
 FACTORY_SOURCE_PATH = ROOT / "src/PegKeeperV3Factory.sol"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
-DEPLOYED_RUNTIME_BYTES = 22_361
-FACTORY_DEPLOYED_RUNTIME_BYTES = 4_864
+DEPLOYED_RUNTIME_BYTES = 22_843
+FACTORY_DEPLOYED_RUNTIME_BYTES = 4_655
 BLUEPRINT_PREAMBLE = bytes.fromhex("fe7100")
-TESTS_PASSED = 198
+TESTS_PASSED = 196
 
 
 def fail(label: str, actual: object, expected: object) -> None:
@@ -300,23 +300,34 @@ def main() -> None:
     candidate_constructor = manifest["candidateConstructor"]
     candidate_defaults = release_factory["candidateDefaults"]
     fail("candidate factory owner pending", candidate_defaults["owner"], None)
+    fail("candidate deployment factory pending", candidate_constructor["pegKeeperFactory"], None)
     fail(
-        "candidate controller factory",
-        candidate_defaults["controllerFactory"],
-        candidate_constructor["factory"],
+        "candidate constructor keys",
+        set(candidate_constructor),
+        {
+            "pegKeeperFactory",
+            "targetAmm",
+            "targetAsset",
+            "backingAsset",
+            "yieldToken",
+            "maxDeployedCrvUsd",
+            "operatorConfirmationRequired",
+            "keeperIndex",
+        },
     )
-    for label, constructor_label in (
-        ("admin", "admin"),
-        ("emergency admin", "emergencyAdmin"),
-        ("fee receiver", "feeReceiver"),
-        ("max deployed crvUSD", "maxDeployedCrvUsd"),
-    ):
-        fail(
-            f"candidate {label}",
-            candidate_defaults[constructor_label],
-            candidate_constructor[constructor_label],
-        )
+    fail(
+        "candidate max deployed crvUSD",
+        candidate_defaults["maxDeployedCrvUsd"],
+        candidate_constructor["maxDeployedCrvUsd"],
+    )
+    zero_address = "0x0000000000000000000000000000000000000000"
+    for label in ("controllerFactory", "admin", "emergencyAdmin", "feeReceiver"):
+        if candidate_defaults[label] in (None, zero_address):
+            raise SystemExit(f"candidate {label} must be a nonzero address")
+    if candidate_defaults["admin"] == candidate_defaults["emergencyAdmin"]:
+        raise SystemExit("candidate admin and emergency admin must differ")
     fail("candidate keeper index", candidate_constructor["keeperIndex"], 1)
+    fail("candidate constructor confirmation", candidate_constructor["operatorConfirmationRequired"], True)
     fail("candidate confirmation", candidate_defaults["operatorConfirmationRequired"], True)
 
     source_commit = manifest["productionSourceCommit"]

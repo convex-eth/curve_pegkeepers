@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-29T09:42:52Z",
+  "generatedAtUtc": "2026-08-29T11:10:08Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "ec70a9f35e9f01dc8b3572ea994444f9d2357a6e",
+  "productionSourceCommit": "a25e461d8319e69d0f43f225ccc65edcbf2f5f37",
   "compiler": {
     "language": "Vyper",
     "version": "0.3.10+commit.9136169",
@@ -11,52 +11,52 @@
   },
   "source": {
     "path": "src/vyper/PegKeeperV3.vy",
-    "sha256": "00d519e15e8c56658467abbf5d150ae445e582f7969acab6dae7180f11a71f87"
+    "sha256": "1b156a247864354b7b8946e3cba5f5d55f6d2f25016e50fc1406b26927506055"
   },
   "artifact": {
     "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-    "compilerCreationBytes": 23715,
-    "compilerCreationKeccak256": "0x08474c0271c65b7eda03cf96185c14f5fcb9bf6abda5af7536169e0bd0c33856",
-    "constructorArgsBytes": 320,
-    "fullInitCodeBytes": 24035,
+    "compilerCreationBytes": 24127,
+    "compilerCreationKeccak256": "0x56dc56d8bb50e65cd0ef476e549e87e7d283eb06d952671513ad88f09100b50e",
+    "constructorArgsBytes": 224,
+    "fullInitCodeBytes": 24351,
     "eip3860LimitBytes": 49152,
-    "fullInitCodeMarginBytes": 25117,
-    "runtimeTemplateBytes": 22137,
-    "runtimeTemplateKeccak256": "0xda6c5ef7d4acd2513c38ddaee151ee3a4b19df4c5b21984d465c7fd0b151f647",
-    "deployedRuntimeBytes": 22361,
+    "fullInitCodeMarginBytes": 24801,
+    "runtimeTemplateBytes": 22587,
+    "runtimeTemplateKeccak256": "0xa64771aff59f65573cb346afc0e61baa50703f2953537092f6fbfc4fa3a52bc7",
+    "deployedRuntimeBytes": 22843,
     "eip170LimitBytes": 24576,
-    "deployedRuntimeMarginBytes": 2215,
-    "abiFunctions": 63,
-    "abiEvents": 13
+    "deployedRuntimeMarginBytes": 1733,
+    "abiFunctions": 62,
+    "abiEvents": 11
   },
   "deploymentFactory": {
     "source": {
       "path": "src/PegKeeperV3Factory.sol",
-      "sha256": "5e0423afca04564a17c666a4e21877ceba8a1844af45e3cf262f565a1a5af245"
+      "sha256": "0eac629657d33e5b5b1ded58f0117580f4e0e4570dc379a671a1d22ed8157e48"
     },
     "artifact": {
       "path": "out/PegKeeperV3Factory.sol/PegKeeperV3Factory.json",
-      "compilerCreationBytes": 6032,
-      "compilerCreationKeccak256": "0x7ff3f08ca8a48ce3c5f88afc5d7ba87e81a15adf6f847cdcc3584034966162ae",
+      "compilerCreationBytes": 5816,
+      "compilerCreationKeccak256": "0xa22d7f9da6f84f5cbbf8a1ffe4ea7874f50e4c62576d38a2bbc459adb878e77f",
       "constructorArgsBytes": 352,
-      "fullInitCodeBytes": 6384,
+      "fullInitCodeBytes": 6168,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 42768,
-      "runtimeTemplateBytes": 4864,
-      "runtimeTemplateKeccak256": "0xd641214dedcd915951e55c2504fb3a7d685caa51877a785d5e80b08c2d47aa59",
-      "deployedRuntimeBytes": 4864,
+      "fullInitCodeMarginBytes": 42984,
+      "runtimeTemplateBytes": 4655,
+      "runtimeTemplateKeccak256": "0xa2c426caf96f07e323940ee6bdbcf403cb10c18dcf653bb7654ac0a5f7807e80",
+      "deployedRuntimeBytes": 4655,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 19712,
-      "abiFunctions": 14,
+      "deployedRuntimeMarginBytes": 19921,
+      "abiFunctions": 17,
       "abiEvents": 5
     },
     "blueprint": {
       "format": "EIP-5202 version 0",
       "preamble": "0xfe7100",
-      "runtimeBytes": 23718,
-      "runtimeKeccak256": "0x5383ce91a9d5257a5b91700efb40c82d0c782dceab961e3f24d83e4a4e3560b9",
+      "runtimeBytes": 24130,
+      "runtimeKeccak256": "0xa0afc52c99396599b876d53a787519a949fc79c3a3e7e48551f6dd2b476947fc",
       "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 858
+      "runtimeMarginBytes": 446
     },
     "candidateDefaults": {
       "owner": null,
@@ -81,7 +81,7 @@
   "verification": {
     "forgeVersion": "1.7.1",
     "solidityVersion": "0.8.30",
-    "testsPassed": 198,
+    "testsPassed": 196,
     "testsFailed": 0,
     "testsSkipped": 0,
     "deploymentTest": "pass",
@@ -90,14 +90,11 @@
     "releaseGates": "pass"
   },
   "candidateConstructor": {
-    "factory": "0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC",
+    "pegKeeperFactory": null,
     "targetAmm": "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4",
     "targetAsset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     "backingAsset": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
     "yieldToken": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-    "feeReceiver": "0x2dFd89449faff8a532790667baB21cF733C064f2",
-    "admin": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
-    "emergencyAdmin": "0x467947EE34aF926cF1DCac093870f613C96B1E0c",
     "maxDeployedCrvUsd": null,
     "operatorConfirmationRequired": true,
     "keeperIndex": 1
@@ -176,13 +173,13 @@
     "productionCalibrationRequired": true
   },
   "latestMainnetCanary": {
-    "block": 25860039,
+    "block": 25860454,
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90280914267900469434301",
-    "simulatedContractionQuoteSusds": "9028091426790046943430",
-    "simulatedContractionQuoteCrvUsd": "9994503268721919315124",
+    "simulatedSusdsReceived": "90280079261811715611201",
+    "simulatedContractionQuoteSusds": "9028007926181171561120",
+    "simulatedContractionQuoteCrvUsd": "9994518945799771997140",
     "targetAmmExecutionBufferBps": 0,
     "minDownstreamAttemptGas": 1500000,
     "fallbackSettlementGasReserve": 300000,
