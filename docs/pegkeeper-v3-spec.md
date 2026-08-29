@@ -127,7 +127,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `21,387` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `21,611` bytes, `2,965` bytes below EIP-170. Full initcode is `22,967` bytes, `26,185` bytes below EIP-3860. Executable runtime/initcode tests and the release-manifest verifier prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `21,853` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,077` bytes, `2,499` bytes below EIP-170. Full initcode is `23,433` bytes, `25,719` bytes below EIP-3860. Executable runtime/initcode tests and the release-manifest verifier prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -597,14 +597,22 @@ V3 should keep the same useful properties while narrowing the allowed operations
 
 ### Supported step types
 
-The first version should support only typed operations:
+The production route executor supports only typed operations:
 
 ```solidity
 enum StepKind {
     CurveSwap,
     DaiUsdsConverter,
     ERC4626Deposit,
-    ERC4626Redeem
+    ERC4626Redeem,
+    FrxUsdMint
+}
+
+interface IFrxUsdMinter {
+    function asset() external view returns (address);
+    function frxUSD() external view returns (address);
+    function previewDeposit(uint256 assets) external view returns (uint256);
+    function deposit(uint256 assets, address receiver) external returns (uint256);
 }
 
 interface IDaiUsds {
@@ -646,6 +654,8 @@ For a DAI-to-USDS step, V3:
 5. calculates USDS output solely from V3's balance delta.
 
 The USDS-to-DAI direction performs the symmetric checks and calls `usdsToDai(address(this), amountIn)`. The converter pulls exactly `amountIn` from the caller and exits the same `wad` to the hardcoded receiver; it returns no amount.[14] Both canonical tokens use 18-decimal units, so the protocol quote is `quotedOut = amountIn`, `executionBufferBps` must be zero, and measured output must equal `amountIn`. A mismatched getter, nonzero buffer, failed transfer, or non-1:1 balance delta reverts the route step.
+
+`FrxUsdMint` is a mint-only adapter for Frax's external-share USDC custodian. It exists because the custodian exposes ERC-4626-like `previewDeposit()` and `deposit()` methods but mints a separate frxUSD token rather than making the venue itself the share token. For each step V3 verifies `venue.asset() == tokenIn` and `venue.frxUSD() == tokenOut`, requires zero pool indices, quotes through `previewDeposit(amountIn)`, approves and deposits the exact input with V3 as receiver, resets the approval, and accepts only the measured frxUSD balance increase above the quote-relative minimum.[15] The preview includes the custodian's governance-configurable mint fee and its 6-decimal USDC to 18-decimal frxUSD conversion. Cap exhaustion, a fee change, proxy behavior change, or any external revert fails atomically. This operation cannot be reversed into redemption by swapping its token endpoints; contraction must use an independently approved liquid route.
 
 No normal route step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter. This restriction applies to permissionless execution paths, not the governance owner's separate `execute()` escape hatch.
 
@@ -689,11 +699,12 @@ A path is valid only when:
 7. A `DaiUsdsConverter` step is exactly DAI-to-USDS or USDS-to-DAI according to the venue's `dai()` and `usds()` getters, uses V3 as receiver, has `executionBufferBps == 0`, and must produce a measured 1:1 native-unit output.
 8. An ERC-4626 deposit step uses `vault.asset() == tokenIn` and the vault share token as `tokenOut`.
 9. An ERC-4626 redeem step uses the vault share token as `tokenIn` and `vault.asset()` as `tokenOut`.
-10. Every `executionBufferBps` is no greater than `10_000`.
-11. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
-12. No venue, token, or endpoint is zero.
+10. A `FrxUsdMint` step uses zero indices, `venue.asset() == tokenIn`, and `venue.frxUSD() == tokenOut`; only the USDC-to-frxUSD mint direction is represented.
+11. Every `executionBufferBps` is no greater than `10_000`.
+12. The downstream path's `maxRouteLossBps` is no greater than `10_000` and is committed with the path.
+13. No venue, token, or endpoint is zero.
 
-Curve steps also carry explicit signed pool indices. Governance supplies them and V3 validates `coins(poolIndexIn) == tokenIn` and `coins(poolIndexOut) == tokenOut`; the indices must be distinct and non-negative. Non-Curve steps require both index fields to be zero. The wire-level `kind` field is encoded as a `uint256` constrained to the four listed `StepKind` values because the Vyper implementation does not expose a Solidity enum type in its ABI.
+Curve steps also carry explicit signed pool indices. Governance supplies them and V3 validates `coins(poolIndexIn) == tokenIn` and `coins(poolIndexOut) == tokenOut`; the indices must be distinct and non-negative. Non-Curve steps require both index fields to be zero. The wire-level `kind` field is encoded as a `uint256` constrained to the five listed `StepKind` values because the Vyper implementation does not expose a Solidity enum type in its ABI.
 
 The target AMM and route venues may be replaced, but `targetAsset`, `backingAsset`, and `yieldToken` cannot change. Every updated path must preserve the deployment's fixed endpoints, so governance cannot leave active paths, `undeployedBacking` accounting, or contraction endpoints mismatched. V3 does not append an implicit vault deposit after the configured expansion path: successful execution is complete only when the route itself has delivered measured `yieldToken` units to V3.
 
@@ -731,7 +742,7 @@ For every step:
 
 Successful downstream deployment and contraction calls must consume the entire routed input except for bounded rounding dust. A failed isolated downstream expansion attempt consumes none of the target input and leaves it available for the accounted fallback branch.
 
-`contractViaAmm()` executes the stored contraction path through the same bounded typed executor. Its first measured step consumes the fixed yield token and its last measured step produces crvUSD. Curve steps enforce `get_dy()`-relative minima, the canonical converter requires exact one-for-one native-unit output, and ERC-4626 deposit or redeem steps enforce their respective preview-relative minima. Any failed step, non-exact top-level yield spend, incorrect final crvUSD delta, insufficient post-reward margin, or principal-invariant failure reverts the complete transaction and all temporary approvals.
+`contractViaAmm()` executes the stored contraction path through the same bounded typed executor. Its first measured step consumes the fixed yield token and its last measured step produces crvUSD. Curve steps enforce `get_dy()`-relative minima, the canonical converter requires exact one-for-one native-unit output, and ERC-4626 deposit/redeem or frxUSD mint steps enforce their respective preview-relative minima. Any failed step, non-exact top-level yield spend, incorrect final crvUSD delta, insufficient post-reward margin, or principal-invariant failure reverts the complete transaction and all temporary approvals.
 
 After a target-to-yield route completes, V3 compares normalized target input with the trusted backing-asset value of measured final yield-token units and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
 
@@ -1527,3 +1538,15 @@ daiJoin()(address)=0x9759A6Ac90977b93B58547b4A71c78317f391A28
 usdsJoin()(address)=0x3C0f895007CA717Aa01c8693e59DF1e8C3777FEB
 daiDecimals=18
 usdsDecimals=18"
+[15] https://eth.blockscout.com/address/0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c?tab=contract — Frax frxUSD USDC custodian proxy and verified implementation
+    > "Ethereum block: 25857270
+asset()(address)=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+frxUSD()(address)=0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29
+custodianTknDecimals()(uint8)=6
+frxUSDDecimals()(uint8)=18
+mintFee()(uint256)=0
+mintCap()(uint256)=400000000000000000000000000
+frxUSDMinted()(uint256)=255359360150313908124343598
+maxDeposit(address)(uint256)=144640639849687"
+    > "function previewDeposit(uint256 _assetsIn) public view returns (uint256 _sharesOut)"
+    > "function deposit(uint256 _assetsIn, address _receiver) public virtual returns (uint256 _sharesOut)"

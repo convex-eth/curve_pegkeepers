@@ -13,8 +13,8 @@ import {
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_INITCODE_SIZE = 22_967;
-    uint256 internal constant RELEASE_RUNTIME_SIZE = 21_611;
+    uint256 internal constant RELEASE_INITCODE_SIZE = 23_433;
+    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_077;
 
     function test_runtimeAndInitcodeFitProtocolLimits() public {
         MockToken crvUsd = new MockToken(18);

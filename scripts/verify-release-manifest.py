@@ -18,7 +18,7 @@ SOURCE_PATH = ROOT / "src/vyper/PegKeeperV3.vy"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
 CONSTRUCTOR_ARGS_BYTES = 9 * 32
-DEPLOYED_RUNTIME_BYTES = 21_611
+DEPLOYED_RUNTIME_BYTES = 22_077
 
 
 def fail(label: str, actual: object, expected: object) -> None:

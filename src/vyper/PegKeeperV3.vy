@@ -39,6 +39,12 @@ interface ERC4626Route:
     def previewRedeem(_shares: uint256) -> uint256: view
     def redeem(_shares: uint256, _receiver: address, _owner: address) -> uint256: nonpayable
 
+interface FrxUsdMinter:
+    def asset() -> address: view
+    def frxUSD() -> address: view
+    def previewDeposit(_assets: uint256) -> uint256: view
+    def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
+
 interface YieldToken:
     def asset() -> address: view
     def balanceOf(_owner: address) -> uint256: view
@@ -154,6 +160,7 @@ STEP_CURVE_SWAP: constant(uint256) = 0
 STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
 STEP_ERC4626_DEPOSIT: constant(uint256) = 2
 STEP_ERC4626_REDEEM: constant(uint256) = 3
+STEP_FRXUSD_MINT: constant(uint256) = 4
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_BACKING_DEPLOYMENT: constant(uint256) = 1
@@ -548,6 +555,8 @@ def _preview_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
         return _amount_in
     elif _step.kind == STEP_ERC4626_DEPOSIT:
         return ERC4626Route(_step.venue).previewDeposit(_amount_in)
+    elif _step.kind == STEP_FRXUSD_MINT:
+        return FrxUsdMinter(_step.venue).previewDeposit(_amount_in)
     else:
         return ERC4626Route(_step.venue).previewRedeem(_amount_in)
 
@@ -1107,6 +1116,10 @@ def _validate_route_step(_step: RouteStep):
         assert _step.pool_index_in == 0 and _step.pool_index_out == 0
         assert _step.venue == _step.token_in
         assert YieldToken(_step.venue).asset() == _step.token_out
+    elif _step.kind == STEP_FRXUSD_MINT:
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
+        assert FrxUsdMinter(_step.venue).asset() == _step.token_in
+        assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_out
     else:
         raise
 
@@ -1217,6 +1230,10 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
         quoted_output = ERC4626Route(_step.venue).previewDeposit(_amount_in)
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
         ERC4626Route(_step.venue).deposit(_amount_in, self)
+    elif _step.kind == STEP_FRXUSD_MINT:
+        quoted_output = FrxUsdMinter(_step.venue).previewDeposit(_amount_in)
+        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
+        FrxUsdMinter(_step.venue).deposit(_amount_in, self)
     else:
         quoted_output = ERC4626Route(_step.venue).previewRedeem(_amount_in)
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS

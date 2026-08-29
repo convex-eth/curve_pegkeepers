@@ -107,6 +107,52 @@ contract ExecutionDaiUsds {
     }
 }
 
+contract ExecutionFrxUsdMinter {
+    ExpansionToken public immutable assetToken;
+    ExpansionToken public immutable frxUsdToken;
+    uint256 public previewPpm = 1_000_000;
+    uint256 public executionPpm = 1_000_000;
+    uint256 public reportedPpm = 1_000_000;
+    bool public depositsPaused;
+
+    constructor(ExpansionToken asset_, ExpansionToken frxUsd_) {
+        assetToken = asset_;
+        frxUsdToken = frxUsd_;
+    }
+
+    function asset() external view returns (address) {
+        return address(assetToken);
+    }
+
+    function frxUSD() external view returns (address) {
+        return address(frxUsdToken);
+    }
+
+    function setRates(uint256 previewPpm_, uint256 executionPpm_) external {
+        previewPpm = previewPpm_;
+        executionPpm = executionPpm_;
+    }
+
+    function setReportedPpm(uint256 reportedPpm_) external {
+        reportedPpm = reportedPpm_;
+    }
+
+    function setDepositsPaused(bool paused_) external {
+        depositsPaused = paused_;
+    }
+
+    function previewDeposit(uint256 assets) external view returns (uint256 shares) {
+        shares = assets * 1e12 * previewPpm / 1_000_000;
+    }
+
+    function deposit(uint256 assets, address receiver) external returns (uint256 shares) {
+        require(!depositsPaused, "mint paused");
+        require(assetToken.transferFrom(msg.sender, address(this), assets), "transfer");
+        frxUsdToken.mint(receiver, assets * 1e12 * executionPpm / 1_000_000);
+        shares = assets * 1e12 * reportedPpm / 1_000_000;
+    }
+}
+
 contract ExecutionYieldToken is ExpansionToken {
     ExpansionToken public immutable backing;
     uint256 public previewSharesPpm = 1_000_000;
@@ -193,6 +239,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
+    uint256 internal constant FRXUSD_MINT = 4;
 
     address internal governance = makeAddr("governance");
     address internal emergencyAdmin = makeAddr("emergencyAdmin");
@@ -211,6 +258,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
     ExecutionRoutePool internal targetToBackingPool;
     ExecutionRoutePool internal daiToCrvUsdPool;
     ExecutionDaiUsds internal daiUsds;
+    ExecutionFrxUsdMinter internal frxUsdMinter;
     IPegKeeperV3 internal pegKeeper;
     IPegKeeperV3 internal deployment;
 
@@ -226,6 +274,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         targetToBackingPool = new ExecutionRoutePool(targetAsset, backingAsset);
         daiToCrvUsdPool = new ExecutionRoutePool(dai, crvUsd);
         daiUsds = new ExecutionDaiUsds(dai, backingAsset);
+        frxUsdMinter = new ExecutionFrxUsdMinter(targetAsset, backingAsset);
         pegKeeper = _deploy();
         deployment = IPegKeeperV3(address(pegKeeper));
         _installPaths(100);
@@ -329,6 +378,85 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         assertEq(targetSpent, 100e6);
         assertEq(yieldReceived, 100e18);
         assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_executesFrxUsdMintStepWithMeasuredDecimalAdjustedOutput() public {
+        _installFrxUsdMintPath(100, 5);
+
+        vm.prank(caller);
+        (uint256 targetSpent, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(targetSpent, 100e6);
+        assertEq(yieldReceived, 100e18);
+        assertEq(backingAsset.balanceOf(address(pegKeeper)), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(frxUsdMinter)), 0);
+        assertEq(backingAsset.allowance(address(pegKeeper), address(yieldToken)), 0);
+    }
+
+    function test_frxUsdMintStepUsesFeeAdjustedPreview() public {
+        frxUsdMinter.setRates(999_000, 999_000);
+        _installFrxUsdMintPath(20, 0);
+
+        vm.prank(caller);
+        (, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(yieldReceived, 99.9e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 99.9e18);
+    }
+
+    function test_frxUsdMintStepExcludesPreExistingOutputDonation() public {
+        backingAsset.mint(address(pegKeeper), 77e18);
+        _installFrxUsdMintPath(100, 5);
+
+        vm.prank(caller);
+        (, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(yieldReceived, 100e18);
+        assertEq(backingAsset.balanceOf(address(pegKeeper)), 77e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_frxUsdMintStepIgnoresReportedOutput() public {
+        frxUsdMinter.setReportedPpm(7_000_000);
+        _installFrxUsdMintPath(100, 5);
+
+        vm.prank(caller);
+        (, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
+
+        assertEq(yieldReceived, 100e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+    }
+
+    function test_frxUsdMintStepEnforcesPreviewRelativeMinimumAndRollsBack() public {
+        frxUsdMinter.setRates(1_000_000, 999_000);
+        _installFrxUsdMintPath(100, 5);
+        uint256 undeployedBefore = pegKeeper.undeployed_backing();
+        uint256 targetBefore = targetAsset.balanceOf(address(pegKeeper));
+
+        vm.prank(caller);
+        vm.expectRevert();
+        deployment.deployUndeployedBacking(100e6);
+
+        assertEq(pegKeeper.undeployed_backing(), undeployedBefore);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), targetBefore);
+        assertEq(backingAsset.balanceOf(address(pegKeeper)), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(frxUsdMinter)), 0);
+    }
+
+    function test_frxUsdMintStepExternalFailureRollsBack() public {
+        frxUsdMinter.setDepositsPaused(true);
+        _installFrxUsdMintPath(100, 5);
+        uint256 undeployedBefore = pegKeeper.undeployed_backing();
+
+        vm.prank(caller);
+        vm.expectRevert("mint paused");
+        deployment.deployUndeployedBacking(100e6);
+
+        assertEq(pegKeeper.undeployed_backing(), undeployedBefore);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(frxUsdMinter)), 0);
     }
 
     function test_revertsWhenBackingDeploymentDirectionIsPaused() public {
@@ -472,6 +600,22 @@ contract PegKeeperV3BackingDeploymentTest is Test {
     function _installPaths(uint256 maxRouteLossBps) internal {
         vm.prank(governance);
         pegKeeper.setPaths(_expansionPath(), maxRouteLossBps, _contractionPath());
+    }
+
+    function _installFrxUsdMintPath(uint256 maxRouteLossBps, uint256 executionBufferBps) internal {
+        IPegKeeperV3.RouteStep[] memory path = new IPegKeeperV3.RouteStep[](2);
+        path[0] = IPegKeeperV3.RouteStep({
+            kind: FRXUSD_MINT,
+            venue: address(frxUsdMinter),
+            tokenIn: address(targetAsset),
+            tokenOut: address(backingAsset),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: executionBufferBps
+        });
+        path[1] = _vaultStep(ERC4626_DEPOSIT, address(backingAsset), address(yieldToken));
+        vm.prank(governance);
+        pegKeeper.setPaths(path, maxRouteLossBps, _contractionPath());
     }
 
     function _expansionPath() internal view returns (IPegKeeperV3.RouteStep[] memory path) {

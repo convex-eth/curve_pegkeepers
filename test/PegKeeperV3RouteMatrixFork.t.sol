@@ -13,6 +13,7 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
+    uint256 internal constant FRXUSD_MINT = 4;
 
     uint256 internal constant TARGET_FRXUSD = 0;
     uint256 internal constant TARGET_USDT = 1;
@@ -53,6 +54,7 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
     address internal constant USDE_USDC = 0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72;
     address internal constant GHO_USDE = 0x670a72e6D22b0956C0D2573288F82DCc5d6E3a61;
     address internal constant DAI_USDS = 0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A;
+    address internal constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
     address internal constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
 
     address internal governance = makeAddr("governance");
@@ -79,7 +81,9 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
     function _validateYieldMatrix(uint256 yieldId) internal {
         for (uint256 targetId; targetId < 5; ++targetId) {
             IPegKeeperV3.RouteStep[] memory expansion = _expansionPath(targetId, yieldId);
-            IPegKeeperV3.RouteStep[] memory contraction = _reverseWithTargetAmm(targetId, expansion);
+            IPegKeeperV3.RouteStep[] memory contraction = yieldId == YIELD_SFRXUSD
+                ? _sfrxUsdContraction(targetId)
+                : _reverseWithTargetAmm(targetId, expansion);
             IPegKeeperV3 pegKeeper = _deploy(targetId, yieldId);
 
             vm.prank(governance);
@@ -171,6 +175,26 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
             return path;
         }
 
+        IPegKeeperV3.RouteStep[] memory prefix = _targetToUsdc(targetId);
+        path = new IPegKeeperV3.RouteStep[](prefix.length + 2);
+        for (uint256 i; i < prefix.length; ++i) {
+            path[i] = prefix[i];
+        }
+        path[prefix.length] = _frxUsdMint();
+        path[prefix.length + 1] = _curve(FRXUSD_SFRXUSD, FRXUSD, SFRXUSD, 1, 0);
+    }
+
+    function _legacySfrxUsdExpansion(uint256 targetId)
+        internal
+        pure
+        returns (IPegKeeperV3.RouteStep[] memory path)
+    {
+        if (targetId == TARGET_FRXUSD) {
+            path = new IPegKeeperV3.RouteStep[](1);
+            path[0] = _curve(FRXUSD_SFRXUSD, FRXUSD, SFRXUSD, 1, 0);
+            return path;
+        }
+
         IPegKeeperV3.RouteStep[] memory prefix = _targetToUsde(targetId);
         path = new IPegKeeperV3.RouteStep[](prefix.length + 3);
         for (uint256 i; i < prefix.length; ++i) {
@@ -179,6 +203,33 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
         path[prefix.length] = _vault(ERC4626_DEPOSIT, SUSDE, USDE, SUSDE);
         path[prefix.length + 1] = _curve(FRXUSD_SUSDE, SUSDE, FRXUSD, 1, 0);
         path[prefix.length + 2] = _curve(FRXUSD_SFRXUSD, FRXUSD, SFRXUSD, 1, 0);
+    }
+
+    function _sfrxUsdContraction(uint256 targetId)
+        internal
+        pure
+        returns (IPegKeeperV3.RouteStep[] memory contraction)
+    {
+        return _reverseWithTargetAmm(targetId, _legacySfrxUsdExpansion(targetId));
+    }
+
+    function _targetToUsdc(uint256 targetId)
+        internal
+        pure
+        returns (IPegKeeperV3.RouteStep[] memory path)
+    {
+        if (targetId == TARGET_USDC) return new IPegKeeperV3.RouteStep[](0);
+        if (targetId == TARGET_USDT) {
+            path = new IPegKeeperV3.RouteStep[](1);
+            path[0] = _curve(THREE_POOL, USDT, USDC, 2, 1);
+        } else if (targetId == TARGET_PYUSD) {
+            path = new IPegKeeperV3.RouteStep[](1);
+            path[0] = _curve(PAY_POOL, PYUSD, USDC, 0, 1);
+        } else {
+            path = new IPegKeeperV3.RouteStep[](2);
+            path[0] = _curve(GHO_USDE, GHO, USDE, 0, 1);
+            path[1] = _curve(USDE_USDC, USDE, USDC, 0, 1);
+        }
     }
 
     function _targetToUsde(uint256 targetId)
@@ -271,6 +322,18 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
             venue: venue,
             tokenIn: tokenIn,
             tokenOut: tokenOut,
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 5
+        });
+    }
+
+    function _frxUsdMint() internal pure returns (IPegKeeperV3.RouteStep memory) {
+        return IPegKeeperV3.RouteStep({
+            kind: FRXUSD_MINT,
+            venue: FRXUSD_CUSTODIAN,
+            tokenIn: USDC,
+            tokenOut: FRXUSD,
             poolIndexIn: 0,
             poolIndexOut: 0,
             executionBufferBps: 5
