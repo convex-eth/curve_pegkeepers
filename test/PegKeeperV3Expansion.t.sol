@@ -241,6 +241,100 @@ contract PegKeeperV3ExpansionTest is Test {
         assertLt(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
     }
 
+    function test_targetAmmRotationAfterExposurePreservesBackingAndUsesOnlyReplacement() public {
+        ExpansionPool replacement = new ExpansionPool(crvUsd, targetAsset);
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        uint256 oldPoolCrvUsd = crvUsd.balanceOf(address(pool));
+        uint256 backingBeforeRotation = pegKeeper.undeployed_backing();
+        uint256 deployedBeforeRotation = pegKeeper.deployed_crvusd();
+
+        vm.prank(governance);
+        pegKeeper.set_target_amm(address(replacement), 0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        assertEq(crvUsd.balanceOf(address(pool)), oldPoolCrvUsd);
+        assertEq(crvUsd.balanceOf(address(replacement)), MIN_EXPANSION);
+        assertEq(pegKeeper.deployed_crvusd(), deployedBeforeRotation + MIN_EXPANSION);
+        assertGt(pegKeeper.undeployed_backing(), backingBeforeRotation);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        vm.prank(keeper);
+        pegKeeper.contractUndeployedBacking(1_000e6);
+
+        assertEq(targetAsset.balanceOf(address(pool)), 0);
+        assertEq(targetAsset.balanceOf(address(replacement)), 1_000e6);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_repeatedSameBlockExpansionsExhaustIdleInventoryWithPerCallRewards() public {
+        crvUsd.mint(address(pegKeeper), 10 * MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+
+        _runSplitExpansions(10);
+
+        assertEq(pegKeeper.available_expansion(), 0);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), 0);
+    }
+
+    function test_repeatedSameBlockExpansionsExhaustFactoryAllocation() public {
+        crvUsd.mint(address(pegKeeper), 20 * MIN_EXPANSION);
+        factory.setDebtCeiling(address(pegKeeper), 10 * MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+
+        _runSplitExpansions(10);
+
+        assertEq(pegKeeper.available_expansion(), 0);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), 10 * MIN_EXPANSION);
+    }
+
+    function test_repeatedSameBlockExpansionsExhaustLocalCapacity() public {
+        crvUsd.mint(address(pegKeeper), 20 * MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        vm.prank(governance);
+        pegKeeper.set_policy(
+            50, 1_000, 5_000, 3_000, 20e18, 2 days, MIN_EXPANSION, 10 * MIN_EXPANSION
+        );
+        _enableExpansion(0);
+
+        _runSplitExpansions(10);
+
+        assertEq(pegKeeper.available_expansion(), 0);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), 10 * MIN_EXPANSION);
+    }
+
+    function test_splitMinimumCallsCollectMoreCapsButLeaveLessSurplusThanOneLargeCall() public {
+        uint256 totalAmount = 10 * MIN_EXPANSION;
+        crvUsd.mint(address(pegKeeper), totalAmount);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+        vm.warp(1_800_000_000);
+        uint256 snapshot = vm.snapshotState();
+
+        vm.prank(keeper);
+        (,,, uint256 largeReward,) = pegKeeper.expand(totalAmount);
+        uint256 largeSurplus = pegKeeper.protocol_surplus();
+        assertEq(largeReward, 20e6);
+        assertEq(largeSurplus, 980e18);
+
+        assertTrue(vm.revertToState(snapshot));
+        _runSplitExpansions(10);
+        uint256 splitReward = targetAsset.balanceOf(keeper);
+        uint256 splitSurplus = pegKeeper.protocol_surplus();
+
+        assertEq(splitReward, 200e6);
+        assertEq(splitSurplus, 800e18);
+        assertGt(splitReward, largeReward);
+        assertLt(splitSurplus, largeSurplus);
+    }
+
     function test_availableExpansionUsesIdleFactoryAndConfiguredBounds() public {
         crvUsd.mint(address(pegKeeper), 20_000_000e18);
         factory.setDebtCeiling(address(pegKeeper), 18_000_000e18);
@@ -446,6 +540,67 @@ contract PegKeeperV3ExpansionTest is Test {
         assertLt(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
     }
 
+    function test_loweringFactoryCeilingBelowExposureBlocksGrowthAndKeepsWindDownOpen() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        factory.setDebtCeiling(address(pegKeeper), exposure - 1);
+        crvUsd.mint(address(pegKeeper), 100e18);
+
+        assertEq(pegKeeper.available_expansion(), 0);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.claimSurplus(1e18);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        vm.prank(keeper);
+        pegKeeper.contractUndeployedBacking(1_000e6);
+
+        assertLt(pegKeeper.deployed_crvusd(), exposure);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_expansionRequiresDirectionAndGlobalExecution() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        _assertExpansionDidNotStart();
+
+        vm.startPrank(governance);
+        pegKeeper.set_expansion_config(0, 500_000, 100_000);
+        pegKeeper.set_direction_paused(5, false);
+        vm.stopPrank();
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        _assertExpansionDidNotStart();
+
+        vm.startPrank(governance);
+        pegKeeper.set_direction_paused(0, false);
+        pegKeeper.set_direction_paused(5, true);
+        vm.stopPrank();
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        _assertExpansionDidNotStart();
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(5, false);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
     function test_onlyAdminCanConfigureExpansion() public {
         vm.prank(keeper);
         vm.expectRevert();
@@ -458,7 +613,18 @@ contract PegKeeperV3ExpansionTest is Test {
         pegKeeper.set_expansion_config(10_001, 500_000, 100_000);
         vm.expectRevert();
         pegKeeper.set_expansion_config(0, 100_000, 100_000);
+        vm.expectRevert();
+        pegKeeper.set_expansion_config(0, 500_000, 0);
         vm.stopPrank();
+    }
+
+    function _assertExpansionDidNotStart() internal view {
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), MIN_EXPANSION);
+        assertEq(crvUsd.balanceOf(address(pool)), 0);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), 0);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+        assertEq(pegKeeper.last_expansion_at(), 0);
     }
 
     function _enableExpansion(uint256 bufferBps) internal {
@@ -467,6 +633,21 @@ contract PegKeeperV3ExpansionTest is Test {
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
         vm.stopPrank();
+    }
+
+    function _runSplitExpansions(uint256 calls) internal {
+        uint256 timestamp = 1_800_000_000;
+        vm.warp(timestamp);
+        for (uint256 i; i < calls; ++i) {
+            vm.prank(keeper);
+            (,,, uint256 reward,) = pegKeeper.expand(MIN_EXPANSION);
+            assertEq(reward, 20e6);
+        }
+        assertEq(pegKeeper.deployed_crvusd(), calls * MIN_EXPANSION);
+        assertEq(targetAsset.balanceOf(keeper), calls * 20e6);
+        assertEq(pegKeeper.last_expansion_at(), timestamp);
+        assertEq(pegKeeper.protocol_surplus(), calls * 80e18);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {

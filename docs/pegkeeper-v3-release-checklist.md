@@ -26,6 +26,7 @@ These are governance decisions. They are deliberately not guessed by the release
 - [ ] Confirm governance `admin` and distinct `emergencyAdmin`.
 - [ ] Select `maxDeployedCrvUsd`.
 - [ ] Select the initial Factory debt ceiling/allocation.
+- [ ] Refresh `docs/pegkeeper-v3-routing-and-path-costs.md` at a new pinned block and reject any route whose target-AMM or downstream ladder reaches nonlinear impact below the proposed capacity.
 - [ ] Approve the expansion and contraction path hashes in the manifest.
 - [ ] Calibrate and approve `targetAmmExecutionBufferBps`.
 - [ ] Calibrate and approve each route step's `executionBufferBps`.

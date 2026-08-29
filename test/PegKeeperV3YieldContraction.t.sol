@@ -118,6 +118,95 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
+    function test_sameBlockExpansionThenYieldContractionUsesEarlyExitAndFreshDeltas() public {
+        crvUsd.mint(address(pegKeeper), EXPANSION_AMOUNT);
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+        uint256 resetAt = pegKeeper.last_expansion_at();
+        uint256 exposureAfterExpansion = pegKeeper.deployed_crvusd();
+        _enableYieldContraction();
+
+        (,,, bool earlyExit) = yieldContraction.previewKeeperBuyback(1_000e18);
+        assertTrue(earlyExit);
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(1_000e18);
+
+        assertEq(pegKeeper.last_expansion_at(), resetAt);
+        assertLt(pegKeeper.deployed_crvusd(), exposureAfterExpansion);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_sameBlockYieldContractionThenExpansionCannotCreateBacking() public {
+        _enableYieldContraction();
+        uint256 accounted = pegKeeper.accounted_yield_token_units();
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(accounted);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertGt(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+
+        assertEq(pegKeeper.deployed_crvusd(), EXPANSION_AMOUNT);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+        assertEq(crvUsd.allowance(address(pegKeeper), address(targetPool)), 0);
+    }
+
+    function test_postExposureImpairmentBlocksGrowthAndPartialExitButAllowsFullRestoration()
+        public
+    {
+        _enableYieldContraction();
+        uint256 accounted = pegKeeper.accounted_yield_token_units();
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        yieldToken.setRates(1_000_000, 1_000_000, 900_000);
+        assertLt(pegKeeper.trusted_backing_value(), exposure);
+
+        crvUsd.mint(address(pegKeeper), EXPANSION_AMOUNT);
+        vm.prank(expansionKeeper);
+        vm.expectRevert();
+        pegKeeper.expand(EXPANSION_AMOUNT);
+        vm.prank(expansionKeeper);
+        vm.expectRevert();
+        pegKeeper.claimSurplus(1e18);
+
+        vm.prank(contractionKeeper);
+        vm.expectRevert();
+        yieldContraction.contractViaAmm(accounted / 10);
+        assertEq(pegKeeper.accounted_yield_token_units(), accounted);
+        assertEq(pegKeeper.deployed_crvusd(), exposure);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(accounted);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_redemptionShutdownRollsBackImpairedPositionWithoutAccountingDrift() public {
+        _enableYieldContraction();
+        uint256 accounted = pegKeeper.accounted_yield_token_units();
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        uint256 yieldBalance = yieldToken.balanceOf(address(pegKeeper));
+        yieldToken.setRates(1_000_000, 1_000_000, 900_000);
+        yieldToken.setRedeemRates(0, 0);
+
+        (uint256 previewOut, uint256 previewProfit, uint256 previewReward, bool earlyExit) =
+            yieldContraction.previewKeeperBuyback(accounted);
+        assertEq(previewOut, 0);
+        assertEq(previewProfit, 0);
+        assertEq(previewReward, 0);
+        assertTrue(earlyExit);
+        vm.prank(contractionKeeper);
+        vm.expectRevert();
+        yieldContraction.contractViaAmm(accounted);
+
+        assertEq(pegKeeper.accounted_yield_token_units(), accounted);
+        assertEq(pegKeeper.deployed_crvusd(), exposure);
+        assertEq(yieldToken.balanceOf(address(pegKeeper)), yieldBalance);
+        assertEq(yieldToken.allowance(address(pegKeeper), address(yieldToken)), 0);
+        assertLt(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
     function test_normalYieldContractionRequiresMaturity() public {
         _enableYieldContraction();
         daiToCrvUsdPool.setPrices(1_002_000, 1_002_000);
@@ -160,6 +249,18 @@ contract PegKeeperV3YieldContractionTest is Test {
         vm.prank(contractionKeeper);
         vm.expectRevert();
         yieldContraction.contractViaAmm(1_000e18);
+    }
+
+    function test_yieldContractionRemainsOpenAfterFactoryCeilingFallsBelowExposure() public {
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        factory.setDebtCeiling(address(pegKeeper), exposure - 1);
+        _enableYieldContraction();
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(1_000e18);
+
+        assertLt(pegKeeper.deployed_crvusd(), exposure);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
     function test_yieldContractionEnforcesCurveQuoteFloor() public {

@@ -123,6 +123,67 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         contraction.contractUndeployedBacking(targetAmount);
     }
 
+    function test_sameBlockExpansionThenUndeployedContractionUsesEarlyExitEconomics() public {
+        _createUndeployedBacking();
+        _enableContraction();
+        uint256 expansionTime = pegKeeper.last_expansion_at();
+        uint256 exposureBefore = pegKeeper.deployed_crvusd();
+
+        (,,, bool earlyExit) = contraction.previewUndeployedContraction(1_000e6);
+        assertTrue(earlyExit);
+        vm.prank(contractionKeeper);
+        contraction.contractUndeployedBacking(1_000e6);
+
+        assertEq(pegKeeper.last_expansion_at(), expansionTime);
+        assertLt(pegKeeper.deployed_crvusd(), exposureBefore);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_sameBlockUndeployedContractionThenExpansionCannotCreateBacking() public {
+        _createUndeployedBacking();
+        _enableContraction();
+        vm.prank(contractionKeeper);
+        contraction.contractUndeployedBacking(10_000e6);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertGt(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+
+        assertEq(pegKeeper.deployed_crvusd(), EXPANSION_AMOUNT);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+        assertEq(crvUsd.allowance(address(pegKeeper), address(pool)), 0);
+    }
+
+    function test_minimumExpansionResetsMaturePositionToEarlyExitEconomics() public {
+        _createUndeployedBacking();
+        _enableContraction();
+        pool.setReversePrices(1_002_000, 1_002_000);
+        uint256 targetAmount = 1_000e6;
+        uint256 matureAt = pegKeeper.last_expansion_at() + 2 days;
+
+        vm.warp(matureAt);
+        (,,, bool earlyBeforeReset) = contraction.previewUndeployedContraction(targetAmount);
+        assertFalse(earlyBeforeReset);
+
+        crvUsd.mint(address(pegKeeper), EXPANSION_AMOUNT);
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+        uint256 resetAt = pegKeeper.last_expansion_at();
+        assertEq(resetAt, matureAt);
+
+        (,,, bool earlyAfterReset) = contraction.previewUndeployedContraction(targetAmount);
+        assertTrue(earlyAfterReset);
+        vm.prank(contractionKeeper);
+        vm.expectRevert();
+        contraction.contractUndeployedBacking(targetAmount);
+
+        vm.warp(resetAt + 2 days);
+        vm.prank(contractionKeeper);
+        contraction.contractUndeployedBacking(targetAmount);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
     function test_contractionEnforcesReverseTargetAmmQuoteFloor() public {
         _createUndeployedBacking();
         _enableContraction();

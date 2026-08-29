@@ -404,6 +404,32 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         deployment.deployUndeployedBacking(1_000e6);
     }
 
+    function test_postExposureYieldImpairmentBlocksFurtherBackingDeployment() public {
+        vm.prank(caller);
+        deployment.deployUndeployedBacking(1_000e6);
+        yieldToken.setRates(1_000_000, 1_000_000, 900_000);
+        _installPaths(10_000);
+
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        uint256 undeployedBefore = pegKeeper.undeployed_backing();
+        uint256 accountedBefore = pegKeeper.accounted_yield_token_units();
+        uint256 targetBalanceBefore = targetAsset.balanceOf(address(pegKeeper));
+        assertLt(pegKeeper.trusted_backing_value(), deployedBefore);
+        assertEq(pegKeeper.protocol_surplus(), 0);
+
+        vm.prank(caller);
+        vm.expectRevert();
+        deployment.deployUndeployedBacking(100e6);
+
+        assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
+        assertEq(pegKeeper.undeployed_backing(), undeployedBefore);
+        assertEq(pegKeeper.accounted_yield_token_units(), accountedBefore);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), targetBalanceBefore);
+        assertEq(targetAsset.allowance(address(pegKeeper), address(targetToDaiPool)), 0);
+        assertEq(dai.allowance(address(pegKeeper), address(daiUsds)), 0);
+        assertEq(backingAsset.allowance(address(pegKeeper), address(yieldToken)), 0);
+    }
+
     function test_failedDeploymentRollsBackInventoryAndAllowances() public {
         uint256 undeployedBefore = pegKeeper.undeployed_backing();
         uint256 targetBalanceBefore = targetAsset.balanceOf(address(pegKeeper));

@@ -101,6 +101,43 @@ contract PegKeeperV3DirectBuybackTest is Test {
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
+    function test_sameBlockExpansionThenDirectBuybackUsesEarlyExitAndNoStaleAccounting() public {
+        crvUsd.mint(address(pegKeeper), EXPANSION_AMOUNT);
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+        uint256 resetAt = pegKeeper.last_expansion_at();
+        uint256 exposureAfterExpansion = pegKeeper.deployed_crvusd();
+        uint256 crvUsdAmount = 1_000e18;
+        _fundBuyer(crvUsdAmount);
+        _enableDirectBuyback();
+
+        (uint256 expectedOut,, bool earlyExit) = pegKeeper.previewBuyback(crvUsdAmount);
+        assertTrue(earlyExit);
+        vm.prank(buyer);
+        pegKeeper.buyback(crvUsdAmount, expectedOut);
+
+        assertEq(pegKeeper.last_expansion_at(), resetAt);
+        assertEq(pegKeeper.deployed_crvusd(), exposureAfterExpansion - crvUsdAmount);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_sameBlockDirectBuybackThenExpansionCannotCreateBacking() public {
+        _enableDirectBuyback();
+        _fundBuyer(EXPANSION_AMOUNT);
+        (uint256 expectedOut,,) = pegKeeper.previewBuyback(EXPANSION_AMOUNT);
+        vm.prank(buyer);
+        pegKeeper.buyback(EXPANSION_AMOUNT, expectedOut);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+
+        vm.prank(expansionKeeper);
+        pegKeeper.expand(EXPANSION_AMOUNT);
+
+        assertEq(pegKeeper.deployed_crvusd(), EXPANSION_AMOUNT);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+        assertEq(crvUsd.allowance(address(pegKeeper), address(targetPool)), 0);
+    }
+
     function test_directBuybackRequiresDirectionAndGlobalExecution() public {
         uint256 crvUsdAmount = 1_000e18;
         _fundBuyer(crvUsdAmount);
@@ -115,6 +152,20 @@ contract PegKeeperV3DirectBuybackTest is Test {
         vm.prank(buyer);
         vm.expectRevert();
         pegKeeper.buyback(crvUsdAmount, 0);
+    }
+
+    function test_directBuybackRemainsOpenAfterFactoryCeilingFallsBelowExposure() public {
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        factory.setDebtCeiling(address(pegKeeper), exposure - 1);
+        _enableDirectBuyback();
+        _fundBuyer(1_000e18);
+        (uint256 expectedOut,,) = pegKeeper.previewBuyback(1_000e18);
+
+        vm.prank(buyer);
+        pegKeeper.buyback(1_000e18, expectedOut);
+
+        assertEq(pegKeeper.deployed_crvusd(), exposure - 1_000e18);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
     function test_previewRejectsZeroOverExposureAndInsufficientYield() public {
@@ -188,6 +239,35 @@ contract PegKeeperV3DirectBuybackTest is Test {
         assertEq(pegKeeper.deployed_crvusd(), 0);
         assertGt(pegKeeper.accounted_yield_token_units(), 0);
         assertEq(crvUsd.balanceOf(address(pegKeeper)), crvUsdAmount);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_postExposureImpairmentBlocksPartialAndFullDirectBuyback() public {
+        _enableDirectBuyback();
+        uint256 exposure = pegKeeper.deployed_crvusd();
+        uint256 accounted = pegKeeper.accounted_yield_token_units();
+        yieldToken.setRates(1_000_000, 1_000_000, 900_000);
+        assertLt(pegKeeper.trusted_backing_value(), exposure);
+
+        uint256 partialAmount = 1_000e18;
+        _fundBuyer(partialAmount);
+        vm.expectRevert();
+        pegKeeper.previewBuyback(partialAmount);
+        vm.prank(buyer);
+        vm.expectRevert();
+        pegKeeper.buyback(partialAmount, 0);
+
+        vm.expectRevert();
+        pegKeeper.previewBuyback(exposure);
+        vm.prank(buyer);
+        vm.expectRevert();
+        pegKeeper.buyback(exposure, 0);
+
+        assertEq(pegKeeper.deployed_crvusd(), exposure);
+        assertEq(pegKeeper.accounted_yield_token_units(), accounted);
+        assertEq(crvUsd.balanceOf(buyer), partialAmount);
+        assertEq(yieldToken.balanceOf(buyer), 0);
+        assertLt(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
     function test_postTransferRateChangeUsesRealizedWholePositionValueAndRollsBack() public {

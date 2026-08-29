@@ -1449,7 +1449,7 @@ The code and fixed route representation are complete. Governance still must appr
 
 The initial release does not register a Curve-router adapter for the fixed `crvUSD`/`yieldToken` buyback edge. Direct buyback remains available only through the explicit `buyback()` interface, which returns the fixed yield token and preserves measured accounting. Router compatibility may be proposed later without expanding the initial release surface.
 
-The release manifest, current-mainnet canary, reproducible deployment script, and ordered activation procedure are maintained in `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md`. Deployment and activation remain explicit governance/operator actions; the release package does not broadcast them.
+The release manifest, current-mainnet canary, reproducible deployment script, and ordered activation procedure are maintained in `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md`. Current target-pool choices, fixed yield endpoints, deterministic route candidates, fee layers, and pinned executable path-cost ladders are maintained separately in `docs/pegkeeper-v3-routing-and-path-costs.md`; those measurements are operational snapshots, not protocol invariants. Deployment and activation remain explicit governance/operator actions; the release package does not broadcast them.
 
 ## Sources
 
