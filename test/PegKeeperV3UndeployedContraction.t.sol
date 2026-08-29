@@ -36,7 +36,7 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         targetAsset = new ExpansionToken(6);
         backingAsset = new ExpansionToken(18);
         yieldToken = new ExpansionYieldToken(address(backingAsset));
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         pool = new ExpansionPool(crvUsd, targetAsset);
         pegKeeper = _deploy();
         contraction = IPegKeeperV3(address(pegKeeper));
@@ -287,9 +287,6 @@ contract PegKeeperV3UndeployedContractionTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

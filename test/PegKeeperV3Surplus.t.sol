@@ -35,7 +35,7 @@ contract PegKeeperV3SurplusTest is Test {
         targetAsset = new ExpansionToken(6);
         backingAsset = new ExpansionToken(18);
         yieldToken = new ExpansionYieldToken(address(backingAsset));
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         pool = new ExpansionPool(crvUsd, targetAsset);
         pegKeeper = _deploy(MAX_DEPLOYED);
         surplusModule = IPegKeeperV3(address(pegKeeper));
@@ -78,12 +78,11 @@ contract PegKeeperV3SurplusTest is Test {
         assertEq(crvUsd.balanceOf(feeReceiver), callerMaximum);
     }
 
-    function test_claimSurplusUsesCurrentFeeReceiver() public {
+    function test_claimSurplusUsesCurrentFactoryFeeReceiver() public {
         _createSurplus(pegKeeper);
         crvUsd.mint(address(pegKeeper), 100e18);
         address newFeeReceiver = makeAddr("newFeeReceiver");
-        vm.prank(governance);
-        IPegKeeperV3(address(pegKeeper)).set_fee_receiver(newFeeReceiver);
+        factory.setGovernance(governance, emergencyAdmin, newFeeReceiver);
 
         vm.prank(caller);
         uint256 transferred = surplusModule.claimSurplus(0.25e18);
@@ -93,27 +92,11 @@ contract PegKeeperV3SurplusTest is Test {
         assertEq(crvUsd.balanceOf(newFeeReceiver), transferred);
     }
 
-    function test_governanceUpdatesFeeReceiver() public {
+    function test_factoryUpdatesFeeReceiverForExistingKeeper() public {
         address newFeeReceiver = makeAddr("newFeeReceiver");
-        vm.expectEmit(true, true, false, false, address(pegKeeper));
-        emit IPegKeeperV3.FeeReceiverUpdated(feeReceiver, newFeeReceiver);
-
-        vm.prank(governance);
-        IPegKeeperV3(address(pegKeeper)).set_fee_receiver(newFeeReceiver);
+        factory.setGovernance(governance, emergencyAdmin, newFeeReceiver);
 
         assertEq(pegKeeper.fee_receiver(), newFeeReceiver);
-    }
-
-    function test_nonAdminCannotUpdateFeeReceiver() public {
-        vm.prank(caller);
-        vm.expectRevert();
-        IPegKeeperV3(address(pegKeeper)).set_fee_receiver(makeAddr("newFeeReceiver"));
-    }
-
-    function test_feeReceiverCannotBeZero() public {
-        vm.prank(governance);
-        vm.expectRevert();
-        IPegKeeperV3(address(pegKeeper)).set_fee_receiver(address(0));
     }
 
     function test_claimSurplusRespectsActualIdleInventory() public {
@@ -222,9 +205,6 @@ contract PegKeeperV3SurplusTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             maxDeployed,
             1
         );

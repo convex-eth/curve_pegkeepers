@@ -59,7 +59,7 @@ interface IPegKeeperV3 {
         uint256 crvUsdTransferred,
         uint256 deployedCrvUsdAfter
     );
-    event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
+
     event PolicyUpdated(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
@@ -69,9 +69,7 @@ interface IPegKeeperV3 {
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     );
-    event RolesUpdated(
-        address indexed oldAdmin, address indexed newAdmin, address indexed newEmergencyAdmin
-    );
+
     event PathsUpdated(
         bytes32 indexed expansionPathHash,
         bytes32 indexed contractionPathHash,
@@ -91,6 +89,7 @@ interface IPegKeeperV3 {
     function MAX_ROUTE_STEPS() external view returns (uint256);
 
     function factory() external view returns (address);
+    function controller_factory() external view returns (address);
     function crv_usd() external view returns (address);
     function target_amm() external view returns (address);
     function target_asset() external view returns (address);
@@ -136,7 +135,7 @@ interface IPegKeeperV3 {
         uint256 minDownstreamAttemptGas,
         uint256 fallbackSettlementGasReserve
     ) external;
-    function set_fee_receiver(address newFeeReceiver) external;
+
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
@@ -146,7 +145,7 @@ interface IPegKeeperV3 {
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
-    function set_roles(address newAdmin, address newEmergencyAdmin) external;
+
     function setPaths(
         RouteStep[] calldata expansionSteps,
         uint256 expansionMaxRouteLossBps,

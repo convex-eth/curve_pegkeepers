@@ -61,12 +61,48 @@ contract MockIncompleteYieldToken is MockToken {
 
 contract MockFactory {
     address public immutable stablecoin;
-    address public immutable admin;
+    address public immutable controllerFactory;
+    address public admin;
+    address public emergency_admin;
+    address public fee_receiver;
     mapping(address => uint256) public debt_ceiling;
 
-    constructor(address stablecoin_, address admin_) {
+    constructor(
+        address stablecoin_,
+        address admin_,
+        address emergencyAdmin_,
+        address feeReceiver_
+    ) {
         stablecoin = stablecoin_;
+        controllerFactory = address(this);
         admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
+    }
+
+    function setGovernance(address admin_, address emergencyAdmin_, address feeReceiver_) external {
+        admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
+    }
+}
+
+contract MockPegKeeperFactory {
+    address public immutable controllerFactory;
+    address public admin;
+    address public emergency_admin;
+    address public fee_receiver;
+
+    constructor(
+        address controllerFactory_,
+        address admin_,
+        address emergencyAdmin_,
+        address feeReceiver_
+    ) {
+        controllerFactory = controllerFactory_;
+        admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
     }
 }
 
@@ -134,7 +170,7 @@ contract PegKeeperV3FoundationTest is Test {
         targetAsset = new MockToken(6);
         backingAsset = new MockToken(18);
         yieldToken = new MockYieldToken(address(backingAsset));
-        factory = new MockFactory(address(crvUsd), governance);
+        factory = new MockFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
     }
 
@@ -146,6 +182,7 @@ contract PegKeeperV3FoundationTest is Test {
         assertEq(pegKeeper.name(), "Pegkeeper 1");
         assertEq(pegKeeper.keeper_index(), 1);
         assertEq(pegKeeper.factory(), address(factory));
+        assertEq(pegKeeper.controller_factory(), address(factory));
         assertEq(pegKeeper.crv_usd(), address(crvUsd));
         assertEq(pegKeeper.target_amm(), address(targetAmm));
         assertEq(pegKeeper.target_asset(), address(targetAsset));
@@ -223,17 +260,8 @@ contract PegKeeperV3FoundationTest is Test {
 
     function test_constructorRejectsNon18DecimalCrvUsd() public {
         crvUsd = new MockToken(6);
-        factory = new MockFactory(address(crvUsd), governance);
+        factory = new MockFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
-
-        vm.expectRevert();
-        _deploy(
-            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
-        );
-    }
-
-    function test_constructorRejectsOverlappingAdminRoles() public {
-        emergencyAdmin = governance;
 
         vm.expectRevert();
         _deploy(
@@ -434,16 +462,7 @@ contract PegKeeperV3FoundationTest is Test {
     ) internal returns (IPegKeeperV3 pegKeeper) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         bytes memory constructorArgs = abi.encode(
-            address(factory),
-            targetAmm_,
-            targetAsset_,
-            backingAsset_,
-            yieldToken_,
-            feeReceiver,
-            governance,
-            emergencyAdmin,
-            MAX_DEPLOYED,
-            1
+            address(factory), targetAmm_, targetAsset_, backingAsset_, yieldToken_, MAX_DEPLOYED, 1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

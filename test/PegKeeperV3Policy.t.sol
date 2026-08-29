@@ -33,7 +33,7 @@ contract PegKeeperV3PolicyTest is Test {
         targetAsset = new MockToken(6);
         backingAsset = new MockToken(18);
         yieldToken = new MockYieldToken(address(backingAsset));
-        factory = new MockFactory(address(crvUsd), governance);
+        factory = new MockFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
         pegKeeper = _deploy();
     }
@@ -145,24 +145,22 @@ contract PegKeeperV3PolicyTest is Test {
         assertEq(pegKeeper.target_amm_target_index(), 0);
     }
 
-    function test_adminAtomicallyRotatesRoles() public {
+    function test_factoryRoleUpdatesApplyImmediately() public {
         address newAdmin = makeAddr("newAdmin");
         address newEmergencyAdmin = makeAddr("newEmergencyAdmin");
-
-        vm.expectEmit(true, true, true, true, address(pegKeeper));
-        emit IPegKeeperV3.RolesUpdated(governance, newAdmin, newEmergencyAdmin);
-        vm.prank(governance);
-        pegKeeper.set_roles(newAdmin, newEmergencyAdmin);
+        address newFeeReceiver = makeAddr("newFeeReceiver");
+        factory.setGovernance(newAdmin, newEmergencyAdmin, newFeeReceiver);
 
         assertEq(pegKeeper.admin(), newAdmin);
         assertEq(pegKeeper.emergency_admin(), newEmergencyAdmin);
+        assertEq(pegKeeper.fee_receiver(), newFeeReceiver);
 
         vm.prank(governance);
         vm.expectRevert();
-        pegKeeper.set_fee_receiver(makeAddr("oldAdminReceiver"));
+        pegKeeper.set_policy(25, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.prank(newAdmin);
-        pegKeeper.set_fee_receiver(makeAddr("newReceiver"));
+        pegKeeper.set_policy(25, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.prank(newEmergencyAdmin);
         pegKeeper.set_direction_paused(2, true);
@@ -173,26 +171,6 @@ contract PegKeeperV3PolicyTest is Test {
         pegKeeper.set_direction_paused(3, true);
     }
 
-    function test_roleRotationRejectsUnauthorizedZeroAndOverlap() public {
-        address newAdmin = makeAddr("newAdmin");
-        address newEmergencyAdmin = makeAddr("newEmergencyAdmin");
-
-        vm.prank(makeAddr("keeper"));
-        vm.expectRevert();
-        pegKeeper.set_roles(newAdmin, newEmergencyAdmin);
-
-        vm.startPrank(governance);
-        vm.expectRevert();
-        pegKeeper.set_roles(address(0), newEmergencyAdmin);
-
-        vm.expectRevert();
-        pegKeeper.set_roles(newAdmin, address(0));
-
-        vm.expectRevert();
-        pegKeeper.set_roles(newAdmin, newAdmin);
-        vm.stopPrank();
-    }
-
     function _deploy() internal returns (IPegKeeperV3Policy deployedPegKeeper) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         bytes memory constructorArgs = abi.encode(
@@ -201,9 +179,6 @@ contract PegKeeperV3PolicyTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

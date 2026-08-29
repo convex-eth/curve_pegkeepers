@@ -17,6 +17,12 @@ interface ControllerFactory:
     def stablecoin() -> address: view
     def debt_ceiling(_account: address) -> uint256: view
 
+interface PegKeeperFactory:
+    def controllerFactory() -> address: view
+    def admin() -> address: view
+    def emergency_admin() -> address: view
+    def fee_receiver() -> address: view
+
 interface TwoCoinPool:
     def coins(_index: uint256) -> address: view
     def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
@@ -119,10 +125,6 @@ event SurplusClaimed:
     crv_usd_transferred: uint256
     deployed_crv_usd_after: uint256
 
-event FeeReceiverUpdated:
-    old_receiver: indexed(address)
-    new_receiver: indexed(address)
-
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
@@ -131,11 +133,6 @@ event PolicyUpdated:
     min_deployment_time: uint256
     min_expansion_amount: uint256
     max_deployed_crvusd: uint256
-
-event RolesUpdated:
-    old_admin: indexed(address)
-    new_admin: indexed(address)
-    new_emergency_admin: indexed(address)
 
 event PathsUpdated:
     expansion_path_hash: indexed(bytes32)
@@ -170,7 +167,8 @@ DIRECTION_UNDEPLOYED_CONTRACTION: constant(uint256) = 3
 DIRECTION_YIELD_CONTRACTION: constant(uint256) = 4
 DIRECTION_ALL: constant(uint256) = 5
 
-FACTORY: immutable(ControllerFactory)
+FACTORY: immutable(PegKeeperFactory)
+CONTROLLER_FACTORY: immutable(ControllerFactory)
 CRV_USD: immutable(ERC20)
 target_amm: public(TwoCoinPool)
 TARGET_ASSET: immutable(ERC20)
@@ -178,10 +176,6 @@ BACKING_ASSET: immutable(ERC20)
 YIELD_TOKEN: immutable(YieldToken)
 TARGET_MULTIPLIER: immutable(uint256)
 BACKING_MULTIPLIER: immutable(uint256)
-
-admin: public(address)
-emergency_admin: public(address)
-fee_receiver: public(address)
 
 target_amm_crvusd_index: public(uint256)
 target_amm_target_index: public(uint256)
@@ -215,14 +209,11 @@ all_execution_paused: public(bool)
 
 @external
 def __init__(
-    _factory: ControllerFactory,
+    _factory: PegKeeperFactory,
     _target_amm: TwoCoinPool,
     _target_asset: ERC20,
     _backing_asset: ERC20,
     _yield_token: YieldToken,
-    _fee_receiver: address,
-    _admin: address,
-    _emergency_admin: address,
     _max_deployed_crvusd: uint256,
     _keeper_index: uint256,
 ):
@@ -231,14 +222,12 @@ def __init__(
     assert _target_asset.address != empty(address)
     assert _backing_asset.address != empty(address)
     assert _yield_token.address != empty(address)
-    assert _fee_receiver != empty(address)
-    assert _admin != empty(address)
-    assert _emergency_admin != empty(address)
-    assert _admin != _emergency_admin
     assert _max_deployed_crvusd > 0
     assert _keeper_index > 0
 
-    crv_usd: address = _factory.stablecoin()
+    controller_factory: address = _factory.controllerFactory()
+    assert controller_factory != empty(address)
+    crv_usd: address = ControllerFactory(controller_factory).stablecoin()
     assert crv_usd != empty(address)
     assert crv_usd != _target_asset.address
     assert _yield_token.asset() == _backing_asset.address
@@ -264,6 +253,7 @@ def __init__(
         raise
 
     FACTORY = _factory
+    CONTROLLER_FACTORY = ControllerFactory(controller_factory)
     CRV_USD = ERC20(crv_usd)
     self.target_amm = _target_amm
     TARGET_ASSET = _target_asset
@@ -272,9 +262,6 @@ def __init__(
     TARGET_MULTIPLIER = 10 ** (18 - target_decimals)
     BACKING_MULTIPLIER = 10 ** (18 - backing_decimals)
 
-    self.admin = _admin
-    self.emergency_admin = _emergency_admin
-    self.fee_receiver = _fee_receiver
     self.keeper_index = _keeper_index
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
 
@@ -299,6 +286,42 @@ def __init__(
 @pure
 def factory() -> address:
     return FACTORY.address
+
+
+@external
+@pure
+def controller_factory() -> address:
+    return CONTROLLER_FACTORY.address
+
+
+@external
+@view
+def admin() -> address:
+    return FACTORY.admin()
+
+
+@external
+@view
+def emergency_admin() -> address:
+    return FACTORY.emergency_admin()
+
+
+@external
+@view
+def fee_receiver() -> address:
+    return FACTORY.fee_receiver()
+
+
+@internal
+@view
+def _is_admin(_account: address) -> bool:
+    return _account == FACTORY.admin()
+
+
+@internal
+@view
+def _is_admin_or_factory(_account: address) -> bool:
+    return _account == FACTORY.admin() or _account == FACTORY.address
 
 
 @external
@@ -393,7 +416,7 @@ def available_expansion() -> uint256:
     if remaining_capacity < available:
         available = remaining_capacity
 
-    factory_allocation: uint256 = FACTORY.debt_ceiling(self)
+    factory_allocation: uint256 = CONTROLLER_FACTORY.debt_ceiling(self)
     if factory_allocation <= self.deployed_crvusd:
         return 0
     remaining_allocation: uint256 = factory_allocation - self.deployed_crvusd
@@ -691,7 +714,7 @@ def previewExpansion(
 
     deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
     assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= FACTORY.debt_ceiling(self)
+    assert deployed_after <= CONTROLLER_FACTORY.debt_ceiling(self)
 
     expected_target_out: uint256 = self.target_amm.get_dy(
         convert(self.target_amm_crvusd_index, int128),
@@ -759,7 +782,7 @@ def previewExpansion(
 
 @external
 def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256):
-    assert msg.sender == self.admin
+    assert self._is_admin(msg.sender)
     assert _new_target_amm.address != empty(address)
     assert _execution_buffer_bps <= BPS
 
@@ -796,7 +819,7 @@ def set_expansion_config(
     _min_downstream_attempt_gas: uint256,
     _fallback_settlement_gas_reserve: uint256,
 ):
-    assert msg.sender == self.admin
+    assert self._is_admin_or_factory(msg.sender)
     assert _target_amm_execution_buffer_bps <= BPS
     assert _fallback_settlement_gas_reserve > 0
     assert _min_downstream_attempt_gas > _fallback_settlement_gas_reserve
@@ -824,7 +847,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 
     deployed_after: uint256 = self.deployed_crvusd + _crv_usd_amount
     assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= FACTORY.debt_ceiling(self)
+    assert deployed_after <= CONTROLLER_FACTORY.debt_ceiling(self)
 
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
     target_index: int128 = convert(self.target_amm_target_index, int128)
@@ -1068,7 +1091,7 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
         surplus = trusted_backing - self.deployed_crvusd
 
     crv_usd_balance_before: uint256 = CRV_USD.balanceOf(self)
-    allocation: uint256 = FACTORY.debt_ceiling(self)
+    allocation: uint256 = CONTROLLER_FACTORY.debt_ceiling(self)
     allocation_remaining: uint256 = 0
     if allocation > self.deployed_crvusd:
         allocation_remaining = allocation - self.deployed_crvusd
@@ -1091,10 +1114,11 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
 
-    receiver_balance_before: uint256 = CRV_USD.balanceOf(self.fee_receiver)
-    CRV_USD.transfer(self.fee_receiver, crv_usd_transferred)
+    fee_receiver: address = FACTORY.fee_receiver()
+    receiver_balance_before: uint256 = CRV_USD.balanceOf(fee_receiver)
+    CRV_USD.transfer(fee_receiver, crv_usd_transferred)
     crv_usd_balance_after: uint256 = CRV_USD.balanceOf(self)
-    receiver_balance_after: uint256 = CRV_USD.balanceOf(self.fee_receiver)
+    receiver_balance_after: uint256 = CRV_USD.balanceOf(fee_receiver)
     assert crv_usd_balance_before >= crv_usd_balance_after
     assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
     assert receiver_balance_after >= receiver_balance_before
@@ -1106,7 +1130,7 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
 
     log SurplusClaimed(
         msg.sender,
-        self.fee_receiver,
+        fee_receiver,
         crv_usd_transferred,
         deployed_crv_usd_after,
     )
@@ -1174,7 +1198,7 @@ def setPaths(
     _expansion_max_route_loss_bps: uint256,
     _contraction_steps: DynArray[RouteStep, 16],
 ):
-    assert msg.sender == self.admin
+    assert self._is_admin_or_factory(msg.sender)
     assert len(_expansion_steps) > 0
     assert len(_contraction_steps) > 0
     assert _expansion_max_route_loss_bps <= BPS
@@ -1513,7 +1537,7 @@ def set_policy(
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
-    assert msg.sender == self.admin
+    assert self._is_admin(msg.sender)
     assert _early_exit_min_profit_ppm <= PPM
     assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm
     assert _early_exit_min_profit_ppm > _normal_exit_min_profit_ppm
@@ -1541,31 +1565,11 @@ def set_policy(
 
 
 @external
-def set_roles(_new_admin: address, _new_emergency_admin: address):
-    assert msg.sender == self.admin
-    assert _new_admin != empty(address)
-    assert _new_emergency_admin != empty(address)
-    assert _new_admin != _new_emergency_admin
-
-    old_admin: address = self.admin
-    self.admin = _new_admin
-    self.emergency_admin = _new_emergency_admin
-    log RolesUpdated(old_admin, _new_admin, _new_emergency_admin)
-
-
-@external
-def set_fee_receiver(_new_fee_receiver: address):
-    assert msg.sender == self.admin
-    assert _new_fee_receiver != empty(address)
-    old_fee_receiver: address = self.fee_receiver
-    self.fee_receiver = _new_fee_receiver
-    log FeeReceiverUpdated(old_fee_receiver, _new_fee_receiver)
-
-
-@external
 def set_direction_paused(_direction: uint256, _paused: bool):
-    assert msg.sender == self.admin or msg.sender == self.emergency_admin
-    if msg.sender == self.emergency_admin:
+    admin: address = FACTORY.admin()
+    emergency_admin: address = FACTORY.emergency_admin()
+    assert msg.sender == admin or msg.sender == emergency_admin
+    if msg.sender == emergency_admin:
         assert _paused
 
     if _direction == DIRECTION_EXPANSION:
@@ -1593,7 +1597,7 @@ def set_direction_paused(_direction: uint256, _paused: bool):
 @payable
 @nonreentrant("lock")
 def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[65535]:
-    assert msg.sender == self.admin
+    assert self._is_admin(msg.sender)
     assert _target != empty(address)
 
     result: Bytes[65535] = raw_call(

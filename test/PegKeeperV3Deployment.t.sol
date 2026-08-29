@@ -20,11 +20,11 @@ contract PegKeeperV3DeploymentTest is Test {
         MockToken targetAsset = new MockToken(6);
         MockToken backingAsset = new MockToken(18);
         MockYieldToken yieldToken = new MockYieldToken(address(backingAsset));
-        MockFactory factory = new MockFactory(address(crvUsd), makeAddr("factoryAdmin"));
-        MockTwoCoinPool targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
         address admin = makeAddr("admin");
         address emergencyAdmin = makeAddr("emergencyAdmin");
         address feeReceiver = makeAddr("feeReceiver");
+        MockFactory factory = new MockFactory(address(crvUsd), admin, emergencyAdmin, feeReceiver);
+        MockTwoCoinPool targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
 
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Config memory config = DeployPegKeeperV3.Config({
@@ -33,9 +33,6 @@ contract PegKeeperV3DeploymentTest is Test {
             targetAsset: address(targetAsset),
             backingAsset: address(backingAsset),
             yieldToken: address(yieldToken),
-            feeReceiver: feeReceiver,
-            admin: admin,
-            emergencyAdmin: emergencyAdmin,
             maxDeployedCrvUsd: MAX_DEPLOYED,
             keeperIndex: 7
         });
@@ -44,6 +41,7 @@ contract PegKeeperV3DeploymentTest is Test {
         IPegKeeperV3 pegKeeper = IPegKeeperV3(deployed);
 
         assertEq(pegKeeper.factory(), address(factory));
+        assertEq(pegKeeper.controller_factory(), address(factory));
         assertEq(pegKeeper.crv_usd(), address(crvUsd));
         assertEq(pegKeeper.target_amm(), address(targetAmm));
         assertEq(pegKeeper.target_asset(), address(targetAsset));

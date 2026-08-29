@@ -70,15 +70,15 @@ V3 is not intended to:
 
 ### Governance
 
-Governance selects the deployment's fixed token endpoints and configures debt capacity, the target AMM, paths, execution constraints, profitability thresholds, keeper fees, and the fee receiver. Approved route changes apply atomically when the governance proposal executes but cannot change those endpoints. The governance owner can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
+Governance selects the deployment's fixed token endpoints and configures debt capacity, the target AMM, paths, execution constraints, profitability thresholds, and keeper fees. PegKeeper authorization resolves dynamically through `PegKeeperV3Factory.admin()`, and the crvUSD surplus recipient resolves through `PegKeeperV3Factory.fee_receiver()`. Approved route changes apply atomically when the governance proposal executes but cannot change fixed token endpoints. The current factory admin can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
 
 ### Deployment factory owner
 
-The owner of `PegKeeperV3Factory` is the only account that can deploy a factory-managed PegKeeper, update deployment defaults, nominate a replacement factory owner, or select a different EIP-5202 implementation blueprint. This authority is deployment-only. Factory-created PegKeepers are ordinary constructor-specialized contracts, not proxies, so an implementation update affects only later deployments and cannot alter existing PegKeepers. The deployment-factory owner may be the same governance executor used as the resulting PegKeeper admin, but the two roles are represented separately.
+The owner of `PegKeeperV3Factory` is the only account that can deploy a factory-managed PegKeeper, update shared roles and deployment defaults, nominate a replacement factory owner, or select a different EIP-5202 implementation blueprint. Factory-created PegKeepers are ordinary constructor-specialized contracts, not proxies, so an implementation update affects only later deployments and cannot alter existing runtime code. The factory owner and the shared PegKeeper admin remain separate roles; changing the factory's admin, emergency admin, or fee receiver is intentionally visible to every V3 that resolves those values from the factory.
 
 ### Emergency admin
 
-The emergency admin can immediately disable expansion, direct buyback, keeper buyback, or all execution. It cannot install a new path or move funds to an arbitrary address. It must be a distinct address from the governance owner so the pause-only role cannot inherit owner execution authority or interfere with owner unpause semantics.
+The current `PegKeeperV3Factory.emergency_admin()` can immediately disable expansion, direct buyback, keeper buyback, or all execution across individual V3 instances. It cannot install a new path or move funds to an arbitrary address. The factory requires it to differ from `admin()` so the pause-only role cannot inherit owner execution authority or interfere with admin unpause semantics.
 
 ### Keeper
 
@@ -90,7 +90,7 @@ Any account can sell crvUSD directly to V3 through the buyback function while th
 
 ### Fee receiver
 
-Each V3 PegKeeper stores its own governance-configured `feeReceiver` directly. A factory-managed deployment snapshots the deployment factory's current default receiver during construction; later factory-default changes do not mutate the PegKeeper. V3 does not resolve the surplus recipient through `regulator.fee_receiver()`. This per-PegKeeper value is required during gradual migration because live V2 PegKeepers may continue using the shared regulator's generic `FeeCollector` while V3 pays crvUSD to the `FeeSplitter`. The V3 receiver gets idle crvUSD only against realized surplus above the amount required to support outstanding externalized crvUSD and pending obligations. Backing tokens and principal yield-token units are never withdrawn as fees.
+V3 reads the surplus recipient dynamically from `PegKeeperV3Factory.fee_receiver()`. It stores no local receiver and exposes no per-PegKeeper receiver setter. This remains independent of `regulator.fee_receiver()`: live V2 PegKeepers may continue using the shared regulator's generic `FeeCollector`, while every V3 created by the deployment factory pays crvUSD to the factory's current receiver. Because the V3 profit token is always crvUSD, one shared receiver is sufficient. The receiver gets idle crvUSD only against realized surplus above the amount required to support outstanding externalized crvUSD and pending obligations. Backing tokens and principal yield-token units are never withdrawn as fees.
 
 ## State model
 
@@ -98,6 +98,7 @@ A minimal implementation needs the following state:
 
 ```text
 factory
+controllerFactory
 name
 keeperIndex
 targetAmm
@@ -105,7 +106,6 @@ targetAmmExecutionBufferBps
 targetAsset
 backingAsset
 yieldToken
-feeReceiver
 
 deployedCrvUsd
 undeployedBacking
@@ -132,7 +132,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, identity, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `22,137` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,361` bytes, `2,215` bytes below EIP-170. Full initcode with ten static constructor arguments is `24,035` bytes, `25,117` bytes below EIP-3860. The EIP-5202 blueprint runtime is `23,718` bytes, `858` bytes below EIP-170. Executable runtime/initcode, blueprint/factory deployment, and release-manifest tests prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, deployment-factory/controller-factory references, pause state, typed routes, identity, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `22,587` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,843` bytes, `1,733` bytes below EIP-170. Full initcode with seven static constructor arguments is `24,351` bytes, `24,801` bytes below EIP-3860. The EIP-5202 blueprint runtime is `24,130` bytes, `446` bytes below EIP-170. Executable runtime/initcode, blueprint/factory deployment, and release-manifest tests prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -140,13 +140,13 @@ Vyper `0.3.10` emits disproportionately large runtime sequences for assertion re
 
 ### Deployment factory and immutable instances
 
-The canonical deployment factory stores one current EIP-5202 blueprint plus defaults for the final PegKeeper admin, distinct emergency admin, fee receiver, maximum deployed crvUSD, target-AMM execution buffer, downstream attempt gas, fallback reserve, and expansion route-loss bound. Only the factory owner can change those values or deploy.
+The canonical deployment factory stores one current EIP-5202 blueprint, the shared PegKeeper admin, distinct emergency admin, fee receiver, and deployment defaults for maximum deployed crvUSD, target-AMM execution buffer, downstream attempt gas, fallback reserve, and expansion route-loss bound. Only the factory owner can change those values or deploy. Existing V3 instances read the three shared addresses dynamically; other defaults are copied at deployment.
 
 The owner supplies four deployment-specific values: `targetAmm`, `yieldToken`, `expansionSteps`, and `contractionSteps`. The factory discovers crvUSD from the fixed ControllerFactory, requires the target AMM to contain exactly crvUSD and one other token, treats that other token as `targetAsset`, and reads `backingAsset = yieldToken.asset()`. It assigns `keeperIndex = keeperCount + 1` and passes that index into V3 construction. The resulting getters expose the numeric index and `name = "Pegkeeper " + uint2str(index)`.
 
-Initialization is atomic. V3 is constructed with the deployment factory as temporary admin, the default fee receiver and emergency admin, fixed endpoints, capacity, and index. The factory then validates and stores both typed routes, applies the default target-AMM/gas configuration, rotates the PegKeeper to the final default admin and emergency admin, and records the instance. Any failed constructor, route validation, configuration call, or role rotation reverts the entire factory transaction without consuming the index. Every direction remains paused.
+Initialization is atomic. V3 is constructed with immutable deployment-factory and ControllerFactory references, fixed endpoints, capacity, and index. The deployment factory is authorized to perform only the initial path and gas-configuration calls exposed by its immutable code; V3 has no local role state to rotate. The factory validates and stores both typed routes, applies the deployment defaults, and records the instance. Any failed constructor, route validation, or configuration call reverts the entire factory transaction without consuming the index. Every direction remains paused.
 
-The blueprint is copied as creation bytecode and executed with ordinary constructor arguments. Deployed PegKeepers contain no proxy fallback, delegatecall upgrade hook, or reference that can redirect their runtime logic. `setImplementation()` therefore selects creation code only for future instances. `setDefaults()` also affects only future snapshots. Existing PegKeepers retain their code, roles, fee receiver, capacity, identity, endpoints, and routes unless their own governance uses an explicit PegKeeper setter.
+The blueprint is copied as creation bytecode and executed with ordinary constructor arguments. Deployed PegKeepers contain no proxy fallback, delegatecall upgrade hook, or reference that can redirect their runtime logic. `setImplementation()` therefore selects creation code only for future instances. Capacity and execution defaults are copied only into later deployments. Shared `admin`, `emergency_admin`, and `fee_receiver` changes intentionally apply to every existing V3 through factory getters; V3 exposes no local setters for those values. Existing PegKeepers otherwise retain their code, capacity, identity, endpoints, and routes.
 
 ## Supply accounting and Factory integration
 
@@ -1193,13 +1193,7 @@ The configured initial receiver is Curve's crvUSD `FeeSplitter`. Its dispatch lo
 
 V2 uses a different revenue path despite being part of the crvUSD system. Its `withdraw_profit()` transfers pool LP tokens directly to `regulator.fee_receiver()` rather than converting or sending crvUSD.[8] At Ethereum block `25,851,076`, all five live V2 PegKeepers referenced by this repository used regulator `0x36a04CAffc681fa179558B2Aaba30395CDdd855f`, whose receiver was the generic FeeCollector at `0xa2Bcd1a4Efbd04B63cd03f5aFf2561106ebCCE00`; the collector's CowSwap burner converts source fee tokens toward its crvUSD target.[9][11] V2 therefore bypasses the FeeSplitter, while V3 deliberately reaches it by paying crvUSD directly. Governance must not change the shared regulator receiver to the FeeSplitter merely to serve V3: that would also redirect remaining V2 LP-token profit into a receiver whose normal distribution path expects crvUSD.
 
-The V3-local update surface is:
-
-```solidity
-function set_fee_receiver(address newFeeReceiver) external onlyOwner;
-```
-
-The call rejects the zero address and emits the old and new receiver. It changes only this V3 deployment; it does not call or mutate the shared regulator. Normal surplus claims always transfer crvUSD, so governance must point it to a contract whose accounting and distribution flow accept direct crvUSD transfers. Changing the receiver does not change the exposure or backing equations.
+The receiver update surface exists only on `PegKeeperV3Factory` through its validated shared-default update. V3 itself has no receiver storage, setter, or receiver-update event. The factory rejects a zero receiver. Normal surplus claims always transfer crvUSD, so governance must point the factory to a contract whose accounting and distribution flow accept direct crvUSD transfers. Changing the shared receiver does not change the exposure or backing equations.
 
 ## Curve compatibility
 
@@ -1228,7 +1222,7 @@ Required controls:
 - lower `maxDeployedCrvUsd` to stop further exposure growth;
 - governance updates to `maxDeployedCrvUsd`;
 - governance replacement of the target AMM and atomic replacement of both paths while preserving fixed token endpoints;
-- direct per-PegKeeper `feeReceiver` update independent of any regulator receiver;
+- shared `PegKeeperV3Factory.fee_receiver()` updates independent of any regulator receiver;
 - governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `targetAmmExecutionBufferBps`, `minDownstreamAttemptGas`, and `fallbackSettlementGasReserve`;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
@@ -1260,13 +1254,7 @@ function set_policy(
 
 It requires `earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm`, bounds both unsigned exit margins to at most `1_000_000 ppm`, bounds the keeper share to `10_000 bps`, and rejects zero minimum expansion or zero configured exposure capacity. Zero entry margin, zero keeper compensation, and zero maturity delay remain valid governance policies. `trustedBackingValue >= deployedCrvUsd` remains mandatory. Governance may lower `maxDeployedCrvUsd` below current exposure to stop growth immediately; this does not rewrite existing exposure and does not disable contraction.
 
-Governance and the distinct pause-only emergency role can be rotated atomically:
-
-```solidity
-function set_roles(address newAdmin, address newEmergencyAdmin) external;
-```
-
-The call rejects zero or overlapping roles and takes effect immediately under the DAO's existing governance delay. Venue approvals are exact and normally reset to zero in the same conversion. If a non-standard venue leaves an approval requiring manual cleanup, the owner can revoke it through the existing bounded `execute()` escape hatch; no redundant approval-management surface is required.
+Governance and the distinct pause-only emergency role are managed only by `PegKeeperV3Factory`. A validated factory update rejects zero or overlapping roles and takes effect immediately for every V3 that reads the factory getters. V3 contains no role storage, role setter, or role-update event. Venue approvals are exact and normally reset to zero in the same conversion. If a non-standard venue leaves an approval requiring manual cleanup, the owner can revoke it through the existing bounded `execute()` escape hatch; no redundant approval-management surface is required.
 
 ## Owner execute escape hatch
 
@@ -1359,7 +1347,6 @@ event TargetAmmUpdated(
     uint256 executionBufferBps
 );
 event DirectionPaused(uint256 indexed direction, bool paused);
-event FeeReceiverUpdated(address indexed oldReceiver, address indexed newReceiver);
 event SurplusClaimed(
     address indexed caller,
     address indexed receiver,
@@ -1385,7 +1372,7 @@ event Executed(
 7. Keeper rewards and fee claims cannot consume required principal; a fee claim increases `deployedCrvUsd` only by an equal or smaller amount of protocol surplus.
 8. Caller-supplied minimums can only make execution stricter.
 9. Callers cannot choose routes, venues, output recipients, or reward recipients.
-10. A V3 surplus claim always uses that V3 deployment's local `feeReceiver`; changing a shared regulator receiver cannot redirect it.
+10. A V3 surplus claim always uses its deployment factory's current `fee_receiver()`; changing the V2 regulator receiver cannot redirect it.
 11. Active paths always connect the configured endpoints.
 12. Successful downstream execution leaves no material unaccounted intermediate-token balance.
 13. A failed isolated downstream attempt leaves the target input in V3 and cannot partially consume it.

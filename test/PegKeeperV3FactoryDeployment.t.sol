@@ -11,7 +11,8 @@ import {MockFactory, MockToken} from "./PegKeeperV3Foundation.t.sol";
 contract PegKeeperV3FactoryDeploymentTest is Test {
     function test_deploymentScriptCreatesVerifiedBlueprintAndFactory() public {
         MockToken crvUsd = new MockToken(18);
-        MockFactory controllerFactory = new MockFactory(address(crvUsd), address(this));
+        MockFactory controllerFactory =
+            new MockFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
         address admin = makeAddr("admin");
         address emergencyAdmin = makeAddr("emergencyAdmin");
         address feeReceiver = makeAddr("feeReceiver");

@@ -87,6 +87,9 @@ contract DeployPegKeeperV3Factory is Script {
         require(factory.keeperCount() == 0, "initial keeper count");
 
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
+        require(factory.admin() == config.admin, "admin getter mismatch");
+        require(factory.emergency_admin() == config.emergencyAdmin, "emergency getter mismatch");
+        require(factory.fee_receiver() == config.feeReceiver, "fee receiver getter mismatch");
         require(defaults_.admin == config.admin, "admin mismatch");
         require(defaults_.emergencyAdmin == config.emergencyAdmin, "emergency mismatch");
         require(defaults_.feeReceiver == config.feeReceiver, "fee receiver mismatch");

@@ -13,15 +13,16 @@ import {
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_INITCODE_SIZE = 24_035;
-    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_361;
+    uint256 internal constant RELEASE_INITCODE_SIZE = 24_351;
+    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_843;
 
     function test_runtimeAndInitcodeFitProtocolLimits() public {
         MockToken crvUsd = new MockToken(18);
         MockToken targetAsset = new MockToken(6);
         MockToken backingAsset = new MockToken(18);
         MockYieldToken yieldToken = new MockYieldToken(address(backingAsset));
-        MockFactory factory = new MockFactory(address(crvUsd), address(0xA11CE));
+        MockFactory factory =
+            new MockFactory(address(crvUsd), address(0xA11CE), address(0xBEEF), address(0xFEE));
         MockTwoCoinPool targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
 
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
@@ -31,9 +32,6 @@ contract PegKeeperV3RuntimeSizeTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            address(0xFEE),
-            address(0xA11CE),
-            address(0xE911),
             25_000_000e18,
             1
         );

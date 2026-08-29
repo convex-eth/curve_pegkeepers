@@ -3,6 +3,8 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
+import {MockPegKeeperFactory} from "./PegKeeperV3Foundation.t.sol";
+
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
@@ -153,18 +155,10 @@ contract PegKeeperV3BackingDeploymentForkTest is Test {
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
-            FACTORY,
-            USDT_POOL,
-            USDT,
-            USDS,
-            SUSDS,
-            FEE_SPLITTER,
-            governance,
-            emergencyAdmin,
-            ALLOCATION,
-            1
-        );
+        MockPegKeeperFactory pegKeeperFactory =
+            new MockPegKeeperFactory(FACTORY, governance, emergencyAdmin, FEE_SPLITTER);
+        bytes memory constructorArgs =
+            abi.encode(address(pegKeeperFactory), USDT_POOL, USDT, USDS, SUSDS, ALLOCATION, 1);
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;
 

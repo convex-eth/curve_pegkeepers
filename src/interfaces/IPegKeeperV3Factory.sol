@@ -43,6 +43,9 @@ interface IPegKeeperV3Factory {
     function controllerFactory() external view returns (address);
     function implementation() external view returns (address);
     function defaults() external view returns (DeploymentDefaults memory);
+    function admin() external view returns (address);
+    function emergency_admin() external view returns (address);
+    function fee_receiver() external view returns (address);
     function keeperCount() external view returns (uint256);
     function keeperAt(uint256 index) external view returns (address);
     function isPegKeeper(address candidate) external view returns (bool);

@@ -68,6 +68,18 @@ contract PegKeeperV3Factory is IPegKeeperV3Factory {
         return _defaults;
     }
 
+    function admin() external view override returns (address) {
+        return _defaults.admin;
+    }
+
+    function emergency_admin() external view override returns (address) {
+        return _defaults.emergencyAdmin;
+    }
+
+    function fee_receiver() external view override returns (address) {
+        return _defaults.feeReceiver;
+    }
+
     function deployPegKeeper(
         address targetAmm,
         address yieldToken,
@@ -112,15 +124,14 @@ contract PegKeeperV3Factory is IPegKeeperV3Factory {
         uint256 index
     ) internal returns (address pegKeeper) {
         DeploymentDefaults memory config = _defaults;
-        bytes memory constructorArgs = bytes.concat(
-            abi.encode(controllerFactory, targetAmm, targetAsset, backingAsset, yieldToken),
-            abi.encode(
-                config.feeReceiver,
-                address(this),
-                config.emergencyAdmin,
-                config.maxDeployedCrvUsd,
-                index
-            )
+        bytes memory constructorArgs = abi.encode(
+            address(this),
+            targetAmm,
+            targetAsset,
+            backingAsset,
+            yieldToken,
+            config.maxDeployedCrvUsd,
+            index
         );
         pegKeeper = _createFromBlueprint(blueprint, constructorArgs);
     }
@@ -139,7 +150,6 @@ contract PegKeeperV3Factory is IPegKeeperV3Factory {
                 config.minDownstreamAttemptGas,
                 config.fallbackSettlementGasReserve
             );
-        IPegKeeperV3(pegKeeper).set_roles(config.admin, config.emergencyAdmin);
     }
 
     function _recordKeeper(

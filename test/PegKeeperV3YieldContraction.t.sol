@@ -46,7 +46,7 @@ contract PegKeeperV3YieldContractionTest is Test {
         backingAsset = new ExpansionToken(18);
         dai = new ExpansionToken(18);
         yieldToken = new ExecutionYieldToken(backingAsset);
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetPool = new ExpansionPool(crvUsd, targetAsset);
         targetToDaiPool = new ExecutionRoutePool(targetAsset, dai);
         daiToCrvUsdPool = new ExecutionRoutePool(dai, crvUsd);
@@ -560,9 +560,6 @@ contract PegKeeperV3YieldContractionTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

@@ -19,10 +19,23 @@ interface IFrxUsdCustodianView {
 
 contract FrxUsdMintForkFactory {
     address public immutable stablecoin;
+    address public immutable controllerFactory;
+    address public admin;
+    address public emergency_admin;
+    address public fee_receiver;
     mapping(address => uint256) public debt_ceiling;
 
-    constructor(address stablecoin_) {
+    constructor(
+        address stablecoin_,
+        address admin_,
+        address emergencyAdmin_,
+        address feeReceiver_
+    ) {
         stablecoin = stablecoin_;
+        controllerFactory = address(this);
+        admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
     }
 
     function setDebtCeiling(address account, uint256 amount) external {
@@ -96,7 +109,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
             vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co"));
         vm.createSelectFork(rpcUrl, FORK_BLOCK);
 
-        factory = new FrxUsdMintForkFactory(CRVUSD);
+        factory = new FrxUsdMintForkFactory(CRVUSD, governance, emergencyAdmin, feeReceiver);
         targetPool = new FrxUsdMintForkTargetPool(USDC, CRVUSD, 1_001_000);
         deal(USDC, address(targetPool), 200_000e6);
         pegKeeper = _deploy();
@@ -196,16 +209,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         bytes memory constructorArgs = abi.encode(
-            address(factory),
-            address(targetPool),
-            USDC,
-            FRXUSD,
-            SFRXUSD,
-            feeReceiver,
-            governance,
-            emergencyAdmin,
-            MAX_DEPLOYED,
-            1
+            address(factory), address(targetPool), USDC, FRXUSD, SFRXUSD, MAX_DEPLOYED, 1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

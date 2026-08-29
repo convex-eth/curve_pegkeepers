@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 
 contract DeployPegKeeperV3 is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
@@ -15,9 +16,6 @@ contract DeployPegKeeperV3 is Script {
         address targetAsset;
         address backingAsset;
         address yieldToken;
-        address feeReceiver;
-        address admin;
-        address emergencyAdmin;
         uint256 maxDeployedCrvUsd;
         uint256 keeperIndex;
     }
@@ -29,9 +27,6 @@ contract DeployPegKeeperV3 is Script {
             targetAsset: vm.envAddress("PKV3_TARGET_ASSET"),
             backingAsset: vm.envAddress("PKV3_BACKING_ASSET"),
             yieldToken: vm.envAddress("PKV3_YIELD_TOKEN"),
-            feeReceiver: vm.envAddress("PKV3_FEE_RECEIVER"),
-            admin: vm.envAddress("PKV3_ADMIN"),
-            emergencyAdmin: vm.envAddress("PKV3_EMERGENCY_ADMIN"),
             maxDeployedCrvUsd: vm.envUint("PKV3_MAX_DEPLOYED_CRVUSD"),
             keeperIndex: vm.envUint("PKV3_KEEPER_INDEX")
         });
@@ -49,9 +44,6 @@ contract DeployPegKeeperV3 is Script {
             config.targetAsset,
             config.backingAsset,
             config.yieldToken,
-            config.feeReceiver,
-            config.admin,
-            config.emergencyAdmin,
             config.maxDeployedCrvUsd,
             config.keeperIndex
         );
@@ -67,8 +59,10 @@ contract DeployPegKeeperV3 is Script {
         IPegKeeperV3 pegKeeper = IPegKeeperV3(deployed);
         require(deployed.code.length <= EIP_170_RUNTIME_LIMIT, "PegKeeperV3 runtime too large");
         require(pegKeeper.factory() == config.factory, "factory mismatch");
+        address controllerFactory = IPegKeeperV3Factory(config.factory).controllerFactory();
+        require(pegKeeper.controller_factory() == controllerFactory, "controller factory mismatch");
         require(
-            pegKeeper.crv_usd() == IControllerFactory(config.factory).stablecoin(),
+            pegKeeper.crv_usd() == IControllerFactory(controllerFactory).stablecoin(),
             "crvUSD mismatch"
         );
         require(pegKeeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "capacity mismatch");
@@ -82,9 +76,15 @@ contract DeployPegKeeperV3 is Script {
         require(pegKeeper.target_asset() == config.targetAsset, "target asset mismatch");
         require(pegKeeper.backing_asset() == config.backingAsset, "backing asset mismatch");
         require(pegKeeper.yield_token() == config.yieldToken, "yield token mismatch");
-        require(pegKeeper.fee_receiver() == config.feeReceiver, "fee receiver mismatch");
-        require(pegKeeper.admin() == config.admin, "admin mismatch");
-        require(pegKeeper.emergency_admin() == config.emergencyAdmin, "emergency mismatch");
+        require(
+            pegKeeper.fee_receiver() == IPegKeeperV3Factory(config.factory).fee_receiver(),
+            "fee receiver mismatch"
+        );
+        require(pegKeeper.admin() == IPegKeeperV3Factory(config.factory).admin(), "admin mismatch");
+        require(
+            pegKeeper.emergency_admin() == IPegKeeperV3Factory(config.factory).emergency_admin(),
+            "emergency mismatch"
+        );
         require(pegKeeper.all_execution_paused(), "global execution enabled");
         require(pegKeeper.expansion_paused(), "expansion enabled");
         require(pegKeeper.backing_deployment_paused(), "backing deployment enabled");

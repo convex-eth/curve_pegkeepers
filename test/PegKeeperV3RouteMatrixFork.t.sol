@@ -3,6 +3,8 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
+import {MockPegKeeperFactory} from "./PegKeeperV3Foundation.t.sol";
+
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 
 contract PegKeeperV3RouteMatrixForkTest is Test {
@@ -373,15 +375,14 @@ contract PegKeeperV3RouteMatrixForkTest is Test {
         returns (IPegKeeperV3 deployedPegKeeper)
     {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        MockPegKeeperFactory pegKeeperFactory =
+            new MockPegKeeperFactory(FACTORY, governance, emergencyAdmin, FEE_SPLITTER);
         bytes memory constructorArgs = abi.encode(
-            FACTORY,
+            address(pegKeeperFactory),
             _targetPool(targetId),
             _target(targetId),
             _backing(yieldId),
             _yieldToken(yieldId),
-            FEE_SPLITTER,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

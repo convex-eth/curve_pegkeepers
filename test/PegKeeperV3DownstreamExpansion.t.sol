@@ -119,7 +119,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         backingAsset = new ExpansionToken(18);
         dai = new ExpansionToken(18);
         yieldToken = new ExecutionYieldToken(backingAsset);
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetPool = new ExpansionPool(crvUsd, targetAsset);
         targetToDaiPool = new ExecutionRoutePool(targetAsset, dai);
         backingToCrvUsdPool = new ExecutionRoutePool(backingAsset, crvUsd);
@@ -521,9 +521,6 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

@@ -52,7 +52,8 @@ contract PegKeeperV3FactoryTest is Test {
         targetAsset = new MockToken(6);
         backingAsset = new MockToken(18);
         yieldToken = new MockYieldToken(address(backingAsset));
-        controllerFactory = new MockFactory(address(crvUsd), governance);
+        controllerFactory =
+            new MockFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
         targetToBackingPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
         backingToCrvUsdPool = new MockTwoCoinPool(address(backingAsset), address(crvUsd));
@@ -82,7 +83,8 @@ contract PegKeeperV3FactoryTest is Test {
 
         assertEq(pegKeeper.name(), "Pegkeeper 1");
         assertEq(pegKeeper.keeper_index(), 1);
-        assertEq(pegKeeper.factory(), address(controllerFactory));
+        assertEq(pegKeeper.factory(), address(factory));
+        assertEq(pegKeeper.controller_factory(), address(controllerFactory));
         assertEq(pegKeeper.target_amm(), address(targetAmm));
         assertEq(pegKeeper.target_asset(), address(targetAsset));
         assertEq(pegKeeper.backing_asset(), address(backingAsset));
@@ -126,7 +128,7 @@ contract PegKeeperV3FactoryTest is Test {
         assertEq(factory.keeperAt(2), second);
     }
 
-    function test_implementationAndDefaultUpdatesAffectOnlyFutureDeployments() public {
+    function test_implementationAndCapacityAffectFutureWhileSharedRolesUpdateExisting() public {
         (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
             _paths();
         address first = factory.deployPegKeeper(
@@ -147,13 +149,35 @@ contract PegKeeperV3FactoryTest is Test {
         assertEq(factory.implementationOf(first), blueprint);
         assertEq(factory.implementationOf(second), nextBlueprint);
         assertEq(first.codehash, firstCodeHash);
-        assertEq(IPegKeeperV3(first).admin(), governance);
-        assertEq(IPegKeeperV3(first).fee_receiver(), feeReceiver);
+        assertEq(IPegKeeperV3(first).admin(), nextGovernance);
+        assertEq(IPegKeeperV3(first).emergency_admin(), nextEmergencyAdmin);
+        assertEq(IPegKeeperV3(first).fee_receiver(), nextFeeReceiver);
         assertEq(IPegKeeperV3(first).max_deployed_crvusd(), 25_000_000e18);
         assertEq(IPegKeeperV3(second).admin(), nextGovernance);
         assertEq(IPegKeeperV3(second).emergency_admin(), nextEmergencyAdmin);
         assertEq(IPegKeeperV3(second).fee_receiver(), nextFeeReceiver);
         assertEq(IPegKeeperV3(second).max_deployed_crvusd(), 50_000_000e18);
+    }
+
+    function test_keeperCannotManageFactorySourcedRolesOrFeeReceiver() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+
+        vm.prank(governance);
+        (bool rolesUpdated,) = deployed.call(
+            abi.encodeWithSignature(
+                "set_roles(address,address)", nextGovernance, nextEmergencyAdmin
+            )
+        );
+        assertFalse(rolesUpdated);
+
+        vm.prank(governance);
+        (bool feeReceiverUpdated,) =
+            deployed.call(abi.encodeWithSignature("set_fee_receiver(address)", nextFeeReceiver));
+        assertFalse(feeReceiverUpdated);
     }
 
     function test_onlyOwnerCanDeployOrChangeFactoryConfiguration() public {
@@ -189,6 +213,17 @@ contract PegKeeperV3FactoryTest is Test {
     function test_factoryRejectsNonBlueprintImplementation() public {
         vm.expectRevert(PegKeeperV3Factory.InvalidImplementation.selector);
         factory.setImplementation(address(targetAmm));
+    }
+
+    function test_factoryRejectsInvalidSharedRolesAndFeeReceiver() public {
+        IPegKeeperV3Factory.DeploymentDefaults memory invalid =
+            _defaults(governance, governance, feeReceiver, 25_000_000e18);
+        vm.expectRevert(PegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, address(0), 25_000_000e18);
+        vm.expectRevert(PegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
     }
 
     function test_twoStepOwnershipTransfer() public {

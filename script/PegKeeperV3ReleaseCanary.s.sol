@@ -10,7 +10,8 @@ import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
-import {DeployPegKeeperV3} from "./DeployPegKeeperV3.s.sol";
+import {PegKeeperV3Factory} from "../src/PegKeeperV3Factory.sol";
+import {DeployPegKeeperV3Factory} from "./DeployPegKeeperV3Factory.s.sol";
 
 interface IERC20Allowance {
     function allowance(address owner, address spender) external view returns (uint256);
@@ -33,6 +34,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     address internal constant CANARY_ADMIN = address(0xC0FFEE01);
     address internal constant CANARY_TRADER = address(0xC0FFEE02);
     address internal constant CANARY_KEEPER = address(0xC0FFEE03);
+    address internal constant CANARY_FACTORY_OWNER = address(0xC0FFEE04);
 
     uint256 internal constant CURVE_SWAP = 0;
     uint256 internal constant DAI_USDS_CONVERTER = 1;
@@ -44,28 +46,32 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     function run() external {
         require(block.chainid == 1, "mainnet fork required");
 
-        DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
-        DeployPegKeeperV3.Config memory config = DeployPegKeeperV3.Config({
-            factory: FACTORY,
-            targetAmm: USDT_POOL,
-            targetAsset: USDT,
-            backingAsset: USDS,
-            yieldToken: SUSDS,
-            feeReceiver: FEE_SPLITTER,
+        IPegKeeperV3.RouteStep[] memory expansionPath = _expansionPath();
+        IPegKeeperV3.RouteStep[] memory contractionPath = _contractionPath();
+
+        DeployPegKeeperV3Factory factoryDeployer = new DeployPegKeeperV3Factory();
+        DeployPegKeeperV3Factory.Config memory factoryConfig = DeployPegKeeperV3Factory.Config({
+            owner: CANARY_FACTORY_OWNER,
+            controllerFactory: FACTORY,
             admin: CANARY_ADMIN,
             emergencyAdmin: EMERGENCY_ADMIN,
+            feeReceiver: FEE_SPLITTER,
             maxDeployedCrvUsd: ALLOCATION,
-            keeperIndex: 1
+            targetAmmExecutionBufferBps: 0,
+            minDownstreamAttemptGas: 1_500_000,
+            fallbackSettlementGasReserve: 300_000,
+            expansionMaxRouteLossBps: 100
         });
-        IPegKeeperV3 pegKeeper = IPegKeeperV3(deployer.deploy(config));
+        (, address factoryAddress) = factoryDeployer.deploy(factoryConfig);
+        PegKeeperV3Factory deploymentFactory = PegKeeperV3Factory(factoryAddress);
+        vm.prank(CANARY_FACTORY_OWNER);
+        IPegKeeperV3 pegKeeper = IPegKeeperV3(
+            deploymentFactory.deployPegKeeper(USDT_POOL, SUSDS, expansionPath, contractionPath)
+        );
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
-        IPegKeeperV3.RouteStep[] memory expansionPath = _expansionPath();
-        IPegKeeperV3.RouteStep[] memory contractionPath = _contractionPath();
         vm.startPrank(CANARY_ADMIN);
-        pegKeeper.setPaths(expansionPath, 100, contractionPath);
-        pegKeeper.set_expansion_config(0, 1_500_000, 300_000);
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
         vm.stopPrank();

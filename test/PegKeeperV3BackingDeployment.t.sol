@@ -268,7 +268,7 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         backingAsset = new ExpansionToken(18);
         dai = new ExpansionToken(18);
         yieldToken = new ExecutionYieldToken(backingAsset);
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         targetPool = new ExpansionPool(crvUsd, targetAsset);
         targetToDaiPool = new ExecutionRoutePool(targetAsset, dai);
         targetToBackingPool = new ExecutionRoutePool(targetAsset, backingAsset);
@@ -707,9 +707,6 @@ contract PegKeeperV3BackingDeploymentTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );

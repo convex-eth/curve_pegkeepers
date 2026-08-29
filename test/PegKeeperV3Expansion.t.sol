@@ -57,10 +57,29 @@ contract ExpansionYieldToken is ExpansionToken {
 
 contract ExpansionFactory {
     address public immutable stablecoin;
+    address public immutable controllerFactory;
+    address public admin;
+    address public emergency_admin;
+    address public fee_receiver;
     mapping(address => uint256) public debt_ceiling;
 
-    constructor(address stablecoin_) {
+    constructor(
+        address stablecoin_,
+        address admin_,
+        address emergencyAdmin_,
+        address feeReceiver_
+    ) {
         stablecoin = stablecoin_;
+        controllerFactory = address(this);
+        admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
+    }
+
+    function setGovernance(address admin_, address emergencyAdmin_, address feeReceiver_) external {
+        admin = admin_;
+        emergency_admin = emergencyAdmin_;
+        fee_receiver = feeReceiver_;
     }
 
     function setDebtCeiling(address account, uint256 amount) external {
@@ -147,7 +166,7 @@ contract PegKeeperV3ExpansionTest is Test {
         targetAsset = new ExpansionToken(6);
         backingAsset = new ExpansionToken(18);
         yieldToken = new ExpansionYieldToken(address(backingAsset));
-        factory = new ExpansionFactory(address(crvUsd));
+        factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         pool = new ExpansionPool(crvUsd, targetAsset);
         pegKeeper = _deploy();
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
@@ -650,9 +669,6 @@ contract PegKeeperV3ExpansionTest is Test {
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
-            feeReceiver,
-            governance,
-            emergencyAdmin,
             MAX_DEPLOYED,
             1
         );
