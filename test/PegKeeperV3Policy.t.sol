@@ -40,18 +40,15 @@ contract PegKeeperV3PolicyTest is Test {
 
     function test_adminAtomicallyUpdatesPolicy() public {
         vm.expectEmit(false, false, false, true, address(pegKeeper));
-        emit IPegKeeperV3.PolicyUpdated(
-            25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18
-        );
+        emit IPegKeeperV3.PolicyUpdated(25, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.prank(governance);
-        pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        pegKeeper.set_policy(25, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         assertEq(pegKeeper.entry_min_profit_ppm(), 25);
         assertEq(pegKeeper.normal_exit_min_profit_ppm(), 750);
         assertEq(pegKeeper.early_exit_min_profit_ppm(), 7_500);
         assertEq(pegKeeper.keeper_profit_share_bps(), 2_500);
-        assertEq(pegKeeper.max_keeper_reward(), 12e18);
         assertEq(pegKeeper.min_deployment_time(), 3 days);
         assertEq(pegKeeper.min_expansion_amount(), 50_000e18);
         assertEq(pegKeeper.max_deployed_crvusd(), 10_000_000e18);
@@ -59,11 +56,10 @@ contract PegKeeperV3PolicyTest is Test {
 
     function test_policyAllowsZeroEntryMarginZeroRewardAndZeroMaturityDelay() public {
         vm.prank(governance);
-        pegKeeper.set_policy(0, 1, 2, 0, 0, 0, 1, 1);
+        pegKeeper.set_policy(0, 1, 2, 0, 0, 1, 1);
 
         assertEq(pegKeeper.entry_min_profit_ppm(), 0);
         assertEq(pegKeeper.keeper_profit_share_bps(), 0);
-        assertEq(pegKeeper.max_keeper_reward(), 0);
         assertEq(pegKeeper.min_deployment_time(), 0);
     }
 
@@ -73,7 +69,7 @@ contract PegKeeperV3PolicyTest is Test {
             .call(
                 abi.encodeCall(
                     IPegKeeperV3.set_policy,
-                    (25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18)
+                    (25, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18)
                 )
             );
 
@@ -85,28 +81,28 @@ contract PegKeeperV3PolicyTest is Test {
         vm.startPrank(governance);
 
         vm.expectRevert();
-        pegKeeper.set_policy(751, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        pegKeeper.set_policy(751, 750, 7_500, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.expectRevert();
-        pegKeeper.set_policy(25, 750, 750, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        pegKeeper.set_policy(25, 750, 750, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.expectRevert();
-        pegKeeper.set_policy(25, 750, 1_000_001, 2_500, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        pegKeeper.set_policy(25, 750, 1_000_001, 2_500, 3 days, 50_000e18, 10_000_000e18);
 
         vm.stopPrank();
     }
 
-    function test_policyRejectsInvalidRewardAndExposureBounds() public {
+    function test_policyRejectsInvalidProfitShareAndExposureBounds() public {
         vm.startPrank(governance);
 
         vm.expectRevert();
-        pegKeeper.set_policy(25, 750, 7_500, 10_001, 12e18, 3 days, 50_000e18, 10_000_000e18);
+        pegKeeper.set_policy(25, 750, 7_500, 10_001, 3 days, 50_000e18, 10_000_000e18);
 
         vm.expectRevert();
-        pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 0, 10_000_000e18);
+        pegKeeper.set_policy(25, 750, 7_500, 2_500, 3 days, 0, 10_000_000e18);
 
         vm.expectRevert();
-        pegKeeper.set_policy(25, 750, 7_500, 2_500, 12e18, 3 days, 50_000e18, 0);
+        pegKeeper.set_policy(25, 750, 7_500, 2_500, 3 days, 50_000e18, 0);
 
         vm.stopPrank();
     }

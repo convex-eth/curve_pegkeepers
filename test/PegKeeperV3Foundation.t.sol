@@ -160,11 +160,11 @@ contract PegKeeperV3FoundationTest is Test {
         vm.expectRevert();
         pegKeeper.coins(2);
 
-        assertEq(pegKeeper.entry_min_profit_ppm(), 50);
+        uint256 entryMinProfitPpm = pegKeeper.entry_min_profit_ppm();
+        assertEq(entryMinProfitPpm, 10);
         assertEq(pegKeeper.normal_exit_min_profit_ppm(), 1_000);
         assertEq(pegKeeper.early_exit_min_profit_ppm(), 5_000);
         assertEq(pegKeeper.keeper_profit_share_bps(), 3_000);
-        assertEq(pegKeeper.max_keeper_reward(), 20e18);
         assertEq(pegKeeper.min_deployment_time(), 2 days);
         assertEq(pegKeeper.min_expansion_amount(), 10_000e18);
         assertEq(pegKeeper.max_deployed_crvusd(), MAX_DEPLOYED);

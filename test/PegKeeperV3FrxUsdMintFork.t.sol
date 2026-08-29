@@ -118,9 +118,10 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
         assertEq(IFrxUsdMinter(FRXUSD_CUSTODIAN).frxUSD(), FRXUSD);
         assertEq(IFrxUsdMinter(FRXUSD_CUSTODIAN).previewDeposit(100_100e6), 100_100e18);
 
-        (,,,, uint256 expectedYieldToken, bool expectedToDeploy) =
+        (,,, uint256 expectedKeeperReward, uint256 expectedYieldToken, bool expectedToDeploy) =
             pegKeeper.previewExpansion(EXPANSION_AMOUNT);
         assertTrue(expectedToDeploy);
+        assertGt(expectedKeeperReward, 20e18);
         assertGt(expectedYieldToken, 0);
 
         vm.prank(keeper);
@@ -135,7 +136,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
         assertEq(crvUsdSold, EXPANSION_AMOUNT);
         assertEq(backingRetained, 0);
         assertEq(yieldTokenReceived, expectedYieldToken);
-        assertEq(keeperReward, 20e18);
+        assertEq(keeperReward, expectedKeeperReward);
         assertTrue(deployedToYield);
         assertEq(pegKeeper.accounted_yield_token_units(), yieldTokenReceived);
         assertEq(IForkToken(SFRXUSD).balanceOf(address(pegKeeper)), yieldTokenReceived);

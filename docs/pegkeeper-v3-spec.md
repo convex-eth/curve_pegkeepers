@@ -31,7 +31,7 @@ Intermediate assets inside the downstream conversion remain transient. Only the 
 3. Offer explicit buyback liquidity when crvUSD trades below peg.
 4. Reuse bought-back crvUSD during later expansions.
 5. Require each completed branch to retain principal and its configured margin after realized route costs and keeper compensation.
-6. Pay keepers a governance-set percentage of realized profit, clamped by an absolute per-call maximum.
+6. Pay keepers a governance-set percentage of realized profit.
 7. Keep expansion and fallback contraction open to any keeper without a whitelist or private-submission requirement.
 8. Expand immediately whenever at least the target-AMM leg is locally non-loss-making after reward and satisfies the configured fallback margin.
 9. Prevent routine rapid expansion/contraction churn while allowing early contraction at a sufficiently profitable distressed exit.
@@ -78,7 +78,7 @@ The emergency admin can immediately disable expansion, direct buyback, keeper bu
 
 ### Keeper
 
-Any account can call the expansion and fallback contraction functions. V3 does not rely on a keeper whitelist or private order flow. Keeper rewards are paid to `msg.sender`, take a configured share of realized profit subject to a flat cap, and are paid only after a successful profitable transaction. The keeper chooses the exact amount, but cannot weaken protocol bounds, paths, minimum outputs, or profitability conditions.
+Any account can call the expansion and fallback contraction functions. V3 does not rely on a keeper whitelist or private order flow. Keeper rewards are paid to `msg.sender`, take a configured share of realized profit, and are paid only after a successful profitable transaction. The keeper chooses the exact amount, but cannot weaken protocol bounds, paths, minimum outputs, or profitability conditions.
 
 ### Arbitrageur or user
 
@@ -111,7 +111,6 @@ entryMinProfitPpm
 normalExitMinProfitPpm
 earlyExitMinProfitPpm
 keeperProfitShareBps
-maxKeeperReward
 
 minDeploymentTime
 minExpansionAmount
@@ -127,7 +126,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `21,853` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,077` bytes, `2,499` bytes below EIP-170. Full initcode is `23,433` bytes, `25,719` bytes below EIP-3860. Executable runtime/initcode tests and the release-manifest verifier prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, governance roles, pause state, typed routes, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `21,990` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,214` bytes, `2,362` bytes below EIP-170. Full initcode is `23,557` bytes, `25,595` bytes below EIP-3860. Executable runtime/initcode tests and the release-manifest verifier prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -246,7 +245,7 @@ deployedCrvUsd <= trustedBackingValue
 
 Expansion is keeper-driven. V3 does not offer a separate direct upward-price quote in the initial design.
 
-Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; downstream yield deployment is preferred but best effort. The initial `0.5 bps` entry margin requires whichever branch completes to retain principal plus that margin after its realized route costs, terminal rounding, and keeper reward.
+Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; downstream yield deployment is preferred but best effort. The initial `0.1 bps` entry margin requires whichever branch completes to retain principal plus that margin after its realized route costs, terminal rounding, and keeper reward.
 
 ```text
 1. Verify expansion is enabled.
@@ -257,7 +256,7 @@ Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; dow
 6. Attempt the configured target-to-yield path in an isolated, typed, `onlySelf` call with protocol-calculated minima. That subcall includes full-route balance measurement, keeper payment in the backing asset, terminal yield deployment, and the final yield-backing floor.
 7. Treat the downstream branch as successful only if the isolated call completes all of those operations and returns consistent measured deltas.
 8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, and retain the remainder as `undeployedBacking`.
-9. Require the selected branch to leave principal plus its configured entry margin after reward. A failure of both branches reverts the complete expansion, including the target-AMM swap.
+9. Require the selected branch to satisfy the configured entry floor after reward and require the complete state to preserve the global backing invariant. A failure of both branches reverts the complete expansion, including the target-AMM swap.
 10. Increase `deployedCrvUsd` and set `lastExpansionAt` to the current timestamp.
 11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
 ```
@@ -288,7 +287,7 @@ function expand(uint256 crvUsdAmount) external returns (
 );
 ```
 
-The keeper chooses only the exact crvUSD amount. V3 validates its bounds and calculates gross profit, reward, and every intermediate and final minimum internally. The keeper cannot choose the target AMM, path, output token, fee receiver, reward recipient, fee percentage, reward cap, or minimum output.
+The keeper chooses only the exact crvUSD amount. V3 validates its bounds and calculates gross profit, reward, and every intermediate and final minimum internally. The keeper cannot choose the target AMM, path, output token, fee receiver, reward recipient, fee percentage, or minimum output.
 
 The keeper's proposed amount should be previewable:
 
@@ -310,7 +309,7 @@ The preview is advisory. It enforces the same requested-amount, idle-inventory, 
 
 A downstream quote can become stale or the route can revert during execution; the state-changing call therefore selects the branch only from actual call success and realized balance deltas. Preview output never supplies execution minima and cannot weaken any onchain check.
 
-For a completed downstream attempt, the keeper reward is calculated from the measured backing asset present immediately before the terminal yield-acquisition step. The reward is transferred in backing-asset native units before that final step. The route-loss check excludes that deliberate reward from conversion loss while still requiring the final yield position alone to preserve principal plus the entry margin:
+For a completed downstream attempt, the keeper reward is calculated from the measured backing asset present immediately before the terminal yield-acquisition step. The reward is transferred in backing-asset native units before that final step. The route-loss check excludes that deliberate reward from conversion loss while still requiring the final yield position to satisfy the entry floor and the complete state to remain globally backed:
 
 ```text
 completedRouteValue
@@ -325,7 +324,8 @@ conversionCost
        * downstreamExpansionPath.maxRouteLossBps / 10_000
 
 trustedYieldValue(yieldTokenReceived)
-    >= crvUsdSold + entryMargin
+    >= crvUsdSold
+       + crvUsdSold * entryMinProfitPpm / 1_000_000
 ```
 
 The outer call accounts only the exact final yield-token balance increase returned by the successful helper. Pre-existing target, intermediate, backing, and yield-token donations remain outside current-call accounting. Existing `undeployedBacking` is never combined with the new target receipt.
@@ -339,23 +339,19 @@ fallbackGrossProfit
     = normalize(targetAssetReceived)
     - crvUsdSold
 
-fallbackKeeperRewardValue = min(
-    floor(fallbackGrossProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
-)
+fallbackKeeperRewardValue
+    = floor(fallbackGrossProfit * keeperProfitShareBps / 10_000)
 
 targetAssetRetained
     = targetAssetReceived
     - denormalizeDown(fallbackKeeperRewardValue)
 
-fallbackEntryMargin
-    = crvUsdSold * entryMinProfitPpm / 1_000_000
-
 normalize(targetAssetRetained)
-    >= crvUsdSold + fallbackEntryMargin
+    >= crvUsdSold
+       + crvUsdSold * entryMinProfitPpm / 1_000_000
 ```
 
-The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: `undeployedBacking` may instead be used directly for contraction. With the initial `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding when the flat cap does not bind, and more when it does.
+The target asset is a valid terminal backing state. V3 does not deduct a hypothetical future yield-route fee before paying this reward because future deployment is optional: `undeployedBacking` may instead be used directly for contraction. With the initial `30%` keeper share, V3 retains principal plus at least `70%` of this branch's realized gross profit before normalization rounding.
 
 ### Later undeployed backing deployment
 
@@ -519,8 +515,8 @@ For undeployed backing:
 ```text
 1. Spend an exact bounded amount of undeployed backing.
 2. Swap target asset for crvUSD through the target AMM.
-3. Calculate gross exit profit as crvUSD received minus normalized target asset spent.
-4. Pay the percentage-plus-flat-cap keeper reward in crvUSD.
+3. Calculate the principal-recovery basis as the greater of normalized target asset spent and the crvUSD recovery needed to keep remaining trusted backing solvent. Calculate gross exit profit as crvUSD received above that basis.
+4. Pay the configured percentage of realized gross profit to the keeper in crvUSD.
 5. Enforce the selected post-reward exit margin.
 6. Decrease `undeployedBacking` by the target asset actually spent.
 7. Reduce `deployedCrvUsd` by net crvUSD retained, capped at the deployed amount.
@@ -534,8 +530,8 @@ For yield backing:
 3. Select the normal or early exit margin accordingly.
 4. Verify the keeper's requested yield-token amount is within the available yield backing and cannot reduce more than the current `deployedCrvUsd` exposure.
 5. Execute the independent yield contraction path from yield token to crvUSD. For sUSDS this may redeem to USDS, convert through DAI and a stablecoin venue, and then use the designated target AMM; for sfrxUSD it may first swap to frxUSD.
-6. Calculate gross exit profit as crvUSD received minus the trusted backing value removed by the yield-token units spent.
-7. Calculate the keeper reward as the configured percentage of gross exit profit, clamped by `maxKeeperReward`, and pay it to `msg.sender` in crvUSD.
+6. Calculate the principal-recovery basis as the greater of the trusted backing value removed and the crvUSD recovery needed to keep remaining trusted backing at least equal to remaining deployed exposure. Calculate gross exit profit as crvUSD received above that basis. This prevents recovery of an existing backing deficit from becoming rewardable profit.
+7. Calculate the keeper reward as the configured percentage of gross exit profit and pay it to `msg.sender` in crvUSD.
 8. Verify the net crvUSD retained after the reward exceeds the trusted backing value spent by the selected exit margin.
 9. Reduce deployedCrvUsd by the net crvUSD retained, capped at the deployed amount.
 10. Keep the remaining recovered crvUSD idle.
@@ -769,11 +765,11 @@ crvUsdAmount <= min(
 
 Fallback contraction applies ordinary minimum and maximum limits to either requested target amount or requested yield-token units and their trusted backing value. The contract executes every requested amount exactly or reverts; it does not silently resize the transaction. Fallback expansion has no separate undeployed-backing cap: total target exposure remains bounded by `maxDeployedCrvUsd`, available Factory inventory, and the amount actually deployed.
 
-The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(yieldTokenAmount)` offchain to select an economically useful amount. Onchain, V3 still calculates every intermediate minimum, profit-share reward, flat reward cap, and final post-reward margin. A keeper-supplied amount can cause its own transaction to revert but cannot make an unsafe amount execute.
+The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(yieldTokenAmount)` offchain to select an economically useful amount. Onchain, V3 still calculates every intermediate minimum, profit-share reward, and final post-reward margin. A keeper-supplied amount can cause its own transaction to revert but cannot make an unsafe amount execute.
 
-Under-sizing may leave a second profitable action available, and a flat per-call cap can be collected again if another complete profitable call succeeds. This is accepted: each reward is a percentage of independently realized post-route gross profit, each call leaves V3 with its configured post-reward margin, and the keeper pays additional gas. `minExpansionAmount` blocks true dust without adding quote probes or a full-path search.
+Under-sizing may leave a second profitable action available, but percentage-only compensation does not increase the aggregate configured share merely because one opportunity is split across calls. Token rounding and changing AMM execution can alter exact results, and each call must independently leave V3 with its configured post-reward margin and pay its own gas. `minExpansionAmount` blocks true dust without adding quote probes or a full-path search.
 
-`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. There is no separate per-call action-size maximum or rolling-flow throttle: idle inventory, available backing, and `maxDeployedCrvUsd` are the actual exposure bounds. This does not remove the independent per-call cap on keeper compensation.
+`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. There is no separate per-call action-size maximum or rolling-flow throttle: idle inventory, available backing, and `maxDeployedCrvUsd` are the actual exposure bounds.
 
 ## Profitability and execution controls
 
@@ -850,10 +846,8 @@ For a successful full-route expansion, V3 calculates the keeper reward from the 
 require normalize(backingAssetOut) >= crvUsdSold
 grossEntryProfit = normalize(backingAssetOut) - crvUsdSold
 
-keeperRewardValue = min(
-    floor(grossEntryProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
-)
+keeperRewardValue
+    = floor(grossEntryProfit * keeperProfitShareBps / 10_000)
 
 keeperRewardTokens = denormalizeDown(keeperRewardValue)
 backingAssetToRoute = backingAssetOut - keeperRewardTokens
@@ -881,10 +875,11 @@ After all steps, V3 independently enforces:
 
 ```text
 normalizeDown(yieldToken.convertToAssets(actualYieldTokenReceived))
-    >= crvUsdSold + entryMargin
+    >= crvUsdSold
+       + crvUsdSold * entryMinProfitPpm / 1_000_000
 ```
 
-The quote-relative step floor prevents a favorable upstream spread from masking unnecessarily poor downstream execution. The final trusted-value floor prevents an accurately quoted but economically bad route from consuming principal. `downstreamExpansionPath.maxRouteLossBps` separately limits normalized route-wide conversion loss. These checks protect different failure modes and do not require a duplicate global `maxExecutionSlippageBps` parameter.
+The quote-relative step floor prevents a favorable upstream spread from masking unnecessarily poor downstream execution. The final trusted-value floor prevents local route economics from consuming principal, while the separate global backing invariant protects the complete position. `downstreamExpansionPath.maxRouteLossBps` separately limits normalized route-wide conversion loss. These checks protect different failure modes and do not require a duplicate global `maxExecutionSlippageBps` parameter.
 
 The fallback branch separately enforces the target AMM's quote-relative output floor, then applies its realized post-reward target-backing floor. The full-route trusted-value postcondition is not reused for fallback.
 
@@ -893,13 +888,14 @@ The fallback branch separately enforces the target AMM's quote-relative output f
 ```text
 fully deployed:
 normalizeDown(yieldToken.convertToAssets(yieldTokenReceived))
->= crvUsdSold
- + entryMargin
+>= crvUsdSold + crvUsdSold * entryMinProfitPpm / 1_000_000
 
 fallback:
 normalize(targetAssetRetainedAfterReward)
->= crvUsdSold
- + fallbackEntryMargin
+>= crvUsdSold + crvUsdSold * entryMinProfitPpm / 1_000_000
+
+complete state:
+trustedBackingValue >= deployedCrvUsd
 ```
 
 ### Direct buyback postcondition
@@ -913,18 +909,29 @@ crvUsdReceived
 ### Keeper buyback postcondition
 
 ```text
-grossExitProfit
-    = crvUsdReceived
-    - trustedBackingValue(selectedBackingSpent)
+trustedValueRemoved
+    = trustedBackingValue(selectedBackingSpent)
 
-keeperReward = min(
-    floor(grossExitProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
-)
+trustedBackingAfter
+    = trustedBackingBefore - trustedValueRemoved
+
+solvencyRecovery
+    = max(deployedCrvUsdBefore - trustedBackingAfter, 0)
+
+principalRecovery
+    = max(trustedValueRemoved, solvencyRecovery)
+
+grossExitProfit
+    = max(crvUsdReceived - principalRecovery, 0)
+
+keeperReward
+    = floor(grossExitProfit * keeperProfitShareBps / 10_000)
 
 crvUsdReceived - keeperReward
->= trustedBackingValue(selectedBackingSpent)
+>= trustedValueRemoved
  + selectedExitMargin
+
+trustedBackingValueAfter >= deployedCrvUsdAfter
 ```
 
 Reward-token conversion and every trusted-value normalization round down. Direct buyback sizes the yield-token payout downward through `convertToShares()` and transfers it directly, while expansion and surplus solvency value explicitly accounted post-action yield-token units downward through `convertToAssets()`.
@@ -938,13 +945,12 @@ Entry and exit should not have symmetric urgency.
 Expansion should remain immediately callable with no time delay:
 
 ```text
-entryMargin = crvUsdSold * entryMinProfitPpm / 1_000_000
-
 selectedBranchBackingRetainedAfterReward
->= crvUsdSold + entryMargin
+    >= crvUsdSold
+       + crvUsdSold * entryMinProfitPpm / 1_000_000
 ```
 
-The initial configuration is `entryMinProfitPpm = 50`, equal to `0.5 bps`. The ppm unit is deliberate because an integer basis-point parameter cannot represent half a basis point. Governance may reduce this parameter as low as `0`, but V3 does not support a negative entry margin. At zero, the selected branch must still break even after realized route costs, terminal rounding, and keeper reward. At the initial setting, the deployed branch must complete the downstream route while the fallback branch must retain target asset covering principal; either branch must then retain the additional `0.5 bps` margin. Later target-to-yield conversion remains optional and may spend only existing surplus.
+The initial configuration is `entryMinProfitPpm = 10`, equal to `0.1 bps`. The parameter is an unsigned integer bounded by `normalExitMinProfitPpm`; zero permits local break-even after realized route costs, terminal rounding, and keeper reward, but no value can authorize a local loss. Every completed expansion also requires total `trustedBackingValue >= deployedCrvUsd`. Later target-to-yield conversion remains optional and may spend only existing surplus.
 
 Expansion should not wait for a timer, EMA, accumulated yield, or downstream route recovery. If the target-AMM leg can complete into acceptable target backing, delaying it gives away the above-peg opportunity.
 
@@ -958,7 +964,8 @@ selectedExitMarginPpm =
         ? earlyExitMinProfitPpm
         : normalExitMinProfitPpm
 
-earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm
+earlyExitMinProfitPpm > normalExitMinProfitPpm
+normalExitMinProfitPpm >= entryMinProfitPpm
 
 selectedExitMargin
     = trustedBackingValue(selectedBackingSpent)
@@ -1022,20 +1029,20 @@ The minimum makes timer manipulation economically self-penalizing rather than fr
 
 The global timer also means a sequence of legitimate profitable expansions extends the normal-exit delay for the whole position. That is accepted as part of the anti-churn policy. Later undeployed backing deployment does not reset this supply timer, so newly created yield-token units are not guaranteed a separate carry interval.
 
-At `10,000` crvUSD and the initial `0.5 bps` entry margin, the minimum guaranteed retained protocol margin is only `0.50` normalized dollar units. The attacker's total cost is higher because it also bears AMM fees, slippage, and the manipulated round trip, but the absolute threshold does not make timer resets expensive by itself. The higher early-exit margin prevents a hard lock. Governance should monitor reset behavior and can raise `minExpansionAmount` if repeated resets become too cheap relative to deployed capacity.
+At `10,000` crvUSD and the initial `0.1 bps` entry margin, the minimum guaranteed retained protocol margin is only `0.10` normalized dollar units. The attacker's total cost is higher because it also bears AMM fees, slippage, and the manipulated round trip, but the absolute threshold does not make timer resets expensive by itself. The higher early-exit margin prevents a hard lock. Governance should monitor reset behavior and can raise `minExpansionAmount` if repeated resets become too cheap relative to deployed capacity.
 
 ## Open keeper and flash-liquidity model
 
 Open keepers are an explicit design choice. V3 cannot prevent an account from using flash liquidity to move the target AMM, call `expand()` or `contractViaAmm()`, and reverse the market trade afterward.
 
-The minimum-profit postcondition does not prevent that behavior and does not guarantee V3 captures every available basis point of market spread. It guarantees that any completed action leaves V3 with at least the configured nominal profit after the keeper reward under the approved-backing-at-par convention. A manipulator may capture residual spread, but cannot force V3 to complete below its own floor unless the fixed yield token's accounting interface itself is compromised. A real depeg of an approved backing asset remains outside nominal accounting.
+The entry-floor and exit-profit postconditions do not prevent that behavior and do not guarantee V3 captures every available basis point of market spread. They guarantee that any completed action satisfies its configured post-reward floor under the approved-backing-at-par convention, while every expansion still preserves `trustedBackingValue >= deployedCrvUsd`. A manipulator may capture residual spread, but cannot force V3 to complete below those checks unless the fixed yield token's accounting interface itself is compromised. A real depeg of an approved backing asset remains outside nominal accounting.
 
 The execution-quality floor prevents the configured route from performing materially worse than the quote visible when V3 executes. It cannot detect a malicious keeper that moved the AMM before the V3 transaction and restores it afterward. Preventing that completely would require a trusted price reference, auction, private order flow, or keeper whitelist. Those mechanisms are outside the current open-keeper design.
 
 The practical V3 policy is therefore:
 
 1. Accept that open execution can leak some transient market spread.
-2. Require expansion to achieve local break-even after route costs and keeper reward, plus any configured entry margin.
+2. Require expansion to satisfy the configured unsigned entry floor after route costs and keeper reward, while preserving the global backing invariant.
 3. Require contraction to achieve the selected normal or early exit margin after any keeper reward.
 4. Bound transaction size and reject dust-sized reward farming.
 5. Never trust keeper-provided minimum outputs.
@@ -1046,52 +1053,47 @@ V2 is not unprotected. Its regulator checks pool spot against the pool oracle fo
 
 Those controls reduce simple one-block manipulation and prevent an immediately unprofitable V2 update. They do not prove that V2 captures all available spread or eliminate multi-transaction market manipulation. V3 keeps the economically necessary post-trade profit condition but does not copy a target-AMM spot/EMA proximity check that would suppress the upward price spike V3 is meant to monetize.
 
-V2's percentage caller payment is also taken from positive incremental LP-accounting profit. Its lack of a flat per-call ceiling may overpay relative to gas during an unusually favorable update, but it is not a principal-safety failure or a primary reason for V3. V3's flat cap is a modest refinement to the new realized-profit model.
+V2's percentage caller payment is also taken from positive incremental LP-accounting profit. It may pay materially more than gas cost during an unusually favorable update, but that is not a principal-safety failure or a primary reason for V3. V3 retains percentage-only compensation while replacing LP-accounting deltas with realized branch profit and complete post-reward principal and margin checks.
 
 ## Keeper compensation
 
-Keeper compensation is a percentage of realized gross profit, clamped by an absolute per-call maximum:
+Keeper compensation is a percentage of realized gross profit:
 
 ```text
-keeperReward = min(
-    floor(grossProfit * keeperProfitShareBps / 10_000),
-    maxKeeperReward
-)
+keeperReward
+    = floor(grossProfit * keeperProfitShareBps / 10_000)
 ```
 
-The initial governance-changeable settings are:
+The initial governance-changeable setting is:
 
 ```text
 keeperProfitShareBps = 3_000  // 30%
-maxKeeperReward      = 20e18  // $20 normalized backing value
 ```
 
-The raw percentage reward reaches the cap when realized gross profit reaches:
+At the initial entry floor, V3 must retain `0.1 bps` after the `30%` reward. The minimum gross-profit rate is therefore `0.1 / 70% = 0.142857 bps`.
+
+For the initial `10,000 crvUSD` minimum expansion, a profitable branch executing at exactly that floor realizes approximately `$0.142857` gross profit, pays approximately `$0.042857` to the keeper, and retains `$0.10` for V3. The minimum action size is therefore an anti-dust and timer-reset bound, not a guarantee that the reward covers mainnet gas; keepers act only when actual size and spread make the percentage reward worthwhile.
+
+For fully deployed expansion, `grossProfit` used to size the keeper reward is normalized backing asset received immediately before the terminal yield-acquisition step minus crvUSD sold, and the keeper is paid in that backing asset. The terminal step's economics are then included in the authoritative post-reward final-yield backing floor. For fallback expansion, gross profit is normalized target asset actually received after target-AMM fees and slippage minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `undeployedBacking`. A failed downstream subcall rolls back its token conversions, so it changes caller gas cost but does not leave partial downstream route loss in V3. Reward-token conversion rounds down.
+
+For either keeper contraction source:
 
 ```text
-$20 / 30% = $66.6667
+principalRecovery
+    = max(
+        trustedValueRemoved,
+        max(deployedCrvUsdBefore - trustedBackingAfter, 0)
+    )
+
+grossProfit
+    = max(crvUsdReceived - principalRecovery, 0)
 ```
 
-There is no single cap-triggering notional because gross profit depends on the realized spread. Representative notionals are:
+The second principal term matters only when backing is impaired. It prevents deficit repair from being labeled rewardable profit. The keeper receives the configured percentage of this realized `grossProfit` in crvUSD.
 
-| Realized gross-profit rate | Notional that produces `$66.6667` gross profit |
-|---:|---:|
-| `0.5 bps` | `$1,333,333` |
-| `1 bps` | `$666,667` |
-| `2 bps` | `$333,333` |
-| `5 bps` | `$133,333` |
-| `10 bps` | `$66,667` |
-| `50 bps` | `$13,333` |
+One `expand()` call pays one branch reward. It does not pay separate rewards for the first crvUSD-to-target swap and the downstream target-to-yield conversion. Direct buyback and `deployUndeployedBacking()` callers receive no percentage reward. No explicit gas reimbursement is added to any branch; a keeper decides whether the realized percentage reward covers transaction gas and execution risk.
 
-At the initial entry floor, V3 must retain `0.5 bps` after the uncapped `30%` reward. The minimum gross-profit rate is therefore `0.5 / 70% = 0.714286 bps`, which reaches the `$20` cap at approximately `$933,333` notional. An action with a larger realized gross spread reaches the cap at a smaller notional.
-
-For the initial `10,000 crvUSD` minimum expansion, a branch executing at exactly that floor realizes approximately `$0.7143` gross profit, pays approximately `$0.2143` to the keeper, and retains `$0.50` for V3. The minimum action size is therefore an anti-dust and timer-reset bound, not a guarantee that the reward covers mainnet gas; keepers act only when actual size and spread make the capped reward worthwhile.
-
-For fully deployed expansion, `grossProfit` used to size the keeper reward is normalized backing asset received immediately before the terminal yield-acquisition step minus crvUSD sold, and the keeper is paid in that backing asset. The terminal step's economics are then included in the authoritative post-reward final-yield backing floor. For fallback expansion, gross profit is normalized target asset actually received after target-AMM fees and slippage minus crvUSD sold, and the keeper is paid in target asset before the remainder enters `undeployedBacking`. A failed downstream subcall rolls back its token conversions, so it changes caller gas cost but does not leave partial downstream route loss in V3. `maxKeeperReward` is stored in normalized 18-decimal backing-value units and token conversion rounds down. For either keeper contraction source, `grossProfit` is crvUSD received minus trusted backing value spent, and the keeper is paid in crvUSD.
-
-One `expand()` call pays one branch reward. It does not pay separate rewards for the first crvUSD-to-target swap and the downstream target-to-yield conversion. Direct buyback and `deployUndeployedBacking()` callers receive no percentage reward. No explicit gas reimbursement is added to any branch; a keeper decides whether the realized reward, capped at `$20`, covers transaction gas and execution risk.
-
-The high profit-share rate supports smaller economically useful calls, while `maxKeeperReward` prevents a large dislocation from paying an excessive single reward. The cap is intentionally per call rather than split-invariant. A keeper may collect the cap more than once by executing multiple transactions, including a same-block batch, but each successful call must independently realize profit through its selected branch and leave V3 with principal plus its configured post-reward margin. Since expected entry spreads are only a few basis points and most strategy return is intended to come from holding the yield position, this is treated as bounded rent leakage rather than a solvency issue.
+There is no flat reward ceiling. A per-call ceiling would not bound one economic opportunity because a keeper can split it across multiple transactions. It would instead penalize efficient large actions and encourage extra calls. Percentage-only compensation is split-invariant before token rounding, changing AMM execution, or a changing solvency-recovery basis: the keeper receives the configured share of aggregate realized gross profit, while each successful call independently leaves V3 with principal plus its configured post-reward margin. Governance controls keeper rent directly through `keeperProfitShareBps`.
 
 The reward rules are:
 
@@ -1100,8 +1102,7 @@ The reward rules are:
 3. The reward is paid only after the route has produced positive gross profit and the complete state transition can satisfy the post-reward protocol margin.
 4. The reward is paid to `msg.sender`; callers cannot supply an arbitrary beneficiary.
 5. Decimal conversion rounds the reward down.
-6. `maxKeeperReward` limits each individual reward but is not treated as an aggregate batch cap.
-7. The reward cannot consume principal or the configured protocol margin.
+6. The reward cannot consume principal or the configured protocol margin.
 
 No fixed stipend or time-refilling credit system is paid. A keeper decides whether its percentage reward is worth its gas and execution risk. The protocol favors simple repeated profitable execution over a reward budget that may be depleted during a clustered peg event.
 
@@ -1212,7 +1213,7 @@ Required controls:
 - governance updates to `maxDeployedCrvUsd`;
 - governance replacement of the target AMM and atomic replacement of both paths while preserving fixed token endpoints;
 - direct per-PegKeeper `feeReceiver` update independent of any regulator receiver;
-- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `maxKeeperReward`, `targetAmmExecutionBufferBps`, `minDownstreamAttemptGas`, and `fallbackSettlementGasReserve`;
+- governance updates to `minDeploymentTime`, `minExpansionAmount`, the entry and exit margin parameters, `keeperProfitShareBps`, `targetAmmExecutionBufferBps`, `minDownstreamAttemptGas`, and `fallbackSettlementGasReserve`;
 - approval revocation for retired venues;
 - owner-only arbitrary external execution for urgent recovery;
 - expansion pause for contraction-only slow wind-down.
@@ -1227,7 +1228,7 @@ function set_target_amm(address newTargetAmm, uint256 executionBufferBps) extern
 
 The owner-only call requires the replacement's two `coins()` entries to be exactly `crvUSD` and `targetAsset`, discovers either valid index order, bounds the target-AMM execution buffer to `10_000 bps`, and updates the venue, indices, and buffer atomically. It cannot change either token. Expansion and undeployed-backing contraction both read the current venue and discovered indices. The directional typed paths do not store or depend on the target-AMM address, so replacing this fixed-pair venue separately from `setPaths()` cannot create a token-endpoint mismatch; a governance proposal may still invoke both setters in one execution when changing the whole venue bundle.
 
-The implemented mutable policy surface is one atomic owner call rather than eight independent setters:
+The implemented mutable policy surface is one atomic owner call rather than seven independent setters:
 
 ```solidity
 function set_policy(
@@ -1235,14 +1236,13 @@ function set_policy(
     uint256 normalExitMinProfitPpm,
     uint256 earlyExitMinProfitPpm,
     uint256 keeperProfitShareBps,
-    uint256 maxKeeperReward,
     uint256 minDeploymentTime,
     uint256 minExpansionAmount,
     uint256 maxDeployedCrvUsd
 ) external;
 ```
 
-It requires `earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm`, bounds every margin to at most `1_000_000 ppm`, bounds the keeper share to `10_000 bps`, and rejects zero minimum expansion or zero configured exposure capacity. Zero entry margin, zero keeper compensation, and zero maturity delay remain valid governance policies. Governance may lower `maxDeployedCrvUsd` below current exposure to stop growth immediately; this does not rewrite existing exposure and does not disable contraction.
+It requires `earlyExitMinProfitPpm > normalExitMinProfitPpm >= entryMinProfitPpm`, bounds both unsigned exit margins to at most `1_000_000 ppm`, bounds the keeper share to `10_000 bps`, and rejects zero minimum expansion or zero configured exposure capacity. Zero entry margin, zero keeper compensation, and zero maturity delay remain valid governance policies. `trustedBackingValue >= deployedCrvUsd` remains mandatory. Governance may lower `maxDeployedCrvUsd` below current exposure to stop growth immediately; this does not rewrite existing exposure and does not disable contraction.
 
 Governance and the distinct pause-only emergency role can be rotated atomically:
 
@@ -1365,7 +1365,7 @@ event Executed(
 3. Contraction cannot reacquire more than the amount counted as deployed without explicit surplus accounting.
 4. `undeployedBacking` changes only through measured fallback retention, measured spending, successful typed deployment, or governance reconciliation.
 5. Unsolicited token transfers never increase accounted backing automatically.
-6. Keeper rewards equal the configured percentage of realized gross profit for the selected branch, clamped by `maxKeeperReward` per call and rounded down.
+6. Keeper rewards equal the configured percentage of realized gross profit for the selected branch and are rounded down.
 7. Keeper rewards and fee claims cannot consume required principal; a fee claim increases `deployedCrvUsd` only by an equal or smaller amount of protocol surplus.
 8. Caller-supplied minimums can only make execution stricter.
 9. Callers cannot choose routes, venues, output recipients, or reward recipients.
@@ -1426,7 +1426,7 @@ Keeper swaps through the external target AMM can be surrounded by flash-liquidit
 
 ### Keeper under-sizing
 
-A keeper may choose less than the maximum profitable amount and leave a second opportunity available. It may then earn another capped reward from a later independently profitable call. This can leak more execution spread than a single optimally sized call, but the keeper bears extra gas and every completed action must leave V3 with its configured post-reward margin. `minExpansionAmount`, the total deployment bound, and open competition are considered sufficient for the initial design. Under-sizing can reduce immediate peg effect, but it cannot make an uneconomic action pass.
+A keeper may choose less than the maximum profitable amount and leave a second opportunity available. Percentage-only compensation does not increase its aggregate configured share merely because the opportunity is split, although token rounding and changing AMM execution can alter exact results. The keeper bears extra gas, and every completed action must leave V3 with its configured post-reward margin. `minExpansionAmount`, the total deployment bound, and open competition are considered sufficient for the initial design. Under-sizing can reduce immediate peg effect, but it cannot make an uneconomic action pass.
 
 ### Exit-delay liveness
 

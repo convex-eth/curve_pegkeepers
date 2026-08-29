@@ -128,7 +128,6 @@ event PolicyUpdated:
     normal_exit_min_profit_ppm: uint256
     early_exit_min_profit_ppm: uint256
     keeper_profit_share_bps: uint256
-    max_keeper_reward: uint256
     min_deployment_time: uint256
     min_expansion_amount: uint256
     max_deployed_crvusd: uint256
@@ -189,7 +188,6 @@ entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
 early_exit_min_profit_ppm: public(uint256)
 keeper_profit_share_bps: public(uint256)
-max_keeper_reward: public(uint256)
 min_deployment_time: public(uint256)
 min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
@@ -274,11 +272,10 @@ def __init__(
     self.emergency_admin = _emergency_admin
     self.fee_receiver = _fee_receiver
 
-    self.entry_min_profit_ppm = 50
+    self.entry_min_profit_ppm = 10
     self.normal_exit_min_profit_ppm = 1_000
     self.early_exit_min_profit_ppm = 5_000
     self.keeper_profit_share_bps = 3_000
-    self.max_keeper_reward = 20 * 10 ** 18
     self.min_deployment_time = 2 * 86400
     self.min_expansion_amount = 10_000 * 10 ** 18
     self.max_deployed_crvusd = _max_deployed_crvusd
@@ -335,6 +332,13 @@ def coins(_index: uint256) -> address:
 @pure
 def _normalize_target(_amount: uint256) -> uint256:
     return _amount * TARGET_MULTIPLIER
+
+
+@internal
+@view
+def _meets_entry_floor(_retained_value: uint256, _principal: uint256) -> bool:
+    required_profit: uint256 = _principal * self.entry_min_profit_ppm / PPM
+    return _retained_value >= _principal + required_profit
 
 
 @internal
@@ -397,6 +401,24 @@ def available_expansion() -> uint256:
 @view
 def _is_early_exit() -> bool:
     return self.deployed_crvusd > 0 and block.timestamp < self.last_expansion_at + self.min_deployment_time
+
+
+@internal
+@view
+def _realized_contraction_profit(
+    _crv_usd_received: uint256,
+    _trusted_value_removed: uint256,
+    _trusted_backing_after: uint256,
+) -> uint256:
+    principal_recovery: uint256 = _trusted_value_removed
+    if self.deployed_crvusd > _trusted_backing_after:
+        solvency_recovery: uint256 = self.deployed_crvusd - _trusted_backing_after
+        if solvency_recovery > principal_recovery:
+            principal_recovery = solvency_recovery
+
+    if _crv_usd_received <= principal_recovery:
+        return 0
+    return _crv_usd_received - principal_recovery
 
 
 @internal
@@ -531,13 +553,13 @@ def previewUndeployedContraction(_target_amount: uint256) -> (uint256, uint256, 
         _target_amount,
     )
     target_value: uint256 = self._normalize_target(_target_amount)
-    gross_profit: uint256 = 0
-    if expected_crv_usd > target_value:
-        gross_profit = expected_crv_usd - target_value
-
+    trusted_backing_after: uint256 = self._trusted_backing_value() - target_value
+    gross_profit: uint256 = self._realized_contraction_profit(
+        expected_crv_usd,
+        target_value,
+        trusted_backing_after,
+    )
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    if keeper_reward > self.max_keeper_reward:
-        keeper_reward = self.max_keeper_reward
 
     return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
 
@@ -589,12 +611,13 @@ def previewKeeperBuyback(_yield_token_amount: uint256) -> (uint256, uint256, uin
     assert trusted_value_removed <= self.deployed_crvusd
 
     expected_crv_usd: uint256 = self._preview_contraction_path(_yield_token_amount)
-    gross_profit: uint256 = 0
-    if expected_crv_usd > trusted_value_removed:
-        gross_profit = expected_crv_usd - trusted_value_removed
+    trusted_backing_after: uint256 = self._trusted_backing_value() - trusted_value_removed
+    gross_profit: uint256 = self._realized_contraction_profit(
+        expected_crv_usd,
+        trusted_value_removed,
+        trusted_backing_after,
+    )
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    if keeper_reward > self.max_keeper_reward:
-        keeper_reward = self.max_keeper_reward
     return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
 
 
@@ -624,8 +647,6 @@ def _preview_expansion_route(
             keeper_reward_value: uint256 = (
                 gross_profit * self.keeper_profit_share_bps / BPS
             )
-            if keeper_reward_value > self.max_keeper_reward:
-                keeper_reward_value = self.max_keeper_reward
             keeper_reward = keeper_reward_value / BACKING_MULTIPLIER
             if keeper_reward > backing_asset_out:
                 return backing_asset_out, gross_profit, keeper_reward, 0, False
@@ -649,8 +670,7 @@ def _preview_expansion_route(
     if conversion_cost > target_value * self.expansion_max_route_loss_bps / BPS:
         return backing_asset_out, gross_profit, keeper_reward, yield_token_out, False
 
-    entry_margin: uint256 = _crv_usd_amount * self.entry_min_profit_ppm / PPM
-    if trusted_yield_value < _crv_usd_amount + entry_margin:
+    if not self._meets_entry_floor(trusted_yield_value, _crv_usd_amount):
         return backing_asset_out, gross_profit, keeper_reward, yield_token_out, False
     return backing_asset_out, gross_profit, keeper_reward, yield_token_out, True
 
@@ -685,6 +705,13 @@ def previewExpansion(
         expected_to_deploy,
     ) = self._preview_expansion_route(expected_target_out, _crv_usd_amount)
     if expected_to_deploy:
+        projected_trusted_backing: uint256 = (
+            self._normalize_target(self.undeployed_backing)
+            + self._trusted_yield_value(
+                self.accounted_yield_token_units + expected_yield_token
+            )
+        )
+        assert projected_trusted_backing >= deployed_after
         return (
             expected_target_out,
             expected_backing_out,
@@ -701,16 +728,19 @@ def previewExpansion(
     keeper_reward_value: uint256 = (
         expected_gross_profit * self.keeper_profit_share_bps / BPS
     )
-    if keeper_reward_value > self.max_keeper_reward:
-        keeper_reward_value = self.max_keeper_reward
     expected_keeper_reward = keeper_reward_value / TARGET_MULTIPLIER
     assert expected_keeper_reward <= expected_target_out
 
     expected_target_retained: uint256 = expected_target_out - expected_keeper_reward
-    entry_margin: uint256 = _crv_usd_amount * self.entry_min_profit_ppm / PPM
-    assert self._normalize_target(expected_target_retained) >= (
-        _crv_usd_amount + entry_margin
+    assert self._meets_entry_floor(
+        self._normalize_target(expected_target_retained),
+        _crv_usd_amount,
     )
+    projected_trusted_backing: uint256 = (
+        self._normalize_target(self.undeployed_backing + expected_target_retained)
+        + self._trusted_yield_value(self.accounted_yield_token_units)
+    )
+    assert projected_trusted_backing >= deployed_after
     return (
         expected_target_out,
         0,
@@ -886,8 +916,6 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         gross_profit = target_value - crv_usd_sold
 
     keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    if keeper_reward_value > self.max_keeper_reward:
-        keeper_reward_value = self.max_keeper_reward
     keeper_reward: uint256 = keeper_reward_value / TARGET_MULTIPLIER
 
     if keeper_reward > 0:
@@ -903,8 +931,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     assert target_after_reward >= target_before
     target_retained: uint256 = target_after_reward - target_before
 
-    entry_margin: uint256 = crv_usd_sold * self.entry_min_profit_ppm / PPM
-    assert self._normalize_target(target_retained) >= crv_usd_sold + entry_margin
+    assert self._meets_entry_floor(self._normalize_target(target_retained), crv_usd_sold)
 
     self.undeployed_backing += target_retained
     self.deployed_crvusd = deployed_after
@@ -972,13 +999,13 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     assert crv_usd_received >= crv_usd_minimum
 
     target_value: uint256 = self._normalize_target(target_spent)
-    gross_profit: uint256 = 0
-    if crv_usd_received > target_value:
-        gross_profit = crv_usd_received - target_value
-
+    trusted_backing_after: uint256 = self._trusted_backing_value() - target_value
+    gross_profit: uint256 = self._realized_contraction_profit(
+        crv_usd_received,
+        target_value,
+        trusted_backing_after,
+    )
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    if keeper_reward > self.max_keeper_reward:
-        keeper_reward = self.max_keeper_reward
 
     if keeper_reward > 0:
         keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
@@ -1295,8 +1322,6 @@ def executeExpansionPath(
             if backing_value > _crv_usd_sold:
                 gross_profit = backing_value - _crv_usd_sold
             keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-            if keeper_reward_value > self.max_keeper_reward:
-                keeper_reward_value = self.max_keeper_reward
             keeper_reward = keeper_reward_value / BACKING_MULTIPLIER
             assert keeper_reward <= backing_asset_received
             if keeper_reward > 0:
@@ -1321,8 +1346,7 @@ def executeExpansionPath(
     assert conversion_cost <= (
         target_value * self.expansion_max_route_loss_bps / BPS
     )
-    entry_margin: uint256 = _crv_usd_sold * self.entry_min_profit_ppm / PPM
-    assert trusted_yield_received >= _crv_usd_sold + entry_margin
+    assert self._meets_entry_floor(trusted_yield_received, _crv_usd_sold)
     return backing_asset_received, yield_token_received, gross_profit, keeper_reward
 
 
@@ -1393,6 +1417,7 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
     assert len(self.contraction_path) > 0
 
     accounted_before: uint256 = self.accounted_yield_token_units
+    trusted_backing_before: uint256 = self._trusted_backing_value()
     trusted_value_before: uint256 = self._trusted_yield_value(accounted_before)
     quoted_value_after: uint256 = self._trusted_yield_value(
         accounted_before - _yield_token_amount
@@ -1422,12 +1447,13 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
     trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
     assert trusted_value_removed <= self.deployed_crvusd
 
-    gross_profit: uint256 = 0
-    if crv_usd_received > trusted_value_removed:
-        gross_profit = crv_usd_received - trusted_value_removed
+    trusted_backing_after: uint256 = trusted_backing_before - trusted_value_removed
+    gross_profit: uint256 = self._realized_contraction_profit(
+        crv_usd_received,
+        trusted_value_removed,
+        trusted_backing_after,
+    )
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    if keeper_reward > self.max_keeper_reward:
-        keeper_reward = self.max_keeper_reward
 
     if keeper_reward > 0:
         keeper_balance_before: uint256 = CRV_USD.balanceOf(msg.sender)
@@ -1477,7 +1503,6 @@ def set_policy(
     _normal_exit_min_profit_ppm: uint256,
     _early_exit_min_profit_ppm: uint256,
     _keeper_profit_share_bps: uint256,
-    _max_keeper_reward: uint256,
     _min_deployment_time: uint256,
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
@@ -1494,7 +1519,6 @@ def set_policy(
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
     self.early_exit_min_profit_ppm = _early_exit_min_profit_ppm
     self.keeper_profit_share_bps = _keeper_profit_share_bps
-    self.max_keeper_reward = _max_keeper_reward
     self.min_deployment_time = _min_deployment_time
     self.min_expansion_amount = _min_expansion_amount
     self.max_deployed_crvusd = _max_deployed_crvusd
@@ -1504,7 +1528,6 @@ def set_policy(
         _normal_exit_min_profit_ppm,
         _early_exit_min_profit_ppm,
         _keeper_profit_share_bps,
-        _max_keeper_reward,
         _min_deployment_time,
         _min_expansion_amount,
         _max_deployed_crvusd,

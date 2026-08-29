@@ -198,6 +198,19 @@ contract PegKeeperV3ExpansionTest is Test {
         assertFalse(deployed);
     }
 
+    function test_expansionPaysConfiguredProfitShareWithoutFlatCap() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        (,,, uint256 reward,) = pegKeeper.expand(MIN_EXPANSION);
+
+        assertEq(reward, 30e6);
+        assertEq(targetAsset.balanceOf(keeper), 30e6);
+        assertEq(pegKeeper.protocol_surplus(), 70e18);
+    }
+
     function test_previewExpansionRejectsTheStateChangingAmountBounds() public {
         IPegKeeperV3 previewer = IPegKeeperV3(address(pegKeeper));
 
@@ -299,9 +312,7 @@ contract PegKeeperV3ExpansionTest is Test {
         crvUsd.mint(address(pegKeeper), 20 * MIN_EXPANSION);
         pool.setPrices(1_010_000, 1_010_000);
         vm.prank(governance);
-        pegKeeper.set_policy(
-            50, 1_000, 5_000, 3_000, 20e18, 2 days, MIN_EXPANSION, 10 * MIN_EXPANSION
-        );
+        pegKeeper.set_policy(50, 1_000, 5_000, 3_000, 2 days, MIN_EXPANSION, 10 * MIN_EXPANSION);
         _enableExpansion(0);
 
         _runSplitExpansions(10);
@@ -310,7 +321,7 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(crvUsd.balanceOf(address(pegKeeper)), 10 * MIN_EXPANSION);
     }
 
-    function test_splitMinimumCallsCollectMoreCapsButLeaveLessSurplusThanOneLargeCall() public {
+    function test_splitMinimumCallsPaySameAggregateShareAsOneLargeCall() public {
         uint256 totalAmount = 10 * MIN_EXPANSION;
         crvUsd.mint(address(pegKeeper), totalAmount);
         pool.setPrices(1_010_000, 1_010_000);
@@ -321,18 +332,18 @@ contract PegKeeperV3ExpansionTest is Test {
         vm.prank(keeper);
         (,,, uint256 largeReward,) = pegKeeper.expand(totalAmount);
         uint256 largeSurplus = pegKeeper.protocol_surplus();
-        assertEq(largeReward, 20e6);
-        assertEq(largeSurplus, 980e18);
+        assertEq(largeReward, 300e6);
+        assertEq(largeSurplus, 700e18);
 
         assertTrue(vm.revertToState(snapshot));
         _runSplitExpansions(10);
         uint256 splitReward = targetAsset.balanceOf(keeper);
         uint256 splitSurplus = pegKeeper.protocol_surplus();
 
-        assertEq(splitReward, 200e6);
-        assertEq(splitSurplus, 800e18);
-        assertGt(splitReward, largeReward);
-        assertLt(splitSurplus, largeSurplus);
+        assertEq(splitReward, 300e6);
+        assertEq(splitSurplus, 700e18);
+        assertEq(splitReward, largeReward);
+        assertEq(splitSurplus, largeSurplus);
     }
 
     function test_availableExpansionUsesIdleFactoryAndConfiguredBounds() public {
@@ -411,23 +422,6 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(targetAsset.balanceOf(address(pegKeeper)), donation + expectedRetained);
         assertEq(pegKeeper.undeployed_backing(), expectedRetained);
         assertEq(pegKeeper.trusted_backing_value(), expectedRetained * TARGET_MULTIPLIER);
-    }
-
-    function test_expansionCapsTargetDenominatedReward() public {
-        uint256 amount = MIN_EXPANSION;
-        crvUsd.mint(address(pegKeeper), amount);
-        pool.setPrices(1_010_000, 1_010_000);
-        _enableExpansion(0);
-
-        uint256 expectedTarget = pool.get_dy(1, 0, amount);
-        uint256 expectedReward = 20e6;
-
-        vm.prank(keeper);
-        (,,, uint256 reward,) = pegKeeper.expand(amount);
-
-        assertEq(reward, expectedReward);
-        assertEq(targetAsset.balanceOf(keeper), expectedReward);
-        assertEq(pegKeeper.undeployed_backing(), expectedTarget - expectedReward);
     }
 
     function test_expansionRoundsTargetRewardDownToNativeUnits() public {
@@ -526,9 +520,7 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
 
         vm.prank(governance);
-        pegKeeper.set_policy(
-            50, 1_000, 5_000, 3_000, 20e18, 2 days, MIN_EXPANSION, MIN_EXPANSION - 1
-        );
+        pegKeeper.set_policy(50, 1_000, 5_000, 3_000, 2 days, MIN_EXPANSION, MIN_EXPANSION - 1);
         assertEq(pegKeeper.available_expansion(), 0);
         assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
 
@@ -641,12 +633,12 @@ contract PegKeeperV3ExpansionTest is Test {
         for (uint256 i; i < calls; ++i) {
             vm.prank(keeper);
             (,,, uint256 reward,) = pegKeeper.expand(MIN_EXPANSION);
-            assertEq(reward, 20e6);
+            assertEq(reward, 30e6);
         }
         assertEq(pegKeeper.deployed_crvusd(), calls * MIN_EXPANSION);
-        assertEq(targetAsset.balanceOf(keeper), calls * 20e6);
+        assertEq(targetAsset.balanceOf(keeper), calls * 30e6);
         assertEq(pegKeeper.last_expansion_at(), timestamp);
-        assertEq(pegKeeper.protocol_surplus(), calls * 80e18);
+        assertEq(pegKeeper.protocol_surplus(), calls * 70e18);
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 

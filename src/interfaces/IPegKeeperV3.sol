@@ -65,7 +65,6 @@ interface IPegKeeperV3 {
         uint256 normalExitMinProfitPpm,
         uint256 earlyExitMinProfitPpm,
         uint256 keeperProfitShareBps,
-        uint256 maxKeeperReward,
         uint256 minDeploymentTime,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
@@ -109,7 +108,6 @@ interface IPegKeeperV3 {
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function early_exit_min_profit_ppm() external view returns (uint256);
     function keeper_profit_share_bps() external view returns (uint256);
-    function max_keeper_reward() external view returns (uint256);
     function min_deployment_time() external view returns (uint256);
     function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
@@ -142,7 +140,6 @@ interface IPegKeeperV3 {
         uint256 normalExitMinProfitPpm,
         uint256 earlyExitMinProfitPpm,
         uint256 keeperProfitShareBps,
-        uint256 maxKeeperReward,
         uint256 minDeploymentTime,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd

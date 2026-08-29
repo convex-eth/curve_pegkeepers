@@ -66,7 +66,6 @@ contract PegKeeperV3UndeployedContractionForkTest is Test {
         uint256 targetValue = TARGET_AMOUNT * TARGET_MULTIPLIER;
         uint256 grossProfit = expectedOut - targetValue;
         uint256 expectedReward = grossProfit * 3_000 / 10_000;
-        if (expectedReward > 20e18) expectedReward = 20e18;
         uint256 expectedNet = expectedOut - expectedReward;
         assertGe(expectedNet, targetValue + targetValue * 5_000 / 1_000_000);
 

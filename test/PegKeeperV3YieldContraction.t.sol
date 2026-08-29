@@ -152,14 +152,15 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertEq(crvUsd.allowance(address(pegKeeper), address(targetPool)), 0);
     }
 
-    function test_postExposureImpairmentBlocksGrowthAndPartialExitButAllowsFullRestoration()
+    function test_postExposureImpairmentBlocksGrowthAndPartialExitButAllowsFullSolvencyRestoringExit()
         public
     {
         _enableYieldContraction();
         uint256 accounted = pegKeeper.accounted_yield_token_units();
         uint256 exposure = pegKeeper.deployed_crvusd();
         yieldToken.setRates(1_000_000, 1_000_000, 900_000);
-        assertLt(pegKeeper.trusted_backing_value(), exposure);
+        uint256 impairedBacking = pegKeeper.trusted_backing_value();
+        assertLt(impairedBacking, exposure);
 
         crvUsd.mint(address(pegKeeper), EXPANSION_AMOUNT);
         vm.prank(expansionKeeper);
@@ -175,8 +176,16 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertEq(pegKeeper.accounted_yield_token_units(), accounted);
         assertEq(pegKeeper.deployed_crvusd(), exposure);
 
+        (uint256 previewReceived, uint256 previewProfit, uint256 previewReward,) =
+            yieldContraction.previewKeeperBuyback(accounted);
         vm.prank(contractionKeeper);
-        yieldContraction.contractViaAmm(accounted);
+        (, uint256 received, uint256 reward) = yieldContraction.contractViaAmm(accounted);
+        uint256 remainingBacking = pegKeeper.trusted_backing_value();
+        uint256 realizedProfit = received + remainingBacking - exposure;
+        assertEq(received, previewReceived);
+        assertEq(realizedProfit, previewProfit);
+        assertEq(reward, previewReward);
+        assertEq(reward, realizedProfit * 3_000 / 10_000);
         assertEq(pegKeeper.accounted_yield_token_units(), 0);
         assertEq(pegKeeper.deployed_crvusd(), 0);
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
@@ -471,7 +480,6 @@ contract PegKeeperV3YieldContractionTest is Test {
         uint256 trustedRemoved = trustedBefore - trustedAfter;
         if (expectedOut > trustedRemoved) grossProfit = expectedOut - trustedRemoved;
         reward = grossProfit * 3_000 / 10_000;
-        if (reward > 20e18) reward = 20e18;
     }
 
     function _installPaths(IPegKeeperV3.RouteStep[] memory contractionPath) internal {

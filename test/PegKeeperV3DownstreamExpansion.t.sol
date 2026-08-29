@@ -185,7 +185,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
 
         uint256 expectedTarget = targetPool.get_dy(1, 0, MIN_EXPANSION);
         uint256 expectedGrossProfit = expectedTarget * TARGET_MULTIPLIER - MIN_EXPANSION;
-        uint256 expectedReward = 20e6;
+        uint256 expectedReward = expectedGrossProfit * 3_000 / 10_000 / TARGET_MULTIPLIER;
         (
             uint256 targetOut,
             uint256 backingOut,
@@ -452,7 +452,6 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         targetReceived = targetPool.get_dy(1, 0, amount);
         uint256 grossProfit = targetReceived * TARGET_MULTIPLIER - amount;
         reward = grossProfit * 3_000 / 10_000 / TARGET_MULTIPLIER;
-        if (reward > 20e6) reward = 20e6;
         retained = targetReceived - reward;
     }
 

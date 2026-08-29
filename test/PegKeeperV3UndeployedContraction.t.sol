@@ -71,7 +71,7 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         contraction.previewUndeployedContraction(0);
     }
 
-    function test_earlyContractionPaysCappedRewardAndReducesExposureByNetCrvUsd() public {
+    function test_earlyContractionPaysProfitShareAndReducesExposureByNetCrvUsd() public {
         _createUndeployedBacking();
         _enableContraction();
         uint256 targetAmount = 1_000e6;
@@ -277,7 +277,6 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         expectedOut = pool.get_dy(0, 1, targetAmount);
         grossProfit = expectedOut - targetAmount * TARGET_MULTIPLIER;
         reward = grossProfit * 3_000 / 10_000;
-        if (reward > 20e18) reward = 20e18;
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
