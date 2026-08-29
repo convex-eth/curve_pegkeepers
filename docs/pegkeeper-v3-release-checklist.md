@@ -10,11 +10,12 @@ Canonical candidate manifest: [`../deployments/mainnet/PegKeeperV3-release.json`
 - [x] `forge fmt --check`, `git diff --check`, `forge lint`, and `forge build` pass.
 - [x] Full unit, fuzz, historical-fork, and live-integration suite passes.
 - [x] Vyper/Solidity ABI parity: 62 functions and 13 events.
-- [x] Constructor-specialized deployed runtime is `21,611` bytes, `2,965` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `21,387` bytes.
-- [x] Full initcode including all nine static constructor arguments is `22,967` bytes, `26,185` bytes below EIP-3860.
-- [x] Independent lifecycle/policy, expansion-preview, and size-remediation reviews returned PASS.
+- [x] Constructor-specialized deployed runtime is `22,077` bytes, `2,499` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `21,853` bytes.
+- [x] Full initcode including all nine static constructor arguments is `23,433` bytes, `25,719` bytes below EIP-3860.
+- [x] Independent lifecycle/policy, expansion-preview, size-remediation, and frxUSD mint-adapter reviews returned PASS.
 - [x] Deployment script has a RED/GREEN test proving the constructor tuple, fixed endpoints, roles, capacity, fully paused startup, and runtime bound.
-- [x] Current-mainnet canary passed at block `25,854,106` through USDT → DAI → USDS → sUSDS, quoted the complete reverse contraction route, and left no residual route allowances.
+- [x] Current-mainnet canary passed at block `25,857,968` through USDT → DAI → USDS → sUSDS, quoted `9,994.628476759022303461` crvUSD from the complete reverse route for one-tenth of the received shares, and left no residual route allowances.
+- [x] Pinned-mainnet frxUSD canary passed at block `25,857,270`: a full V3 expansion deposited `100,100` USDC through the live Frax custodian, minted `100,100` frxUSD, acquired sfrxUSD through Curve, preserved measured backing accounting, and cleared both route allowances.
 - [x] Candidate expansion and contraction path hashes are recorded in the manifest.
 - [x] No credentials or private keys are stored in the repository or manifest.
 
@@ -27,6 +28,7 @@ These are governance decisions. They are deliberately not guessed by the release
 - [ ] Select `maxDeployedCrvUsd`.
 - [ ] Select the initial Factory debt ceiling/allocation.
 - [ ] Refresh `docs/pegkeeper-v3-routing-and-path-costs.md` at a new pinned block and reject any route whose target-AMM or downstream ladder reaches nonlinear impact below the proposed capacity.
+- [ ] For any frxUSD-mint route, re-read the proxy implementation, `asset()`, `frxUSD()`, `mintFee()`, `mintCap()`, `frxUSDMinted()`, and `maxDeposit()`; keep configured capacity below the refreshed mint limit.
 - [ ] Approve the expansion and contraction path hashes in the manifest.
 - [ ] Calibrate and approve `targetAmmExecutionBufferBps`.
 - [ ] Calibrate and approve each route step's `executionBufferBps`.
@@ -111,4 +113,4 @@ Do not combine deployment with activation.
 - [ ] Keeper rewards match the configured percentage/cap and selected branch token.
 - [ ] Factory ceiling and local `max_deployed_crvusd` match governance records.
 - [ ] Emergency admin can pause but cannot unpause or execute recovery calls.
-- [ ] Alerts cover backing invariant failure, route failure/fallback rate, allowance residue, pause changes, role changes, target-AMM changes, and exposure ceilings.
+- [ ] Alerts cover backing invariant failure, route failure/fallback rate, allowance residue, pause changes, role changes, target-AMM changes, frxUSD-minter proxy/fee/cap changes, and exposure ceilings.
