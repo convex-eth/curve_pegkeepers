@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-29T07:58:29Z",
+  "generatedAtUtc": "2026-08-29T09:42:52Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "136eee14cc81272ace573ab520b4e7bcf8a1b2e9",
+  "productionSourceCommit": "ec70a9f35e9f01dc8b3572ea994444f9d2357a6e",
   "compiler": {
     "language": "Vyper",
     "version": "0.3.10+commit.9136169",
@@ -11,28 +11,77 @@
   },
   "source": {
     "path": "src/vyper/PegKeeperV3.vy",
-    "sha256": "fc8cbfcb5f63c3c61c16796518f41b5d91a2325c642c8244d11b5e12e7e6818c"
+    "sha256": "00d519e15e8c56658467abbf5d150ae445e582f7969acab6dae7180f11a71f87"
   },
   "artifact": {
     "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-    "compilerCreationBytes": 23269,
-    "compilerCreationKeccak256": "0x2abe81126834f371b463b8d5c3e8cce21578c42b6f5d9f91ee66b633d6f30c68",
-    "constructorArgsBytes": 288,
-    "fullInitCodeBytes": 23557,
+    "compilerCreationBytes": 23715,
+    "compilerCreationKeccak256": "0x08474c0271c65b7eda03cf96185c14f5fcb9bf6abda5af7536169e0bd0c33856",
+    "constructorArgsBytes": 320,
+    "fullInitCodeBytes": 24035,
     "eip3860LimitBytes": 49152,
-    "fullInitCodeMarginBytes": 25595,
-    "runtimeTemplateBytes": 21990,
-    "runtimeTemplateKeccak256": "0x04d0df7c111785d1d786f39f57517a226cf41794307f7d1476f1e62f43bac4e3",
-    "deployedRuntimeBytes": 22214,
+    "fullInitCodeMarginBytes": 25117,
+    "runtimeTemplateBytes": 22137,
+    "runtimeTemplateKeccak256": "0xda6c5ef7d4acd2513c38ddaee151ee3a4b19df4c5b21984d465c7fd0b151f647",
+    "deployedRuntimeBytes": 22361,
     "eip170LimitBytes": 24576,
-    "deployedRuntimeMarginBytes": 2362,
-    "abiFunctions": 61,
+    "deployedRuntimeMarginBytes": 2215,
+    "abiFunctions": 63,
     "abiEvents": 13
+  },
+  "deploymentFactory": {
+    "source": {
+      "path": "src/PegKeeperV3Factory.sol",
+      "sha256": "5e0423afca04564a17c666a4e21877ceba8a1844af45e3cf262f565a1a5af245"
+    },
+    "artifact": {
+      "path": "out/PegKeeperV3Factory.sol/PegKeeperV3Factory.json",
+      "compilerCreationBytes": 6032,
+      "compilerCreationKeccak256": "0x7ff3f08ca8a48ce3c5f88afc5d7ba87e81a15adf6f847cdcc3584034966162ae",
+      "constructorArgsBytes": 352,
+      "fullInitCodeBytes": 6384,
+      "eip3860LimitBytes": 49152,
+      "fullInitCodeMarginBytes": 42768,
+      "runtimeTemplateBytes": 4864,
+      "runtimeTemplateKeccak256": "0xd641214dedcd915951e55c2504fb3a7d685caa51877a785d5e80b08c2d47aa59",
+      "deployedRuntimeBytes": 4864,
+      "eip170LimitBytes": 24576,
+      "deployedRuntimeMarginBytes": 19712,
+      "abiFunctions": 14,
+      "abiEvents": 5
+    },
+    "blueprint": {
+      "format": "EIP-5202 version 0",
+      "preamble": "0xfe7100",
+      "runtimeBytes": 23718,
+      "runtimeKeccak256": "0x5383ce91a9d5257a5b91700efb40c82d0c782dceab961e3f24d83e4a4e3560b9",
+      "eip170LimitBytes": 24576,
+      "runtimeMarginBytes": 858
+    },
+    "candidateDefaults": {
+      "owner": null,
+      "controllerFactory": "0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC",
+      "admin": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
+      "emergencyAdmin": "0x467947EE34aF926cF1DCac093870f613C96B1E0c",
+      "feeReceiver": "0x2dFd89449faff8a532790667baB21cF733C064f2",
+      "maxDeployedCrvUsd": null,
+      "targetAmmExecutionBufferBps": null,
+      "minDownstreamAttemptGas": null,
+      "fallbackSettlementGasReserve": null,
+      "expansionMaxRouteLossBps": null,
+      "operatorConfirmationRequired": true
+    },
+    "deployment": {
+      "blueprintAddress": null,
+      "factoryAddress": null,
+      "transactionHash": null,
+      "verified": false
+    }
   },
   "verification": {
     "forgeVersion": "1.7.1",
     "solidityVersion": "0.8.30",
-    "testsPassed": 190,
+    "testsPassed": 198,
     "testsFailed": 0,
     "testsSkipped": 0,
     "deploymentTest": "pass",
@@ -50,7 +99,8 @@
     "admin": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
     "emergencyAdmin": "0x467947EE34aF926cF1DCac093870f613C96B1E0c",
     "maxDeployedCrvUsd": null,
-    "operatorConfirmationRequired": true
+    "operatorConfirmationRequired": true,
+    "keeperIndex": 1
   },
   "candidatePaths": {
     "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
@@ -126,13 +176,13 @@
     "productionCalibrationRequired": true
   },
   "latestMainnetCanary": {
-    "block": 25859527,
+    "block": 25860039,
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90280607160427255235510",
-    "simulatedContractionQuoteSusds": "9028060716042725523551",
-    "simulatedContractionQuoteCrvUsd": "9994546438624583595823",
+    "simulatedSusdsReceived": "90280914267900469434301",
+    "simulatedContractionQuoteSusds": "9028091426790046943430",
+    "simulatedContractionQuoteCrvUsd": "9994503268721919315124",
     "targetAmmExecutionBufferBps": 0,
     "minDownstreamAttemptGas": 1500000,
     "fallbackSettlementGasReserve": 300000,
@@ -148,10 +198,11 @@
     "activated": false
   },
   "activationBlockers": [
-    "Governance must confirm feeReceiver, admin, and emergencyAdmin.",
-    "Governance must select maxDeployedCrvUsd and the Factory debt ceiling.",
+    "Governance must confirm the deployment-factory owner, PegKeeper admin, emergency admin, and fee receiver.",
+    "Governance must select maxDeployedCrvUsd and the ControllerFactory debt ceiling.",
     "Target-AMM and per-step buffers, route-loss tolerance, and gas reserve values require production calibration and approval.",
+    "The exact EIP-5202 implementation blueprint hash must be confirmed before factory deployment or implementation update.",
     "A fresh current-block canary must pass immediately before broadcast and again before activation.",
-    "Deployment and activation transactions require explicit operator approval; this release package does not broadcast them."
+    "Blueprint, factory, PegKeeper deployment, and activation transactions require explicit operator approval; this release package does not broadcast them."
   ]
 }
