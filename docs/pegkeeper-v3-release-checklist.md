@@ -9,12 +9,12 @@ Canonical candidate manifest: [`../deployments/mainnet/PegKeeperV3-release.json`
 - [x] Production source pins Vyper `0.3.10` and Foundry uses `.venv/bin/vyper` with `optimize = "codesize"`.
 - [x] `forge fmt --check`, `git diff --check`, `forge lint`, and `forge build` pass.
 - [x] Full unit, fuzz, historical-fork, and live-integration suite passes.
-- [x] Vyper/Solidity ABI parity: 62 functions and 13 events.
-- [x] Constructor-specialized deployed runtime is `22,077` bytes, `2,499` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `21,853` bytes.
-- [x] Full initcode including all nine static constructor arguments is `23,433` bytes, `25,719` bytes below EIP-3860.
-- [x] Independent lifecycle/policy, expansion-preview, size-remediation, and frxUSD mint-adapter reviews returned PASS.
+- [x] Vyper/Solidity ABI parity: 61 functions and 13 events.
+- [x] Constructor-specialized deployed runtime is `22,214` bytes, `2,362` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `21,990` bytes.
+- [x] Full initcode including all nine static constructor arguments is `23,557` bytes, `25,595` bytes below EIP-3860.
+- [x] Independent lifecycle/policy, expansion-preview, keeper-economics, impairment-recovery, size-remediation, and frxUSD mint-adapter reviews returned PASS.
 - [x] Deployment script has a RED/GREEN test proving the constructor tuple, fixed endpoints, roles, capacity, fully paused startup, and runtime bound.
-- [x] Current-mainnet canary passed at block `25,857,968` through USDT → DAI → USDS → sUSDS, quoted `9,994.628476759022303461` crvUSD from the complete reverse route for one-tenth of the received shares, and left no residual route allowances.
+- [x] Current-mainnet canary passed at block `25,859,527` through USDT → DAI → USDS → sUSDS, quoted `9,994.546438624583595823` crvUSD from the complete reverse route for one-tenth of the received shares, and left no residual route allowances.
 - [x] Pinned-mainnet frxUSD canary passed at block `25,857,270`: a full V3 expansion deposited `100,100` USDC through the live Frax custodian, minted `100,100` frxUSD, acquired sfrxUSD through Curve, preserved measured backing accounting, and cleared both route allowances.
 - [x] Candidate expansion and contraction path hashes are recorded in the manifest.
 - [x] No credentials or private keys are stored in the repository or manifest.
@@ -110,7 +110,7 @@ Do not combine deployment with activation.
 - [ ] Accounted target and yield units do not exceed actual balances.
 - [ ] All target-AMM and typed-route allowances are zero after each operation.
 - [ ] `last_expansion_at` changes only on successful expansion.
-- [ ] Keeper rewards match the configured percentage/cap and selected branch token.
+- [ ] Keeper rewards match the configured percentage of realized profit and selected branch token.
 - [ ] Factory ceiling and local `max_deployed_crvusd` match governance records.
 - [ ] Emergency admin can pause but cannot unpause or execute recovery calls.
 - [ ] Alerts cover backing invariant failure, route failure/fallback rate, allowance residue, pause changes, role changes, target-AMM changes, frxUSD-minter proxy/fee/cap changes, and exposure ceilings.

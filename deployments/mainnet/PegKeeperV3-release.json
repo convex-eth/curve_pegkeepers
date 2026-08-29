@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-29T02:40:08Z",
+  "generatedAtUtc": "2026-08-29T07:58:29Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "f1f6cb3a63bde232561723e2e98602d5a511d73d",
+  "productionSourceCommit": "136eee14cc81272ace573ab520b4e7bcf8a1b2e9",
   "compiler": {
     "language": "Vyper",
     "version": "0.3.10+commit.9136169",
@@ -11,22 +11,22 @@
   },
   "source": {
     "path": "src/vyper/PegKeeperV3.vy",
-    "sha256": "fa473f09d481bef80430bbb7eca84cfa92cc9c3d249b96feb80973e91c8fc77b"
+    "sha256": "fc8cbfcb5f63c3c61c16796518f41b5d91a2325c642c8244d11b5e12e7e6818c"
   },
   "artifact": {
     "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-    "compilerCreationBytes": 23145,
-    "compilerCreationKeccak256": "0x7113189247565de51b976d0daad41cd7ef081027c7c5ad30d1cf6f35591280c9",
+    "compilerCreationBytes": 23269,
+    "compilerCreationKeccak256": "0x2abe81126834f371b463b8d5c3e8cce21578c42b6f5d9f91ee66b633d6f30c68",
     "constructorArgsBytes": 288,
-    "fullInitCodeBytes": 23433,
+    "fullInitCodeBytes": 23557,
     "eip3860LimitBytes": 49152,
-    "fullInitCodeMarginBytes": 25719,
-    "runtimeTemplateBytes": 21853,
-    "runtimeTemplateKeccak256": "0xf7c71fd0343e594e2d57b8b350e8f087864cac43497fe0994517e7cf5b35c988",
-    "deployedRuntimeBytes": 22077,
+    "fullInitCodeMarginBytes": 25595,
+    "runtimeTemplateBytes": 21990,
+    "runtimeTemplateKeccak256": "0x04d0df7c111785d1d786f39f57517a226cf41794307f7d1476f1e62f43bac4e3",
+    "deployedRuntimeBytes": 22214,
     "eip170LimitBytes": 24576,
-    "deployedRuntimeMarginBytes": 2499,
-    "abiFunctions": 62,
+    "deployedRuntimeMarginBytes": 2362,
+    "abiFunctions": 61,
     "abiEvents": 13
   },
   "verification": {
@@ -126,13 +126,13 @@
     "productionCalibrationRequired": true
   },
   "latestMainnetCanary": {
-    "block": 25857968,
+    "block": 25859527,
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90280726639595072299900",
-    "simulatedContractionQuoteSusds": "9028072663959507229990",
-    "simulatedContractionQuoteCrvUsd": "9994628476759022303461",
+    "simulatedSusdsReceived": "90280607160427255235510",
+    "simulatedContractionQuoteSusds": "9028060716042725523551",
+    "simulatedContractionQuoteCrvUsd": "9994546438624583595823",
     "targetAmmExecutionBufferBps": 0,
     "minDownstreamAttemptGas": 1500000,
     "fallbackSettlementGasReserve": 300000,
