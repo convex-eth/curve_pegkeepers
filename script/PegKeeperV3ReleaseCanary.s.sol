@@ -54,7 +54,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             feeReceiver: FEE_SPLITTER,
             admin: CANARY_ADMIN,
             emergencyAdmin: EMERGENCY_ADMIN,
-            maxDeployedCrvUsd: ALLOCATION
+            maxDeployedCrvUsd: ALLOCATION,
+            keeperIndex: 1
         });
         IPegKeeperV3 pegKeeper = IPegKeeperV3(deployer.deploy(config));
 

@@ -453,7 +453,8 @@ contract PegKeeperV3DirectBuybackTest is Test {
             feeReceiver,
             governance,
             emergencyAdmin,
-            MAX_DEPLOYED
+            MAX_DEPLOYED,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

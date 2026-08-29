@@ -225,7 +225,8 @@ contract PegKeeperV3SurplusTest is Test {
             feeReceiver,
             governance,
             emergencyAdmin,
-            maxDeployed
+            maxDeployed,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

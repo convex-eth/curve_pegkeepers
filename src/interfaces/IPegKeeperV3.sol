@@ -86,6 +86,8 @@ interface IPegKeeperV3 {
     );
 
     function version() external view returns (string memory);
+    function name() external view returns (string memory);
+    function keeper_index() external view returns (uint256);
     function MAX_ROUTE_STEPS() external view returns (uint256);
 
     function factory() external view returns (address);

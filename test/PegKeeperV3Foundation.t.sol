@@ -143,6 +143,8 @@ contract PegKeeperV3FoundationTest is Test {
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
 
+        assertEq(pegKeeper.name(), "Pegkeeper 1");
+        assertEq(pegKeeper.keeper_index(), 1);
         assertEq(pegKeeper.factory(), address(factory));
         assertEq(pegKeeper.crv_usd(), address(crvUsd));
         assertEq(pegKeeper.target_amm(), address(targetAmm));
@@ -440,7 +442,8 @@ contract PegKeeperV3FoundationTest is Test {
             feeReceiver,
             governance,
             emergencyAdmin,
-            MAX_DEPLOYED
+            MAX_DEPLOYED,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

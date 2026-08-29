@@ -13,8 +13,8 @@ import {
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_INITCODE_SIZE = 23_557;
-    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_214;
+    uint256 internal constant RELEASE_INITCODE_SIZE = 24_035;
+    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_361;
 
     function test_runtimeAndInitcodeFitProtocolLimits() public {
         MockToken crvUsd = new MockToken(18);
@@ -34,7 +34,8 @@ contract PegKeeperV3RuntimeSizeTest is Test {
             address(0xFEE),
             address(0xA11CE),
             address(0xE911),
-            25_000_000e18
+            25_000_000e18,
+            1
         );
         bytes memory initCode = abi.encodePacked(creationCode, constructorArgs);
         assertEq(initCode.length, RELEASE_INITCODE_SIZE, "PegKeeperV3 initcode drift");

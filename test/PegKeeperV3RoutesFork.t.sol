@@ -108,7 +108,8 @@ contract PegKeeperV3RoutesForkTest is Test {
             FEE_SPLITTER,
             governance,
             emergencyAdmin,
-            MAX_DEPLOYED
+            MAX_DEPLOYED,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

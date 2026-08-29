@@ -36,7 +36,8 @@ contract PegKeeperV3DeploymentTest is Test {
             feeReceiver: feeReceiver,
             admin: admin,
             emergencyAdmin: emergencyAdmin,
-            maxDeployedCrvUsd: MAX_DEPLOYED
+            maxDeployedCrvUsd: MAX_DEPLOYED,
+            keeperIndex: 7
         });
 
         address deployed = deployer.deploy(config);
@@ -52,6 +53,8 @@ contract PegKeeperV3DeploymentTest is Test {
         assertEq(pegKeeper.admin(), admin);
         assertEq(pegKeeper.emergency_admin(), emergencyAdmin);
         assertEq(pegKeeper.max_deployed_crvusd(), MAX_DEPLOYED);
+        assertEq(pegKeeper.keeper_index(), 7);
+        assertEq(pegKeeper.name(), "Pegkeeper 7");
         assertTrue(pegKeeper.all_execution_paused());
         assertTrue(pegKeeper.expansion_paused());
         assertTrue(pegKeeper.backing_deployment_paused());

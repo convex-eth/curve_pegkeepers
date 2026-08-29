@@ -117,11 +117,18 @@ The complete implemented specification is in [`docs/pegkeeper-v3-spec.md`](docs/
 
 The production implementation is complete in independently reviewed Vyper `0.3.10` slices. The current contract pins and validates the Factory stablecoin, target asset, backing asset, and final yield token; validates a governance-replaceable target AMM against the fixed crvUSD/target pair and discovers either index order; exposes the immutable `crvUSD`/`yieldToken` routing pair; excludes unsolicited balances from trusted accounting; and implements directional controls, atomic governance/emergency-role rotation, atomic economic/lifecycle policy updates, advisory branch-aware expansion previews, and governance-only ordinary-call recovery. It deploys exact idle Factory inventory through the active target AMM and then attempts the configured target-to-yield path in a bounded-gas self-call. A successful attempt spends only the newly received target asset, pays one measured reward in the backing asset immediately before terminal yield acquisition, and accounts the exact yield-token delta. Route, reward, route-loss, or final-margin failure rolls back only the isolated attempt and settles the original target receipt through the measured fallback branch while preserving a configured outer gas reserve. Keepers can reverse an exact accounted target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, and reduce deployed exposure by net retained crvUSD. Permissionless surplus settlement sends only bounded idle crvUSD to the configured local fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact accounted target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can spend exact accounted yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, and reduce deployed exposure by net retained crvUSD. Direct buyback accepts exact crvUSD from any caller and transfers only the fixed yield token, with a conservative `convertToShares()` quote, caller minimum output, measured two-sided token deltas, whole-position post-transfer valuation, the selected exit margin, and the final principal invariant; it never executes either stored route or spends undeployed target backing.
 
+## V3 deployment factory
+
+`PegKeeperV3Factory` is an owner-gated deployment registry, not an upgrade proxy. Its implementation pointer must reference an EIP-5202 blueprint containing the Vyper creation bytecode. Updating that pointer changes only future deployments; each deployed PegKeeper contains its own constructor-specialized runtime and cannot be upgraded through the factory.
+
+The factory stores deployment defaults for the final PegKeeper admin, distinct emergency admin, fee receiver, maximum exposure, target-AMM buffer, downstream gas bounds, and expansion route-loss limit. A deployment call supplies only the target AMM, final yield token, expansion route, and contraction route. The factory derives the target asset from the AMM's crvUSD pair and the backing asset from `yieldToken.asset()`, assigns the next one-based index, deploys the blueprint, installs both routes and execution defaults while acting as temporary admin, then atomically rotates control to the configured final roles. The result starts fully paused and exposes `keeper_index()` plus `name()` in the form `Pegkeeper 1`, `Pegkeeper 2`, and so on. Updating factory defaults likewise affects only later deployments.
+
 ## V3 release package
 
 V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
 
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-explicit deployment with constructor, runtime-size, and fully-paused startup verification;
+- [`script/DeployPegKeeperV3Factory.s.sol`](script/DeployPegKeeperV3Factory.s.sol): environment-explicit EIP-5202 blueprint and owner-gated deployment-factory creation with fail-closed verification;
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): direct implementation deployment helper used by tests and the non-broadcast canary;
 - [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting current-mainnet simulation of the complete USDT → DAI → USDS → sUSDS expansion;
 - [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
 - [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
@@ -137,7 +144,7 @@ The release manifest records the latest non-broadcast mainnet canary. No deploym
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. `forge build --sizes` reports the `21,990`-byte compiler runtime template. Vyper appends a `224`-byte constructor-specialized immutable data section, so the authoritative deployed runtime measured after actual construction is `22,214` bytes, leaving `2,362` bytes below EIP-170. Full initcode, including the nine static constructor arguments, is `23,557` bytes, leaving `25,595` bytes below EIP-3860. `PegKeeperV3RuntimeSizeTest`, `PegKeeperV3DeploymentTest`, and the release-manifest verifier enforce these bounds.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. `forge build --sizes` reports the `22,137`-byte compiler runtime template. Vyper appends a `224`-byte constructor-specialized immutable data section, so the authoritative deployed runtime measured after actual construction is `22,361` bytes, leaving `2,215` bytes below EIP-170. Full initcode, including the ten static constructor arguments, is `24,035` bytes, leaving `25,117` bytes below EIP-3860. The EIP-5202 blueprint runtime is `23,718` bytes, leaving `858` bytes below EIP-170. `PegKeeperV3RuntimeSizeTest`, `PegKeeperV3DeploymentTest`, `PegKeeperV3FactoryDeploymentTest`, and the release-manifest verifier enforce these bounds.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -165,10 +172,12 @@ deployments/mainnet/
 └── PegKeeperV3-release.json
 script/
 ├── DeployPegKeeperV3.s.sol
+├── DeployPegKeeperV3Factory.s.sol
 └── PegKeeperV3ReleaseCanary.s.sol
 scripts/
 └── verify-release-manifest.py
 src/
+├── PegKeeperV3Factory.sol
 ├── interfaces/
 │   ├── IControllerFactory.sol
 │   ├── IDaiUsds.sol
@@ -177,6 +186,7 @@ src/
 │   ├── IPegKeeperRegulator.sol
 │   ├── IPegKeeperV2.sol
 │   ├── IPegKeeperV3.sol
+│   ├── IPegKeeperV3Factory.sol
 │   ├── IStableSwap2Pool.sol
 │   └── IUSDT.sol
 └── vyper/
@@ -195,6 +205,8 @@ test/
 ├── PegKeeperV3DownstreamExpansion.t.sol
 ├── PegKeeperV3ExpansionFork.t.sol
 ├── PegKeeperV3Expansion.t.sol
+├── PegKeeperV3Factory.t.sol
+├── PegKeeperV3FactoryDeployment.t.sol
 ├── PegKeeperV3Foundation.t.sol
 ├── PegKeeperV3Policy.t.sol
 ├── PegKeeperV3RoutesFork.t.sol
@@ -248,11 +260,19 @@ Verifies the atomic governance policy surface, margin ordering and ppm bounds, k
 
 ### `PegKeeperV3RuntimeSizeTest`
 
-Deploys the exact creation artifact with all nine static constructor arguments, checks the full initcode against EIP-3860, then checks the constructor-specialized deployed runtime against EIP-170. It also pins both release sizes to detect artifact drift.
+Deploys the exact creation artifact with all ten static constructor arguments, checks the full initcode against EIP-3860, then checks the constructor-specialized deployed runtime against EIP-170. It also pins both release sizes to detect artifact drift.
 
 ### `PegKeeperV3DeploymentTest`
 
-Runs the canonical deployment helper against deterministic endpoints and verifies every constructor field, Factory stablecoin discovery, fully paused startup, configured capacity, and the deployed EIP-170 bound.
+Runs the direct deployment helper against deterministic endpoints and verifies every constructor field, one-based identity and name, Factory stablecoin discovery, fully paused startup, configured capacity, and the deployed EIP-170 bound.
+
+### `PegKeeperV3FactoryTest`
+
+Deploys V3 through a real EIP-5202 blueprint and verifies owner-only creation, target/backing derivation, one-based names, route and execution-default installation, final role and fee-recipient snapshots, fully paused startup, atomic rollback on invalid routes, registry state, two-step factory ownership, blueprint validation, and the rule that implementation/default changes affect only future immutable PegKeepers.
+
+### `PegKeeperV3FactoryDeploymentTest`
+
+Runs the canonical blueprint-and-factory deployment helper and verifies the blueprint preamble and EIP-170 bound, factory owner, ControllerFactory endpoint, implementation pointer, complete deployment defaults, and zero initial keeper count.
 
 ### `PegKeeperV3ExpansionForkTest`
 

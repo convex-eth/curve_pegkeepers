@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.30;
+
+import {Test} from "forge-std/Test.sol";
+
+import {PegKeeperV3Factory} from "../src/PegKeeperV3Factory.sol";
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
+import {
+    MockFactory,
+    MockToken,
+    MockTwoCoinPool,
+    MockYieldToken
+} from "./PegKeeperV3Foundation.t.sol";
+
+contract PegKeeperV3Blueprint {
+    constructor(bytes memory creationCode) {
+        bytes memory blueprintCode = bytes.concat(hex"fe7100", creationCode);
+        assembly {
+            return(add(blueprintCode, 0x20), mload(blueprintCode))
+        }
+    }
+}
+
+contract PegKeeperV3FactoryTest is Test {
+    uint256 internal constant CURVE_SWAP = 0;
+    uint256 internal constant ERC4626_DEPOSIT = 2;
+    uint256 internal constant ERC4626_REDEEM = 3;
+
+    address internal governance = makeAddr("governance");
+    address internal emergencyAdmin = makeAddr("emergencyAdmin");
+    address internal feeReceiver = makeAddr("feeReceiver");
+    address internal nextGovernance = makeAddr("nextGovernance");
+    address internal nextEmergencyAdmin = makeAddr("nextEmergencyAdmin");
+    address internal nextFeeReceiver = makeAddr("nextFeeReceiver");
+    address internal stranger = makeAddr("stranger");
+
+    MockToken internal crvUsd;
+    MockToken internal targetAsset;
+    MockToken internal backingAsset;
+    MockYieldToken internal yieldToken;
+    MockFactory internal controllerFactory;
+    MockTwoCoinPool internal targetAmm;
+    MockTwoCoinPool internal targetToBackingPool;
+    MockTwoCoinPool internal backingToCrvUsdPool;
+
+    PegKeeperV3Factory internal factory;
+    address internal blueprint;
+
+    function setUp() public {
+        crvUsd = new MockToken(18);
+        targetAsset = new MockToken(6);
+        backingAsset = new MockToken(18);
+        yieldToken = new MockYieldToken(address(backingAsset));
+        controllerFactory = new MockFactory(address(crvUsd), governance);
+        targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
+        targetToBackingPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
+        backingToCrvUsdPool = new MockTwoCoinPool(address(backingAsset), address(crvUsd));
+
+        blueprint = _deployBlueprint();
+        factory = new PegKeeperV3Factory(
+            address(this),
+            address(controllerFactory),
+            blueprint,
+            _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18)
+        );
+    }
+
+    function test_ownerDeploysNamedConfiguredAndPausedPegKeeper() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+        IPegKeeperV3 pegKeeper = IPegKeeperV3(deployed);
+
+        assertEq(factory.keeperCount(), 1);
+        assertEq(factory.keeperAt(1), deployed);
+        assertTrue(factory.isPegKeeper(deployed));
+        assertEq(factory.implementationOf(deployed), blueprint);
+
+        assertEq(pegKeeper.name(), "Pegkeeper 1");
+        assertEq(pegKeeper.keeper_index(), 1);
+        assertEq(pegKeeper.factory(), address(controllerFactory));
+        assertEq(pegKeeper.target_amm(), address(targetAmm));
+        assertEq(pegKeeper.target_asset(), address(targetAsset));
+        assertEq(pegKeeper.backing_asset(), address(backingAsset));
+        assertEq(pegKeeper.yield_token(), address(yieldToken));
+
+        assertEq(pegKeeper.admin(), governance);
+        assertEq(pegKeeper.emergency_admin(), emergencyAdmin);
+        assertEq(pegKeeper.fee_receiver(), feeReceiver);
+        assertEq(pegKeeper.max_deployed_crvusd(), 25_000_000e18);
+        assertEq(pegKeeper.target_amm_execution_buffer_bps(), 5);
+        assertEq(pegKeeper.min_downstream_attempt_gas(), 1_500_000);
+        assertEq(pegKeeper.fallback_settlement_gas_reserve(), 300_000);
+        assertEq(pegKeeper.expansion_max_route_loss_bps(), 100);
+        assertEq(pegKeeper.expansion_path_length(), 2);
+        assertEq(pegKeeper.contraction_path_length(), 2);
+
+        assertTrue(pegKeeper.expansion_paused());
+        assertTrue(pegKeeper.backing_deployment_paused());
+        assertTrue(pegKeeper.direct_buyback_paused());
+        assertTrue(pegKeeper.undeployed_contraction_paused());
+        assertTrue(pegKeeper.yield_contraction_paused());
+        assertTrue(pegKeeper.all_execution_paused());
+    }
+
+    function test_indicesIncreaseAndNamesUseFactoryAssignedIndex() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+
+        address first = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+        address second = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+
+        assertEq(IPegKeeperV3(first).name(), "Pegkeeper 1");
+        assertEq(IPegKeeperV3(second).name(), "Pegkeeper 2");
+        assertEq(IPegKeeperV3(first).keeper_index(), 1);
+        assertEq(IPegKeeperV3(second).keeper_index(), 2);
+        assertEq(factory.keeperAt(1), first);
+        assertEq(factory.keeperAt(2), second);
+    }
+
+    function test_implementationAndDefaultUpdatesAffectOnlyFutureDeployments() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address first = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+        bytes32 firstCodeHash = first.codehash;
+
+        address nextBlueprint = _deployBlueprint();
+        factory.setImplementation(nextBlueprint);
+        factory.setDefaults(
+            _defaults(nextGovernance, nextEmergencyAdmin, nextFeeReceiver, 50_000_000e18)
+        );
+
+        address second = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+
+        assertEq(factory.implementationOf(first), blueprint);
+        assertEq(factory.implementationOf(second), nextBlueprint);
+        assertEq(first.codehash, firstCodeHash);
+        assertEq(IPegKeeperV3(first).admin(), governance);
+        assertEq(IPegKeeperV3(first).fee_receiver(), feeReceiver);
+        assertEq(IPegKeeperV3(first).max_deployed_crvusd(), 25_000_000e18);
+        assertEq(IPegKeeperV3(second).admin(), nextGovernance);
+        assertEq(IPegKeeperV3(second).emergency_admin(), nextEmergencyAdmin);
+        assertEq(IPegKeeperV3(second).fee_receiver(), nextFeeReceiver);
+        assertEq(IPegKeeperV3(second).max_deployed_crvusd(), 50_000_000e18);
+    }
+
+    function test_onlyOwnerCanDeployOrChangeFactoryConfiguration() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
+            _defaults(nextGovernance, nextEmergencyAdmin, nextFeeReceiver, 50_000_000e18);
+
+        vm.startPrank(stranger);
+        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        factory.deployPegKeeper(address(targetAmm), address(yieldToken), expansion, contraction);
+        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        factory.setImplementation(blueprint);
+        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        factory.setDefaults(defaults_);
+        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        factory.transferOwnership(stranger);
+        vm.stopPrank();
+
+        assertEq(factory.keeperCount(), 0);
+    }
+
+    function test_invalidRoutesRevertAtomicallyWithoutConsumingIndex() public {
+        IPegKeeperV3.RouteStep[] memory empty = new IPegKeeperV3.RouteStep[](0);
+
+        vm.expectRevert();
+        factory.deployPegKeeper(address(targetAmm), address(yieldToken), empty, empty);
+
+        assertEq(factory.keeperCount(), 0);
+        assertEq(factory.keeperAt(1), address(0));
+    }
+
+    function test_factoryRejectsNonBlueprintImplementation() public {
+        vm.expectRevert(PegKeeperV3Factory.InvalidImplementation.selector);
+        factory.setImplementation(address(targetAmm));
+    }
+
+    function test_twoStepOwnershipTransfer() public {
+        factory.transferOwnership(stranger);
+        assertEq(factory.owner(), address(this));
+        assertEq(factory.pendingOwner(), stranger);
+
+        vm.prank(stranger);
+        factory.acceptOwnership();
+
+        assertEq(factory.owner(), stranger);
+        assertEq(factory.pendingOwner(), address(0));
+    }
+
+    function _deployBlueprint() internal returns (address) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        return address(new PegKeeperV3Blueprint(creationCode));
+    }
+
+    function _defaults(address admin, address emergency, address receiver, uint256 maxDeployed)
+        internal
+        pure
+        returns (IPegKeeperV3Factory.DeploymentDefaults memory defaults_)
+    {
+        defaults_ = IPegKeeperV3Factory.DeploymentDefaults({
+            admin: admin,
+            emergencyAdmin: emergency,
+            feeReceiver: receiver,
+            maxDeployedCrvUsd: maxDeployed,
+            targetAmmExecutionBufferBps: 5,
+            minDownstreamAttemptGas: 1_500_000,
+            fallbackSettlementGasReserve: 300_000,
+            expansionMaxRouteLossBps: 100
+        });
+    }
+
+    function _paths()
+        internal
+        view
+        returns (
+            IPegKeeperV3.RouteStep[] memory expansion,
+            IPegKeeperV3.RouteStep[] memory contraction
+        )
+    {
+        expansion = new IPegKeeperV3.RouteStep[](2);
+        expansion[0] = IPegKeeperV3.RouteStep({
+            kind: CURVE_SWAP,
+            venue: address(targetToBackingPool),
+            tokenIn: address(targetAsset),
+            tokenOut: address(backingAsset),
+            poolIndexIn: 0,
+            poolIndexOut: 1,
+            executionBufferBps: 5
+        });
+        expansion[1] = IPegKeeperV3.RouteStep({
+            kind: ERC4626_DEPOSIT,
+            venue: address(yieldToken),
+            tokenIn: address(backingAsset),
+            tokenOut: address(yieldToken),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 5
+        });
+
+        contraction = new IPegKeeperV3.RouteStep[](2);
+        contraction[0] = IPegKeeperV3.RouteStep({
+            kind: ERC4626_REDEEM,
+            venue: address(yieldToken),
+            tokenIn: address(yieldToken),
+            tokenOut: address(backingAsset),
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: 5
+        });
+        contraction[1] = IPegKeeperV3.RouteStep({
+            kind: CURVE_SWAP,
+            venue: address(backingToCrvUsdPool),
+            tokenIn: address(backingAsset),
+            tokenOut: address(crvUsd),
+            poolIndexIn: 0,
+            poolIndexOut: 1,
+            executionBufferBps: 5
+        });
+    }
+}

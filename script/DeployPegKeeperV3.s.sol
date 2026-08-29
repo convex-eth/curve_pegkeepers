@@ -19,6 +19,7 @@ contract DeployPegKeeperV3 is Script {
         address admin;
         address emergencyAdmin;
         uint256 maxDeployedCrvUsd;
+        uint256 keeperIndex;
     }
 
     function run() external returns (address deployed) {
@@ -31,7 +32,8 @@ contract DeployPegKeeperV3 is Script {
             feeReceiver: vm.envAddress("PKV3_FEE_RECEIVER"),
             admin: vm.envAddress("PKV3_ADMIN"),
             emergencyAdmin: vm.envAddress("PKV3_EMERGENCY_ADMIN"),
-            maxDeployedCrvUsd: vm.envUint("PKV3_MAX_DEPLOYED_CRVUSD")
+            maxDeployedCrvUsd: vm.envUint("PKV3_MAX_DEPLOYED_CRVUSD"),
+            keeperIndex: vm.envUint("PKV3_KEEPER_INDEX")
         });
 
         vm.startBroadcast();
@@ -50,7 +52,8 @@ contract DeployPegKeeperV3 is Script {
             config.feeReceiver,
             config.admin,
             config.emergencyAdmin,
-            config.maxDeployedCrvUsd
+            config.maxDeployedCrvUsd,
+            config.keeperIndex
         );
         bytes memory initCode = abi.encodePacked(creationCode, constructorArgs);
         assembly ("memory-safe") {
@@ -69,6 +72,7 @@ contract DeployPegKeeperV3 is Script {
             "crvUSD mismatch"
         );
         require(pegKeeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "capacity mismatch");
+        require(pegKeeper.keeper_index() == config.keeperIndex, "keeper index mismatch");
         require(pegKeeper.deployed_crvusd() == 0, "initial exposure");
         require(pegKeeper.undeployed_backing() == 0, "initial backing");
         require(pegKeeper.accounted_yield_token_units() == 0, "initial yield");

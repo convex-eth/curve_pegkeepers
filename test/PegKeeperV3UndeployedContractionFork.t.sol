@@ -94,7 +94,8 @@ contract PegKeeperV3UndeployedContractionForkTest is Test {
             FEE_SPLITTER,
             governance,
             emergencyAdmin,
-            ALLOCATION
+            ALLOCATION,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;

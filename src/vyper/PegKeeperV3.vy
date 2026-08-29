@@ -151,6 +151,8 @@ event UndeployedBackingDeployed:
 
 
 version: public(constant(String[8])) = "3.0.0"
+name: public(String[88])
+keeper_index: public(uint256)
 
 BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
@@ -222,6 +224,7 @@ def __init__(
     _admin: address,
     _emergency_admin: address,
     _max_deployed_crvusd: uint256,
+    _keeper_index: uint256,
 ):
     assert _factory.address != empty(address)
     assert _target_amm.address != empty(address)
@@ -233,6 +236,7 @@ def __init__(
     assert _emergency_admin != empty(address)
     assert _admin != _emergency_admin
     assert _max_deployed_crvusd > 0
+    assert _keeper_index > 0
 
     crv_usd: address = _factory.stablecoin()
     assert crv_usd != empty(address)
@@ -271,6 +275,8 @@ def __init__(
     self.admin = _admin
     self.emergency_admin = _emergency_admin
     self.fee_receiver = _fee_receiver
+    self.keeper_index = _keeper_index
+    self.name = concat("Pegkeeper ", uint2str(_keeper_index))
 
     self.entry_min_profit_ppm = 10
     self.normal_exit_min_profit_ppm = 1_000

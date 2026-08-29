@@ -100,7 +100,8 @@ contract PegKeeperV3FlashRoundTripForkTest is Test {
             FEE_SPLITTER,
             governance,
             emergencyAdmin,
-            CAPACITY
+            CAPACITY,
+            1
         );
         bytes memory initCode = bytes.concat(creationCode, constructorArgs);
         address deployed;
