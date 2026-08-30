@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-29T11:10:08Z",
+  "generatedAtUtc": "2026-08-30T05:54:02Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "a25e461d8319e69d0f43f225ccc65edcbf2f5f37",
+  "productionSourceCommit": "f7f4a198b2a4a0bc461ee3c226b635c3a11806c1",
   "compiler": {
     "language": "Vyper",
     "version": "0.3.10+commit.9136169",
@@ -31,22 +31,22 @@
   },
   "deploymentFactory": {
     "source": {
-      "path": "src/PegKeeperV3Factory.sol",
-      "sha256": "0eac629657d33e5b5b1ded58f0117580f4e0e4570dc379a671a1d22ed8157e48"
+      "path": "src/vyper/PegKeeperV3Factory.vy",
+      "sha256": "4fa5b31f91fae0e59a586fe1c3b565e969ec36233d5011561dc69c2b751b28d1"
     },
     "artifact": {
-      "path": "out/PegKeeperV3Factory.sol/PegKeeperV3Factory.json",
-      "compilerCreationBytes": 5816,
-      "compilerCreationKeccak256": "0xa22d7f9da6f84f5cbbf8a1ffe4ea7874f50e4c62576d38a2bbc459adb878e77f",
+      "path": "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
+      "compilerCreationBytes": 4706,
+      "compilerCreationKeccak256": "0x301fa95841bab0d299dd4e60e8f8d7a9af76848c63c8e7a0aa206df3cdb086c9",
       "constructorArgsBytes": 352,
-      "fullInitCodeBytes": 6168,
+      "fullInitCodeBytes": 5058,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 42984,
-      "runtimeTemplateBytes": 4655,
-      "runtimeTemplateKeccak256": "0xa2c426caf96f07e323940ee6bdbcf403cb10c18dcf653bb7654ac0a5f7807e80",
-      "deployedRuntimeBytes": 4655,
+      "fullInitCodeMarginBytes": 44094,
+      "runtimeTemplateBytes": 3746,
+      "runtimeTemplateKeccak256": "0x711f5e39bee731e343d594d9583877cb878ba360f5e697a94f441e04d290f4ac",
+      "deployedRuntimeBytes": 3778,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 19921,
+      "deployedRuntimeMarginBytes": 20798,
       "abiFunctions": 17,
       "abiEvents": 5
     },
@@ -81,7 +81,7 @@
   "verification": {
     "forgeVersion": "1.7.1",
     "solidityVersion": "0.8.30",
-    "testsPassed": 196,
+    "testsPassed": 205,
     "testsFailed": 0,
     "testsSkipped": 0,
     "deploymentTest": "pass",
@@ -173,13 +173,13 @@
     "productionCalibrationRequired": true
   },
   "latestMainnetCanary": {
-    "block": 25860454,
+    "block": 25866123,
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90280079261811715611201",
-    "simulatedContractionQuoteSusds": "9028007926181171561120",
-    "simulatedContractionQuoteCrvUsd": "9994518945799771997140",
+    "simulatedSusdsReceived": "90273752426713544173135",
+    "simulatedContractionQuoteSusds": "9027375242671354417313",
+    "simulatedContractionQuoteCrvUsd": "9994499781624562776940",
     "targetAmmExecutionBufferBps": 0,
     "minDownstreamAttemptGas": 1500000,
     "fallbackSettlementGasReserve": 300000,

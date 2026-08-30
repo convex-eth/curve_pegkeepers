@@ -15,15 +15,15 @@ MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 ARTIFACT_PATH = ROOT / "out/PegKeeperV3.vy/PegKeeperV3.json"
 INTERFACE_ARTIFACT_PATH = ROOT / "out/IPegKeeperV3.sol/IPegKeeperV3.json"
 SOURCE_PATH = ROOT / "src/vyper/PegKeeperV3.vy"
-FACTORY_ARTIFACT_PATH = ROOT / "out/PegKeeperV3Factory.sol/PegKeeperV3Factory.json"
+FACTORY_ARTIFACT_PATH = ROOT / "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json"
 FACTORY_INTERFACE_ARTIFACT_PATH = ROOT / "out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json"
-FACTORY_SOURCE_PATH = ROOT / "src/PegKeeperV3Factory.sol"
+FACTORY_SOURCE_PATH = ROOT / "src/vyper/PegKeeperV3Factory.vy"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
 DEPLOYED_RUNTIME_BYTES = 22_843
-FACTORY_DEPLOYED_RUNTIME_BYTES = 4_655
+FACTORY_DEPLOYED_RUNTIME_BYTES = 3_778
 BLUEPRINT_PREAMBLE = bytes.fromhex("fe7100")
-TESTS_PASSED = 196
+TESTS_PASSED = 205
 
 
 def fail(label: str, actual: object, expected: object) -> None:
@@ -339,7 +339,7 @@ def main() -> None:
     ).stdout
     fail("production source commit", committed_source, source)
     committed_factory_source = subprocess.run(
-        ["git", "show", f"{source_commit}:src/PegKeeperV3Factory.sol"],
+        ["git", "show", f"{source_commit}:src/vyper/PegKeeperV3Factory.vy"],
         check=True,
         cwd=ROOT,
         capture_output=True,
