@@ -132,7 +132,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, deployment-factory/controller-factory references, pause state, typed routes, identity, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `22,587` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,843` bytes, `1,733` bytes below EIP-170. Full initcode with seven static constructor arguments is `24,351` bytes, `24,801` bytes below EIP-3860. The EIP-5202 blueprint runtime is `24,130` bytes, `446` bytes below EIP-170. Executable runtime/initcode, blueprint/factory deployment, and release-manifest tests prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, deployment-factory/controller-factory references, pause state, typed routes, identity, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `22,606` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,862` bytes, `1,714` bytes below EIP-170. Full initcode with seven static constructor arguments is `24,370` bytes, `24,782` bytes below EIP-3860. The EIP-5202 blueprint runtime is `24,149` bytes, `427` bytes below EIP-170. Executable runtime/initcode, blueprint/factory deployment, and release-manifest tests prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -150,7 +150,7 @@ The blueprint is copied as creation bytecode and executed with ordinary construc
 
 ## Supply accounting and Factory integration
 
-The current ControllerFactory mints the configured debt-ceiling increase to V3 upfront. It does not grant V3 a permissionless lazy-mint function.
+The current ControllerFactory mints the configured debt-ceiling increase to V3 upfront. It does not grant V3 a permissionless lazy-mint function. The `debt()` compatibility getter returns `deployedCrvUsd` exactly so existing crvUSD aggregate monetary policies can include V3 exposure without counting idle allocation, backing value, or capacity.
 
 The first implementation should therefore treat the Factory allocation as reusable inventory:
 

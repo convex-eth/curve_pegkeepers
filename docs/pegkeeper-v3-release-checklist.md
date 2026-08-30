@@ -9,13 +9,13 @@ Canonical candidate manifest: [`../deployments/mainnet/PegKeeperV3-release.json`
 - [x] Production source pins Vyper `0.3.10` and Foundry uses `.venv/bin/vyper` with `optimize = "codesize"`.
 - [x] `forge fmt --check`, `git diff --check`, `forge lint`, and `forge build` pass.
 - [x] Full unit, fuzz, historical-fork, and live-integration suite passes.
-- [x] Vyper/Solidity ABI parity: 62 functions and 11 events. Factory/interface parity: 17 functions and 5 events.
-- [x] Constructor-specialized PegKeeper runtime is `22,843` bytes, `1,733` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `22,587` bytes.
-- [x] PegKeeper full initcode including all seven static constructor arguments is `24,351` bytes, `24,801` bytes below EIP-3860.
-- [x] The EIP-5202 blueprint runtime is `24,130` bytes, `446` bytes below EIP-170. The factory runtime is `4,655` bytes, `19,921` bytes below EIP-170.
+- [x] Vyper/Solidity ABI parity: 63 functions and 11 events. Factory/interface parity: 17 functions and 5 events.
+- [x] Constructor-specialized PegKeeper runtime is `22,862` bytes, `1,714` bytes below EIP-170; the compiler runtime template reported by `forge build --sizes` is `22,606` bytes.
+- [x] PegKeeper full initcode including all seven static constructor arguments is `24,370` bytes, `24,782` bytes below EIP-3860.
+- [x] The EIP-5202 blueprint runtime is `24,149` bytes, `427` bytes below EIP-170. The factory runtime is `3,778` bytes, `20,798` bytes below EIP-170.
 - [x] Independent lifecycle/policy, expansion-preview, keeper-economics, impairment-recovery, size-remediation, frxUSD mint-adapter, immutable-factory, and dynamic factory-role reviews returned PASS.
 - [x] RED/GREEN deployment tests prove the seven-field constructor and EIP-5202 factory tuples, fixed endpoints, live factory admin/emergency-admin/fee-receiver resolution, immediate old-role revocation, one-based identity, fully paused startup, future-only implementation selection, and runtime bounds.
-- [x] Current-mainnet canary passed at block `25,860,454` through USDT → DAI → USDS → sUSDS, quoted `9,994.518945799771997140` crvUSD from the complete reverse route for one-tenth of the received shares, and left no residual route allowances.
+- [x] Current-mainnet canary passed at block `25,868,730` through USDT → DAI → USDS → sUSDS, quoted `9,994.438638831380475760` crvUSD from the complete reverse route for one-tenth of the received shares, and left no residual route allowances.
 - [x] Pinned-mainnet frxUSD canary passed at block `25,857,270`: a full V3 expansion deposited `100,100` USDC through the live Frax custodian, minted `100,100` frxUSD, acquired sfrxUSD through Curve, preserved measured backing accounting, and cleared both route allowances.
 - [x] Candidate expansion and contraction path hashes are recorded in the manifest.
 - [x] No credentials or private keys are stored in the repository or manifest.

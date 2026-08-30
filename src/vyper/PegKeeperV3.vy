@@ -407,6 +407,12 @@ def protocol_surplus() -> uint256:
 
 @external
 @view
+def debt() -> uint256:
+    return self.deployed_crvusd
+
+
+@external
+@view
 def available_expansion() -> uint256:
     available: uint256 = CRV_USD.balanceOf(self)
 

@@ -216,6 +216,14 @@ contract PegKeeperV3FoundationTest is Test {
         assertTrue(pegKeeper.all_execution_paused());
     }
 
+    function test_debtCompatibilityGetterMatchesDeployedCrvUsd() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+
+        assertEq(pegKeeper.debt(), pegKeeper.deployed_crvusd());
+    }
+
     function test_constructorRejectsPoolWithoutExactCrvUsdTargetPair() public {
         MockTwoCoinPool wrongPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
         vm.expectRevert();

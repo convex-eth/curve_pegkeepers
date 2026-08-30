@@ -14,7 +14,7 @@ import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.s
 contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 internal constant EIP_5202_PREAMBLE = 0xfe7100;
     bytes32 public constant EXPECTED_BLUEPRINT_RUNTIME_HASH =
-        0xa0afc52c99396599b876d53a787519a949fc79c3a3e7e48551f6dd2b476947fc;
+        0x32d6f187df94fa04ddae92a9dfb3aef0dd931d3f3f2b1decaa404d894894b12e;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_DAI_USDS_CONVERTER = 1;

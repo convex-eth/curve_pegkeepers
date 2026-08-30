@@ -116,6 +116,7 @@ interface IPegKeeperV3 {
     function min_downstream_attempt_gas() external view returns (uint256);
     function fallback_settlement_gas_reserve() external view returns (uint256);
 
+    function debt() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
     function undeployed_backing() external view returns (uint256);
     function accounted_yield_token_units() external view returns (uint256);

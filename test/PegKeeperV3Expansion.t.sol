@@ -415,6 +415,7 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(targetAsset.balanceOf(address(pegKeeper)), expectedRetained);
         assertEq(crvUsd.balanceOf(address(pegKeeper)), 0);
         assertEq(pegKeeper.deployed_crvusd(), amount);
+        assertEq(pegKeeper.debt(), amount);
         assertEq(pegKeeper.undeployed_backing(), expectedRetained);
         assertEq(pegKeeper.accounted_yield_token_units(), 0);
         assertEq(pegKeeper.last_expansion_at(), block.timestamp);
