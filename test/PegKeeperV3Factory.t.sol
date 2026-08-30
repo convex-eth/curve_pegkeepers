@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {PegKeeperV3Factory} from "../src/PegKeeperV3Factory.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {
@@ -44,7 +43,7 @@ contract PegKeeperV3FactoryTest is Test {
     MockTwoCoinPool internal targetToBackingPool;
     MockTwoCoinPool internal backingToCrvUsdPool;
 
-    PegKeeperV3Factory internal factory;
+    IPegKeeperV3Factory internal factory;
     address internal blueprint;
 
     function setUp() public {
@@ -59,7 +58,7 @@ contract PegKeeperV3FactoryTest is Test {
         backingToCrvUsdPool = new MockTwoCoinPool(address(backingAsset), address(crvUsd));
 
         blueprint = _deployBlueprint();
-        factory = new PegKeeperV3Factory(
+        factory = _deployFactory(
             address(this),
             address(controllerFactory),
             blueprint,
@@ -187,13 +186,13 @@ contract PegKeeperV3FactoryTest is Test {
             _defaults(nextGovernance, nextEmergencyAdmin, nextFeeReceiver, 50_000_000e18);
 
         vm.startPrank(stranger);
-        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
         factory.deployPegKeeper(address(targetAmm), address(yieldToken), expansion, contraction);
-        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
         factory.setImplementation(blueprint);
-        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
         factory.setDefaults(defaults_);
-        vm.expectRevert(PegKeeperV3Factory.NotOwner.selector);
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
         factory.transferOwnership(stranger);
         vm.stopPrank();
 
@@ -211,19 +210,148 @@ contract PegKeeperV3FactoryTest is Test {
     }
 
     function test_factoryRejectsNonBlueprintImplementation() public {
-        vm.expectRevert(PegKeeperV3Factory.InvalidImplementation.selector);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
         factory.setImplementation(address(targetAmm));
+
+        address shortBlueprint = makeAddr("shortBlueprint");
+        vm.etch(shortBlueprint, hex"fe7100");
+        vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
+        factory.setImplementation(shortBlueprint);
+
+        address wrongPreamble = makeAddr("wrongPreamble");
+        vm.etch(wrongPreamble, hex"fe71016000");
+        vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
+        factory.setImplementation(wrongPreamble);
+    }
+
+    function test_factoryRejectsInvalidOwnerAndControllerFactory() public {
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
+            _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
+        _deployFactory(address(0), address(controllerFactory), blueprint, defaults_);
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
+        _deployFactory(address(this), address(0), blueprint, defaults_);
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
+        factory.transferOwnership(address(0));
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
+        factory.transferOwnership(address(this));
+    }
+
+    function test_onlyPendingOwnerCanAcceptOwnership() public {
+        factory.transferOwnership(nextGovernance);
+
+        vm.prank(stranger);
+        vm.expectRevert(IPegKeeperV3Factory.NotPendingOwner.selector);
+        factory.acceptOwnership();
+    }
+
+    function test_invalidTargetAmmRevertsWithoutConsumingIndex() public {
+        MockTwoCoinPool invalidTargetAmm =
+            new MockTwoCoinPool(address(targetAsset), address(backingAsset));
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidTargetAmm.selector);
+        factory.deployPegKeeper(
+            address(invalidTargetAmm), address(yieldToken), expansion, contraction
+        );
+
+        assertEq(factory.keeperCount(), 0);
+        assertEq(factory.keeperAt(1), address(0));
+    }
+
+    function test_failedBlueprintDeploymentUsesCustomErrorAndDoesNotConsumeIndex() public {
+        address revertingBlueprint = address(new PegKeeperV3Blueprint(hex"60006000fd"));
+        factory.setImplementation(revertingBlueprint);
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address expectedFirstKeeper = vm.computeCreateAddress(address(factory), 1);
+
+        vm.expectRevert(IPegKeeperV3Factory.DeploymentFailed.selector);
+        factory.deployPegKeeper(address(targetAmm), address(yieldToken), expansion, contraction);
+
+        assertEq(factory.keeperCount(), 0);
+        assertEq(factory.keeperAt(1), address(0));
+
+        factory.setImplementation(blueprint);
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm), address(yieldToken), expansion, contraction
+        );
+        assertEq(deployed, expectedFirstKeeper);
+        assertEq(factory.keeperAt(1), expectedFirstKeeper);
     }
 
     function test_factoryRejectsInvalidSharedRolesAndFeeReceiver() public {
         IPegKeeperV3Factory.DeploymentDefaults memory invalid =
             _defaults(governance, governance, feeReceiver, 25_000_000e18);
-        vm.expectRevert(PegKeeperV3Factory.InvalidDefaults.selector);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(address(0), emergencyAdmin, feeReceiver, 25_000_000e18);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, address(0), feeReceiver, 25_000_000e18);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
         factory.setDefaults(invalid);
 
         invalid = _defaults(governance, emergencyAdmin, address(0), 25_000_000e18);
-        vm.expectRevert(PegKeeperV3Factory.InvalidDefaults.selector);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
         factory.setDefaults(invalid);
+
+        invalid = _defaults(address(factory), emergencyAdmin, feeReceiver, 25_000_000e18);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, address(factory), feeReceiver, 25_000_000e18);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, feeReceiver, 0);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
+        invalid.targetAmmExecutionBufferBps = 10_001;
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
+        invalid.expansionMaxRouteLossBps = 10_001;
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
+        invalid.fallbackSettlementGasReserve = 0;
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
+        invalid.minDownstreamAttemptGas = invalid.fallbackSettlementGasReserve;
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+    }
+
+    function test_unknownSelectorAndDirectBlueprintFallbackCallsRevert() public {
+        (bool unknownSelectorSucceeded,) = address(factory).call(hex"deadbeef");
+        assertFalse(unknownSelectorSucceeded);
+
+        bytes memory selfCallData = abi.encodeWithSignature(
+            "__deployFromBlueprint(address,address,address,address,address,uint256,uint256)",
+            blueprint,
+            address(targetAmm),
+            address(targetAsset),
+            address(backingAsset),
+            address(yieldToken),
+            25_000_000e18,
+            1
+        );
+        (bool directFallbackSucceeded,) = address(factory).call(selfCallData);
+        assertFalse(directFallbackSucceeded);
     }
 
     function test_twoStepOwnershipTransfer() public {
@@ -241,6 +369,27 @@ contract PegKeeperV3FactoryTest is Test {
     function _deployBlueprint() internal returns (address) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         return address(new PegKeeperV3Blueprint(creationCode));
+    }
+
+    function _deployFactory(
+        address initialOwner,
+        address controllerFactory_,
+        address implementation_,
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_
+    ) internal returns (IPegKeeperV3Factory deployed) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
+        bytes memory initCode = bytes.concat(
+            creationCode, abi.encode(initialOwner, controllerFactory_, implementation_, defaults_)
+        );
+        address deployedAddress;
+        assembly {
+            deployedAddress := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployedAddress) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
+        deployed = IPegKeeperV3Factory(deployedAddress);
     }
 
     function _defaults(address admin, address emergency, address receiver, uint256 maxDeployed)

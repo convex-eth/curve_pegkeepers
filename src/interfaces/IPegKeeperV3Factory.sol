@@ -15,6 +15,14 @@ interface IPegKeeperV3Factory {
         uint256 expansionMaxRouteLossBps;
     }
 
+    error NotOwner();
+    error NotPendingOwner();
+    error InvalidOwner();
+    error InvalidImplementation();
+    error InvalidDefaults();
+    error InvalidTargetAmm();
+    error DeploymentFailed();
+
     event ImplementationUpdated(
         address indexed oldImplementation, address indexed newImplementation
     );

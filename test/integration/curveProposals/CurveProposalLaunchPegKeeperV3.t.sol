@@ -8,7 +8,6 @@ import {BaseCurveProposal} from "../../../script/proposals/curve/BaseCurvePropos
 import {
     CurveProposalLaunchPegKeeperV3
 } from "../../../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol";
-import {PegKeeperV3Factory} from "../../../src/PegKeeperV3Factory.sol";
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
 import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
@@ -48,7 +47,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     ICurveVoting internal constant OWNERSHIP_VOTE = ICurveVoting(OWNERSHIP_VOTING);
 
     CurveProposalLaunchPegKeeperV3 internal proposal;
-    PegKeeperV3Factory internal factory;
+    IPegKeeperV3Factory internal factory;
     address internal expectedFrxUsdKeeper;
     address internal expectedUsdcKeeper;
     address internal expectedUsdtKeeper;
@@ -76,7 +75,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             expansionMaxRouteLossBps: 100
         });
         (, address factoryAddress) = deployer.deploy(config);
-        factory = PegKeeperV3Factory(factoryAddress);
+        factory = IPegKeeperV3Factory(factoryAddress);
 
         proposal.setDeploymentFactory(factoryAddress);
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);

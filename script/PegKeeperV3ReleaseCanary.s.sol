@@ -8,9 +8,9 @@ import {console2} from "forge-std/console2.sol";
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
-import {PegKeeperV3Factory} from "../src/PegKeeperV3Factory.sol";
 import {DeployPegKeeperV3Factory} from "./DeployPegKeeperV3Factory.s.sol";
 
 interface IERC20Allowance {
@@ -63,7 +63,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             expansionMaxRouteLossBps: 100
         });
         (, address factoryAddress) = factoryDeployer.deploy(factoryConfig);
-        PegKeeperV3Factory deploymentFactory = PegKeeperV3Factory(factoryAddress);
+        IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(factoryAddress);
         vm.prank(CANARY_FACTORY_OWNER);
         IPegKeeperV3 pegKeeper = IPegKeeperV3(
             deploymentFactory.deployPegKeeper(USDT_POOL, SUSDS, expansionPath, contractionPath)

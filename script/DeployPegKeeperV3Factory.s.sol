@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import {Script} from "forge-std/Script.sol";
 
-import {PegKeeperV3Factory} from "../src/PegKeeperV3Factory.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 
 contract PegKeeperV3BlueprintDeployer {
@@ -66,14 +65,12 @@ contract DeployPegKeeperV3Factory is Script {
                 fallbackSettlementGasReserve: config.fallbackSettlementGasReserve,
                 expansionMaxRouteLossBps: config.expansionMaxRouteLossBps
             });
-        factory = address(
-            new PegKeeperV3Factory(config.owner, config.controllerFactory, blueprint, defaults_)
-        );
+        factory = _deployFactory(config.owner, config.controllerFactory, blueprint, defaults_);
 
-        _verifyDeployment(blueprint, PegKeeperV3Factory(factory), config);
+        _verifyDeployment(blueprint, IPegKeeperV3Factory(factory), config);
     }
 
-    function _verifyDeployment(address blueprint, PegKeeperV3Factory factory, Config memory config)
+    function _verifyDeployment(address blueprint, IPegKeeperV3Factory factory, Config memory config)
         internal
         view
     {
@@ -110,6 +107,25 @@ contract DeployPegKeeperV3Factory is Script {
             defaults_.expansionMaxRouteLossBps == config.expansionMaxRouteLossBps,
             "route loss mismatch"
         );
+    }
+
+    function _deployFactory(
+        address initialOwner,
+        address controllerFactory,
+        address implementation,
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_
+    ) internal returns (address deployed) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
+        bytes memory initCode = bytes.concat(
+            creationCode, abi.encode(initialOwner, controllerFactory, implementation, defaults_)
+        );
+        assembly {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
     }
 
     function _blueprintPreamble(address blueprint) internal view returns (uint256 preamble) {

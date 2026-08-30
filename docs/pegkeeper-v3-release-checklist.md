@@ -97,7 +97,7 @@ Do not combine deployment with activation.
 2. [ ] Re-run the current-block canary and all release gates from a clean checkout.
 3. [ ] Validate every factory input before broadcast, then add wallet configuration and `--broadcast` only after authorization.
 4. [ ] Record the blueprint and factory transactions, addresses, blocks, constructor arguments, source hashes, bytecode hashes, and deployed-code hashes in the manifest.
-5. [ ] Verify the exact Solidity factory and Vyper creation blueprint sources and compiler settings on the selected explorer.
+5. [ ] Verify the exact Vyper factory and Vyper creation blueprint sources and compiler settings on the selected explorer.
 6. [ ] Confirm factory owner, implementation, shared roles/fee receiver, deployment defaults, and zero initial keeper count against the manifest.
 7. [ ] Authorize the factory-owner call for the exact target AMM, yield token, expansion route, and contraction route.
 8. [ ] Record the PegKeeper deployment transaction, address, index/name, blueprint provenance, constructor-specialized code hash, and emitted route hashes.

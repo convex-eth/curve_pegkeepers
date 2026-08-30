@@ -1,0 +1,379 @@
+# pragma version 0.3.10
+"""
+@title PegKeeperV3Factory
+@license MIT
+@notice Owner-gated deployment registry for immutable PegKeeperV3 instances.
+@dev The implementation is an EIP-5202 creation-code blueprint used only by future deployments.
+"""
+
+
+interface ControllerFactory:
+    def stablecoin() -> address: view
+
+
+interface TwoCoinPool:
+    def coins(_index: uint256) -> address: view
+
+
+interface YieldToken:
+    def asset() -> address: view
+
+
+struct RouteStep:
+    kind: uint256
+    venue: address
+    tokenIn: address
+    tokenOut: address
+    poolIndexIn: int128
+    poolIndexOut: int128
+    executionBufferBps: uint256
+
+
+interface PegKeeperV3:
+    def setPaths(
+        _expansion_steps: DynArray[RouteStep, 16],
+        _expansion_max_route_loss_bps: uint256,
+        _contraction_steps: DynArray[RouteStep, 16],
+    ): nonpayable
+    def set_expansion_config(
+        _target_amm_execution_buffer_bps: uint256,
+        _min_downstream_attempt_gas: uint256,
+        _fallback_settlement_gas_reserve: uint256,
+    ): nonpayable
+
+
+struct DeploymentDefaults:
+    admin: address
+    emergencyAdmin: address
+    feeReceiver: address
+    maxDeployedCrvUsd: uint256
+    targetAmmExecutionBufferBps: uint256
+    minDownstreamAttemptGas: uint256
+    fallbackSettlementGasReserve: uint256
+    expansionMaxRouteLossBps: uint256
+
+
+struct BlueprintDeployment:
+    blueprint: address
+    targetAmm: address
+    targetAsset: address
+    backingAsset: address
+    yieldToken: address
+    maxDeployedCrvUsd: uint256
+    index: uint256
+
+
+event ImplementationUpdated:
+    oldImplementation: indexed(address)
+    newImplementation: indexed(address)
+
+
+event DefaultsUpdated:
+    admin: indexed(address)
+    emergencyAdmin: indexed(address)
+    feeReceiver: indexed(address)
+    maxDeployedCrvUsd: uint256
+    targetAmmExecutionBufferBps: uint256
+    minDownstreamAttemptGas: uint256
+    fallbackSettlementGasReserve: uint256
+    expansionMaxRouteLossBps: uint256
+
+
+event PegKeeperDeployed:
+    index: indexed(uint256)
+    pegKeeper: indexed(address)
+    implementation: indexed(address)
+    targetAmm: address
+    yieldToken: address
+
+
+event OwnershipTransferStarted:
+    owner: indexed(address)
+    pendingOwner: indexed(address)
+
+
+event OwnershipTransferred:
+    oldOwner: indexed(address)
+    newOwner: indexed(address)
+
+
+BPS: constant(uint256) = 10_000
+BLUEPRINT_CODE_OFFSET: constant(uint256) = 3
+BLUEPRINT_DEPLOY_CALLDATA_BYTES: constant(uint256) = 228
+BLUEPRINT_DEPLOY_ARGS_BYTES: constant(uint256) = 224
+BLUEPRINT_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id(
+    "__deployFromBlueprint(address,address,address,address,address,uint256,uint256)"
+)
+
+CONTROLLER_FACTORY: immutable(address)
+
+owner: public(address)
+pendingOwner: public(address)
+implementation: public(address)
+_defaults: DeploymentDefaults
+
+keeperCount: public(uint256)
+keeperAt: public(HashMap[uint256, address])
+isPegKeeper: public(HashMap[address, bool])
+implementationOf: public(HashMap[address, address])
+
+
+@external
+def __init__(
+    _initialOwner: address,
+    _controllerFactory: address,
+    _implementation: address,
+    _defaults: DeploymentDefaults,
+):
+    if _initialOwner == empty(address) or _controllerFactory == empty(address):
+        raw_revert(method_id("InvalidOwner()"))
+
+    CONTROLLER_FACTORY = _controllerFactory
+    self.owner = _initialOwner
+    self._set_implementation(_implementation)
+    self._set_defaults(_defaults)
+
+    log OwnershipTransferred(empty(address), _initialOwner)
+
+
+@external
+@pure
+def controllerFactory() -> address:
+    return CONTROLLER_FACTORY
+
+
+@external
+@view
+def defaults() -> DeploymentDefaults:
+    return self._defaults
+
+
+@external
+@view
+def admin() -> address:
+    return self._defaults.admin
+
+
+@external
+@view
+def emergency_admin() -> address:
+    return self._defaults.emergencyAdmin
+
+
+@external
+@view
+def fee_receiver() -> address:
+    return self._defaults.feeReceiver
+
+
+@external
+def deployPegKeeper(
+    _targetAmm: address,
+    _yieldToken: address,
+    _expansionSteps: DynArray[RouteStep, 16],
+    _contractionSteps: DynArray[RouteStep, 16],
+) -> address:
+    self._check_owner()
+
+    target_asset: address = empty(address)
+    backing_asset: address = empty(address)
+    target_asset, backing_asset = self._resolve_assets(_targetAmm, _yieldToken)
+
+    index: uint256 = self.keeperCount + 1
+    blueprint: address = self.implementation
+    config: DeploymentDefaults = self._defaults
+    peg_keeper: address = self._deploy_keeper(
+        blueprint,
+        _targetAmm,
+        target_asset,
+        backing_asset,
+        _yieldToken,
+        config.maxDeployedCrvUsd,
+        index,
+    )
+
+    PegKeeperV3(peg_keeper).setPaths(
+        _expansionSteps,
+        config.expansionMaxRouteLossBps,
+        _contractionSteps,
+    )
+    PegKeeperV3(peg_keeper).set_expansion_config(
+        config.targetAmmExecutionBufferBps,
+        config.minDownstreamAttemptGas,
+        config.fallbackSettlementGasReserve,
+    )
+
+    self.keeperCount = index
+    self.keeperAt[index] = peg_keeper
+    self.isPegKeeper[peg_keeper] = True
+    self.implementationOf[peg_keeper] = blueprint
+
+    log PegKeeperDeployed(index, peg_keeper, blueprint, _targetAmm, _yieldToken)
+    return peg_keeper
+
+
+@external
+def setImplementation(_newImplementation: address):
+    self._check_owner()
+    self._set_implementation(_newImplementation)
+
+
+@external
+def setDefaults(_newDefaults: DeploymentDefaults):
+    self._check_owner()
+    self._set_defaults(_newDefaults)
+
+
+@external
+def transferOwnership(_newOwner: address):
+    self._check_owner()
+    if _newOwner == empty(address) or _newOwner == self.owner:
+        raw_revert(method_id("InvalidOwner()"))
+
+    self.pendingOwner = _newOwner
+    log OwnershipTransferStarted(self.owner, _newOwner)
+
+
+@external
+def acceptOwnership():
+    if msg.sender != self.pendingOwner:
+        raw_revert(method_id("NotPendingOwner()"))
+
+    old_owner: address = self.owner
+    self.owner = msg.sender
+    self.pendingOwner = empty(address)
+    log OwnershipTransferred(old_owner, msg.sender)
+
+
+@external
+def __default__() -> address:
+    # Vyper's checked create_from_blueprint reverts before returning zero. Keep that
+    # deployment attempt inside a self-call so deployPegKeeper can translate any
+    # CREATE failure into the legacy DeploymentFailed() custom-error selector.
+    if msg.sender != self or len(msg.data) != BLUEPRINT_DEPLOY_CALLDATA_BYTES:
+        raw_revert(b"")
+    if slice(msg.data, 0, 4) != BLUEPRINT_DEPLOY_SELECTOR:
+        raw_revert(b"")
+
+    args: BlueprintDeployment = _abi_decode(
+        slice(msg.data, 4, BLUEPRINT_DEPLOY_ARGS_BYTES),
+        BlueprintDeployment,
+    )
+    return create_from_blueprint(
+        args.blueprint,
+        self,
+        args.targetAmm,
+        args.targetAsset,
+        args.backingAsset,
+        args.yieldToken,
+        args.maxDeployedCrvUsd,
+        args.index,
+        code_offset=BLUEPRINT_CODE_OFFSET,
+    )
+
+
+@internal
+@view
+def _check_owner():
+    if msg.sender != self.owner:
+        raw_revert(method_id("NotOwner()"))
+
+
+@internal
+@view
+def _resolve_assets(_targetAmm: address, _yieldToken: address) -> (address, address):
+    crv_usd: address = ControllerFactory(CONTROLLER_FACTORY).stablecoin()
+    coin_0: address = TwoCoinPool(_targetAmm).coins(0)
+    coin_1: address = TwoCoinPool(_targetAmm).coins(1)
+    target_asset: address = empty(address)
+
+    if coin_0 == crv_usd and coin_1 != crv_usd:
+        target_asset = coin_1
+    elif coin_1 == crv_usd and coin_0 != crv_usd:
+        target_asset = coin_0
+    else:
+        raw_revert(method_id("InvalidTargetAmm()"))
+
+    return target_asset, YieldToken(_yieldToken).asset()
+
+
+@internal
+def _deploy_keeper(
+    _blueprint: address,
+    _targetAmm: address,
+    _targetAsset: address,
+    _backingAsset: address,
+    _yieldToken: address,
+    _maxDeployedCrvUsd: uint256,
+    _index: uint256,
+) -> address:
+    succeeded: bool = False
+    response: Bytes[32] = empty(Bytes[32])
+    succeeded, response = raw_call(
+        self,
+        _abi_encode(
+            _blueprint,
+            _targetAmm,
+            _targetAsset,
+            _backingAsset,
+            _yieldToken,
+            _maxDeployedCrvUsd,
+            _index,
+            method_id=BLUEPRINT_DEPLOY_SELECTOR,
+        ),
+        max_outsize=32,
+        revert_on_failure=False,
+    )
+    if not succeeded or len(response) != 32:
+        raw_revert(method_id("DeploymentFailed()"))
+
+    return _abi_decode(response, address)
+
+
+@internal
+def _set_implementation(_newImplementation: address):
+    if not self._is_blueprint(_newImplementation):
+        raw_revert(method_id("InvalidImplementation()"))
+
+    old_implementation: address = self.implementation
+    self.implementation = _newImplementation
+    log ImplementationUpdated(old_implementation, _newImplementation)
+
+
+@internal
+def _set_defaults(_newDefaults: DeploymentDefaults):
+    if (
+        _newDefaults.admin == empty(address)
+        or _newDefaults.emergencyAdmin == empty(address)
+        or _newDefaults.feeReceiver == empty(address)
+        or _newDefaults.admin == _newDefaults.emergencyAdmin
+        or _newDefaults.admin == self
+        or _newDefaults.emergencyAdmin == self
+        or _newDefaults.maxDeployedCrvUsd == 0
+        or _newDefaults.targetAmmExecutionBufferBps > BPS
+        or _newDefaults.expansionMaxRouteLossBps > BPS
+        or _newDefaults.fallbackSettlementGasReserve == 0
+        or _newDefaults.minDownstreamAttemptGas <= _newDefaults.fallbackSettlementGasReserve
+    ):
+        raw_revert(method_id("InvalidDefaults()"))
+
+    self._defaults = _newDefaults
+    log DefaultsUpdated(
+        _newDefaults.admin,
+        _newDefaults.emergencyAdmin,
+        _newDefaults.feeReceiver,
+        _newDefaults.maxDeployedCrvUsd,
+        _newDefaults.targetAmmExecutionBufferBps,
+        _newDefaults.minDownstreamAttemptGas,
+        _newDefaults.fallbackSettlementGasReserve,
+        _newDefaults.expansionMaxRouteLossBps,
+    )
+
+
+@internal
+@view
+def _is_blueprint(_candidate: address) -> bool:
+    if _candidate.codesize <= BLUEPRINT_CODE_OFFSET:
+        return False
+    preamble: Bytes[3] = slice(_candidate.code, 0, BLUEPRINT_CODE_OFFSET)
+    return keccak256(preamble) == keccak256(b"\xfe\x71\x00")

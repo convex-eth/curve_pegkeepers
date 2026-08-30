@@ -119,7 +119,7 @@ The production implementation is complete in independently reviewed Vyper `0.3.1
 
 ## V3 deployment factory
 
-`PegKeeperV3Factory` is an owner-gated deployment registry, not an upgrade proxy. Its implementation pointer must reference an EIP-5202 blueprint containing the Vyper creation bytecode. Updating that pointer changes only future deployments; each deployed PegKeeper contains its own constructor-specialized runtime and cannot be upgraded through the factory.
+`PegKeeperV3Factory` is implemented in pinned Vyper `0.3.10`. It is an owner-gated deployment registry, not an upgrade proxy. Its implementation pointer must reference an EIP-5202 blueprint containing the Vyper creation bytecode. Updating that pointer changes only future deployments; each deployed PegKeeper contains its own constructor-specialized runtime and cannot be upgraded through the factory.
 
 The factory stores the shared PegKeeper admin, distinct emergency admin, fee receiver, and defaults for maximum exposure, target-AMM buffer, downstream gas bounds, and expansion route-loss limit. Every V3 reads `admin()`, `emergency_admin()`, and `fee_receiver()` dynamically from this factory; V3 has no local role or receiver setters. A deployment call supplies only the target AMM, final yield token, expansion route, and contraction route. The factory derives the target asset from the AMM's crvUSD pair and the backing asset from `yieldToken.asset()`, assigns the next one-based index, deploys the blueprint, and installs both routes and execution defaults atomically. The result starts fully paused and exposes `keeper_index()` plus `name()` in the form `Pegkeeper 1`, `Pegkeeper 2`, and so on. Updating shared roles or the fee receiver applies immediately to every factory-created V3; changing the blueprint or deployment-only defaults affects only later deployments.
 
@@ -178,7 +178,6 @@ script/
 scripts/
 └── verify-release-manifest.py
 src/
-├── PegKeeperV3Factory.sol
 ├── interfaces/
 │   ├── IControllerFactory.sol
 │   ├── IDaiUsds.sol
@@ -193,7 +192,8 @@ src/
 └── vyper/
     ├── PegKeeperOffboarding.vy
     ├── PegKeeperV2.vy
-    └── PegKeeperV3.vy
+    ├── PegKeeperV3.vy
+    └── PegKeeperV3Factory.vy
 test/
 ├── DaiUsdsConverter.t.sol
 ├── PegKeeperLifecycle.t.sol
