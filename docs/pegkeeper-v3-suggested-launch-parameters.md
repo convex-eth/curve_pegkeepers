@@ -2,6 +2,13 @@
 
 Status: governance launch proposal only. This document does not authorize deployment, allocation, broadcast, or activation.
 
+Implementation:
+
+- Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
+- Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
+
+The proposal expects an audited, fresh deployment factory in `PKV3_FACTORY`. It deploys and funds the three keepers below while leaving all execution directions paused. Activation remains a separate governance step after deployment verification.
+
 ## Initial launch scope
 
 Deploy three PegKeeper V3 instances:
