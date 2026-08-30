@@ -1,6 +1,6 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-30T14:41:39Z",
+  "generatedAtUtc": "2026-08-30T15:27:11Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
   "productionSourceCommit": "f6add44f9cfff3a2062a83946121443a44bc582a",
   "compiler": {
@@ -81,7 +81,7 @@
   "verification": {
     "forgeVersion": "1.7.1",
     "solidityVersion": "0.8.30",
-    "testsPassed": 206,
+    "testsPassed": 207,
     "testsFailed": 0,
     "testsSkipped": 0,
     "deploymentTest": "pass",

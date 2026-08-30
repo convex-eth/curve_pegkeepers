@@ -7,7 +7,7 @@ Implementation:
 - Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
 - Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
 
-The proposal expects an audited, fresh deployment factory in `PKV3_FACTORY`. It deploys and funds the three keepers below while leaving all execution directions paused. Activation remains a separate governance step after deployment verification.
+The proposal expects an audited, fresh deployment factory in `PKV3_FACTORY`. It deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
 
 ## Initial launch scope
 
@@ -22,6 +22,8 @@ Deploy three PegKeeper V3 instances:
 GHO and PYUSD are not included in the initial launch scope.
 
 `maxDeployedCrvUsd` and the ControllerFactory debt ceiling should match at launch. The factory owner must set the intended deployment default before creating each keeper; changing the factory default afterward does not change an existing keeper's local capacity.
+
+Each new V3 is added to `0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251`, used by the eight current mint-market Controllers, and `0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1`, still used by the legacy sfrxETH Controller. Registration occurs only after deployment, policy configuration, and debt-ceiling allocation. Both monetary policies read `debt()`, which returns V3's current `deployedCrvUsd` exposure; the initially paused keepers therefore contribute zero until expansion occurs. Proposal construction verifies that both policies are administered by the Curve Ownership Agent and point to the canonical crvUSD ControllerFactory.
 
 ## Shared factory configuration
 
@@ -202,7 +204,7 @@ USDT → DAI → USDS → sUSDS
 
 Every keeper is deployed fully paused.
 
-1. Verify the blueprint hash, factory, ControllerFactory, target AMM, fixed endpoints, path hashes, role getters, fee receiver, local capacity, and ControllerFactory debt ceiling.
+1. Verify the blueprint hash, factory, ControllerFactory, aggregate monetary-policy membership, target AMM, fixed endpoints, path hashes, role getters, fee receiver, local capacity, and ControllerFactory debt ceiling.
 2. Run a fork canary for each exact keeper configuration and both route directions.
 3. While global execution remains paused, unpause backing deployment, direct buyback, undeployed-backing contraction, and yield contraction.
 4. Unpause global execution.

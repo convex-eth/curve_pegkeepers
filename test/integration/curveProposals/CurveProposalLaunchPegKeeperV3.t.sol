@@ -8,6 +8,7 @@ import {BaseCurveProposal} from "../../../script/proposals/curve/BaseCurvePropos
 import {
     CurveProposalLaunchPegKeeperV3
 } from "../../../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol";
+import {IAggMonetaryPolicy} from "../../../src/interfaces/IAggMonetaryPolicy.sol";
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
 import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
@@ -35,6 +36,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant OWNERSHIP_VOTING = 0xE478de485ad2fe566d49342Cbd03E49ed7DB3356;
     address internal constant EDAO_PROXY = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
     address internal constant CONTROLLER_FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
+    address internal constant MONETARY_POLICY = 0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251;
+    address internal constant LEGACY_MONETARY_POLICY = 0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1;
     address internal constant CONVEX_VOTEPROXY = 0x989AEb4d175e16225E39E87d0D97A3360524AD80;
     address internal constant YEARN_VOTEPROXY = 0xF147b8125d2ef93FB6965Db97D6746952a133934;
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
@@ -85,7 +88,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     function test_ProposalActionsOnlyConfigureNewV3Keepers() public view {
         BaseCurveProposal.Action[] memory actions = proposal.buildProposalActions();
-        assertEq(actions.length, 11);
+        assertEq(actions.length, 17);
 
         assertEq(actions[0].target, address(factory));
         assertEq(_selector(actions[0].data), IPegKeeperV3Factory.setDefaults.selector);
@@ -94,20 +97,26 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(actions[2].target, expectedFrxUsdKeeper);
         assertEq(_selector(actions[2].data), IPegKeeperV3.set_policy.selector);
         _assertDebtCeilingAction(actions[3], expectedFrxUsdKeeper, FRXUSD_CAP);
+        _assertMonetaryPolicyAction(actions[4], MONETARY_POLICY, expectedFrxUsdKeeper);
+        _assertMonetaryPolicyAction(actions[5], LEGACY_MONETARY_POLICY, expectedFrxUsdKeeper);
 
-        assertEq(actions[4].target, address(factory));
-        assertEq(_selector(actions[4].data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        assertEq(actions[5].target, expectedUsdcKeeper);
-        assertEq(_selector(actions[5].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[6], expectedUsdcKeeper, USDC_CAP);
+        assertEq(actions[6].target, address(factory));
+        assertEq(_selector(actions[6].data), IPegKeeperV3Factory.deployPegKeeper.selector);
+        assertEq(actions[7].target, expectedUsdcKeeper);
+        assertEq(_selector(actions[7].data), IPegKeeperV3.set_policy.selector);
+        _assertDebtCeilingAction(actions[8], expectedUsdcKeeper, USDC_CAP);
+        _assertMonetaryPolicyAction(actions[9], MONETARY_POLICY, expectedUsdcKeeper);
+        _assertMonetaryPolicyAction(actions[10], LEGACY_MONETARY_POLICY, expectedUsdcKeeper);
 
-        assertEq(actions[7].target, address(factory));
-        assertEq(_selector(actions[7].data), IPegKeeperV3Factory.setDefaults.selector);
-        assertEq(actions[8].target, address(factory));
-        assertEq(_selector(actions[8].data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        assertEq(actions[9].target, expectedUsdtKeeper);
-        assertEq(_selector(actions[9].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[10], expectedUsdtKeeper, USDT_CAP);
+        assertEq(actions[11].target, address(factory));
+        assertEq(_selector(actions[11].data), IPegKeeperV3Factory.setDefaults.selector);
+        assertEq(actions[12].target, address(factory));
+        assertEq(_selector(actions[12].data), IPegKeeperV3Factory.deployPegKeeper.selector);
+        assertEq(actions[13].target, expectedUsdtKeeper);
+        assertEq(_selector(actions[13].data), IPegKeeperV3.set_policy.selector);
+        _assertDebtCeilingAction(actions[14], expectedUsdtKeeper, USDT_CAP);
+        _assertMonetaryPolicyAction(actions[15], MONETARY_POLICY, expectedUsdtKeeper);
+        _assertMonetaryPolicyAction(actions[16], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
     function test_ProposalDeploysThreePausedKeepersWithSuggestedCapacities() public {
@@ -148,6 +157,22 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         );
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdcKeeper), USDC_CAP);
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdtKeeper), USDT_CAP);
+    }
+
+    function test_ProposalRegistersThreeV3KeepersInMonetaryPolicy() public {
+        IAggMonetaryPolicy monetaryPolicy = IAggMonetaryPolicy(MONETARY_POLICY);
+        IAggMonetaryPolicy legacyMonetaryPolicy = IAggMonetaryPolicy(LEGACY_MONETARY_POLICY);
+        uint256[3] memory emptySlots = _firstThreeEmptySlots(monetaryPolicy);
+        uint256[3] memory legacyEmptySlots = _firstThreeEmptySlots(legacyMonetaryPolicy);
+
+        _executeProposal();
+
+        assertEq(monetaryPolicy.peg_keepers(emptySlots[0]), expectedFrxUsdKeeper);
+        assertEq(monetaryPolicy.peg_keepers(emptySlots[1]), expectedUsdcKeeper);
+        assertEq(monetaryPolicy.peg_keepers(emptySlots[2]), expectedUsdtKeeper);
+        assertEq(legacyMonetaryPolicy.peg_keepers(legacyEmptySlots[0]), expectedFrxUsdKeeper);
+        assertEq(legacyMonetaryPolicy.peg_keepers(legacyEmptySlots[1]), expectedUsdcKeeper);
+        assertEq(legacyMonetaryPolicy.peg_keepers(legacyEmptySlots[2]), expectedUsdtKeeper);
     }
 
     function test_ProposalSetsExactSuggestedRoutes() public {
@@ -214,7 +239,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         vm.prank(CONVEX_VOTEPROXY);
         uint256 proposalId = OWNERSHIP_VOTE.newVote(
             script,
-            "Deploy three paused PegKeeperV3 keepers for frxUSD, USDC, and USDT",
+            "Deploy and register three paused PegKeeperV3 keepers for frxUSD, USDC, and USDT",
             false,
             false
         );
@@ -375,6 +400,31 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             abi.decode(_withoutSelector(innerData), (address, uint256));
         assertEq(subject, keeper);
         assertEq(ceiling, cap);
+    }
+
+    function _assertMonetaryPolicyAction(
+        BaseCurveProposal.Action memory action,
+        address monetaryPolicy,
+        address keeper
+    ) internal pure {
+        assertEq(action.target, monetaryPolicy);
+        assertEq(_selector(action.data), IAggMonetaryPolicy.add_peg_keeper.selector);
+        assertEq(abi.decode(_withoutSelector(action.data), (address)), keeper);
+    }
+
+    function _firstThreeEmptySlots(IAggMonetaryPolicy monetaryPolicy)
+        internal
+        view
+        returns (uint256[3] memory slots)
+    {
+        uint256 found;
+        for (uint256 i; i < 1_000; ++i) {
+            if (monetaryPolicy.peg_keepers(i) != address(0)) continue;
+            slots[found] = i;
+            ++found;
+            if (found == slots.length) return slots;
+        }
+        revert("fewer than three policy slots");
     }
 
     function _selector(bytes memory data) internal pure returns (bytes4 selector) {

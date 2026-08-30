@@ -2,12 +2,13 @@
 pragma solidity ^0.8.30;
 
 import {BaseCurveProposal} from "./BaseCurveProposal.sol";
+import {IAggMonetaryPolicy} from "../../../src/interfaces/IAggMonetaryPolicy.sol";
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
 
 /// @title CurveProposalLaunchPegKeeperV3
-/// @notice Deploy three initially paused PegKeeperV3 instances for frxUSD, USDC, and USDT.
+/// @notice Deploy and register three initially paused PegKeeperV3 instances for frxUSD, USDC, and USDT.
 /// @dev Mirrors `docs/pegkeeper-v3-suggested-launch-parameters.md`. The audited V3 blueprint and
 ///      a fresh deployment factory owned by the Curve Ownership Agent must already be deployed.
 ///      This proposal configures no V2 PegKeepers and performs no activation actions.
@@ -34,6 +35,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     address public constant CURVE_EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
+    address public constant CRVUSD_MONETARY_POLICY = 0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251;
+    address public constant CRVUSD_LEGACY_MONETARY_POLICY =
+        0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1;
 
     address public constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address public constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
@@ -58,7 +62,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         vm.startBroadcast();
         bytes memory script = buildProposalScript();
         proposalId = proposeOwnershipVote(
-            script, "Deploy three paused PegKeeperV3 keepers for frxUSD, USDC, and USDT"
+            script,
+            "Deploy and register three paused PegKeeperV3 keepers for frxUSD, USDC, and USDT"
         );
         vm.stopBroadcast();
     }
@@ -80,30 +85,37 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     function buildProposalActions() public view returns (Action[] memory actions) {
         _validateFactory();
+        _validateMonetaryPolicies();
 
         address frxUsdKeeper = expectedKeeper(1);
         address usdcKeeper = expectedKeeper(2);
         address usdtKeeper = expectedKeeper(3);
-        actions = new Action[](11);
+        actions = new Action[](17);
 
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
         actions[1] =
             _deployAction(FRXUSD_CRVUSD_POOL, SFRXUSD, _frxUsdExpansion(), _frxUsdContraction());
         actions[2] = _setPolicyAction(frxUsdKeeper, FRXUSD_CAP);
         actions[3] = _debtCeilingAction(frxUsdKeeper, FRXUSD_CAP);
+        actions[4] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, frxUsdKeeper);
+        actions[5] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, frxUsdKeeper);
 
-        actions[4] = _deployAction(
+        actions[6] = _deployAction(
             USDC_CRVUSD_POOL, SUSDS, _susdsExpansion(USDC, 1), _susdsContraction(USDC, 1)
         );
-        actions[5] = _setPolicyAction(usdcKeeper, USDC_CAP);
-        actions[6] = _debtCeilingAction(usdcKeeper, USDC_CAP);
+        actions[7] = _setPolicyAction(usdcKeeper, USDC_CAP);
+        actions[8] = _debtCeilingAction(usdcKeeper, USDC_CAP);
+        actions[9] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
+        actions[10] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdcKeeper);
 
-        actions[7] = _setDefaultsAction(USDT_CAP);
-        actions[8] = _deployAction(
+        actions[11] = _setDefaultsAction(USDT_CAP);
+        actions[12] = _deployAction(
             USDT_CRVUSD_POOL, SUSDS, _susdsExpansion(USDT, 2), _susdsContraction(USDT, 2)
         );
-        actions[9] = _setPolicyAction(usdtKeeper, USDT_CAP);
-        actions[10] = _debtCeilingAction(usdtKeeper, USDT_CAP);
+        actions[13] = _setPolicyAction(usdtKeeper, USDT_CAP);
+        actions[14] = _debtCeilingAction(usdtKeeper, USDT_CAP);
+        actions[15] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
+        actions[16] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdtKeeper);
     }
 
     function _validateFactory() internal view {
@@ -126,6 +138,20 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             firstWord := mload(pointer)
         }
         require(firstWord >> 232 == EIP_5202_PREAMBLE, "invalid blueprint");
+    }
+
+    function _validateMonetaryPolicies() internal view {
+        _validateMonetaryPolicy(CRVUSD_MONETARY_POLICY);
+        _validateMonetaryPolicy(CRVUSD_LEGACY_MONETARY_POLICY);
+    }
+
+    function _validateMonetaryPolicy(address policy) internal view {
+        IAggMonetaryPolicy monetaryPolicy = IAggMonetaryPolicy(policy);
+        require(monetaryPolicy.admin() == CURVE_OWNERSHIP_AGENT, "monetary policy admin");
+        require(
+            monetaryPolicy.CONTROLLER_FACTORY() == CURVE_CRVUSD_CONTROLLER_FACTORY,
+            "monetary policy factory"
+        );
     }
 
     function _setDefaultsAction(uint256 cap) internal view returns (Action memory) {
@@ -176,6 +202,17 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             CURVE_CRVUSD_CONTROLLER_FACTORY,
             abi.encodeWithSelector(IControllerFactory.set_debt_ceiling.selector, keeper, cap)
         );
+    }
+
+    function _monetaryPolicyAction(address policy, address keeper)
+        internal
+        pure
+        returns (Action memory)
+    {
+        return Action({
+            target: policy,
+            data: abi.encodeWithSelector(IAggMonetaryPolicy.add_peg_keeper.selector, keeper)
+        });
     }
 
     function _deploymentDefaults(uint256 cap)

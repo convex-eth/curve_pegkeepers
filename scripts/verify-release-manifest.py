@@ -23,7 +23,7 @@ EIP_3860_LIMIT = 49_152
 DEPLOYED_RUNTIME_BYTES = 22_862
 FACTORY_DEPLOYED_RUNTIME_BYTES = 3_778
 BLUEPRINT_PREAMBLE = bytes.fromhex("fe7100")
-TESTS_PASSED = 206
+TESTS_PASSED = 207
 
 
 def fail(label: str, actual: object, expected: object) -> None:
