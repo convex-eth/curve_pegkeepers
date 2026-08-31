@@ -14,10 +14,10 @@ import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOr
 ///      a fresh deployment factory owned by the Curve Ownership Agent must already be deployed.
 ///      This proposal configures no V2 PegKeepers and performs no activation actions.
 contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 23_129;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 23_161;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 21_298;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 21_330;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0x2501e99f9b32ed5319c9e4d28890a199bbd3367689027341f955c5dffc35aeba;
+        0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
         0xb130d1b224b3d8e374f283de9b209f3b85cca034d8eecad1b5ea708811058807;
 
