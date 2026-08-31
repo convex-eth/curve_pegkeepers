@@ -14,6 +14,9 @@ import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOr
 ///      a fresh deployment factory owned by the Curve Ownership Agent must already be deployed.
 ///      This proposal configures no V2 PegKeepers and performs no activation actions.
 contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
+    string public constant DEPLOYMENT_INPUT_PATH =
+        "deployments/mainnet/PegKeeperV3-deployment.json";
+
     uint256 public constant IMPLEMENTATION_CORE_SIZE = 21_298;
     uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 21_330;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
@@ -71,12 +74,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     address public susdsBackingOracle;
 
     function run() external returns (uint256 proposalId) {
-        deploymentFactory = vm.envAddress("PKV3_FACTORY");
-        frxUsdOracle = vm.envAddress("PKV3_FRXUSD_ORACLE");
-        frxUsdBackingOracle = vm.envAddress("PKV3_FRXUSD_BACKING_ORACLE");
-        usdcOracle = vm.envAddress("PKV3_USDC_ORACLE");
-        usdtOracle = vm.envAddress("PKV3_USDT_ORACLE");
-        susdsBackingOracle = vm.envAddress("PKV3_SUSDS_BACKING_ORACLE");
+        loadDeployment(DEPLOYMENT_INPUT_PATH);
         vm.startBroadcast();
         bytes memory script = buildProposalScript();
         proposalId = proposeOwnershipVote(
@@ -84,6 +82,17 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             "Deploy and register three paused PegKeeperV3 keepers for frxUSD, USDC, and USDT"
         );
         vm.stopBroadcast();
+    }
+
+    function loadDeployment(string memory path) public {
+        string memory json = vm.readFile(path);
+        require(vm.parseJsonUint(json, ".chainId") == block.chainid, "deployment chain");
+        deploymentFactory = vm.parseJsonAddress(json, ".factory");
+        frxUsdOracle = vm.parseJsonAddress(json, ".frxUsdTargetOracle");
+        frxUsdBackingOracle = vm.parseJsonAddress(json, ".sfrxUsdBackingOracle");
+        usdcOracle = vm.parseJsonAddress(json, ".usdcTargetOracle");
+        usdtOracle = vm.parseJsonAddress(json, ".usdtTargetOracle");
+        susdsBackingOracle = vm.parseJsonAddress(json, ".susdsBackingOracle");
     }
 
     function setDeploymentFactory(address factory) external {

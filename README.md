@@ -131,10 +131,7 @@ The factory stores the shared PegKeeper admin, distinct emergency admin, fee rec
 
 V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
 
-- [`script/DeployPegKeeperV3Factory.s.sol`](script/DeployPegKeeperV3Factory.s.sol): stateless preview module, locked implementation, and owner-gated EIP-1167 deployment-factory creation with fail-closed verification;
-- [`script/DeployPegKeeperV3Oracles.s.sol`](script/DeployPegKeeperV3Oracles.s.sol): orientation-checked Curve StableSwap-NG adapter deployment;
-- [`script/DeployPegKeeperV3ChainlinkOracles.s.sol`](script/DeployPegKeeperV3ChainlinkOracles.s.sol): separate registry-bound frxUSD/USD and USDS/USD Chainlink adapter deployment;
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): low-level locked implementation and preview-module deployment helper;
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): one explicit, environment-free mainnet deployment of the stateless preview module, locked implementation, immutable EIP-1167 factory, five Curve adapters, and two Chainlink adapters; after the final deployment it writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`;
 - [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting current-mainnet simulation of the complete USDT → DAI → USDS → sUSDS expansion;
 - [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
 - [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
@@ -181,9 +178,6 @@ deployments/mainnet/
 └── PegKeeperV3-release.json
 script/
 ├── DeployPegKeeperV3.s.sol
-├── DeployPegKeeperV3ChainlinkOracles.s.sol
-├── DeployPegKeeperV3Factory.s.sol
-├── DeployPegKeeperV3Oracles.s.sol
 └── PegKeeperV3ReleaseCanary.s.sol
 scripts/
 └── verify-release-manifest.py
@@ -237,7 +231,7 @@ Current V2 PegKeepers covered by the retirement test:
 
 ### Oracle alternatives
 
-`CurveStablecoinOracleTest` covers pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection. `PegKeeperV3OracleDeploymentTest` and the launch-proposal fork suite validate the five selected Curve adapter orientations against live pools. `ChainlinkStablecoinOracleTest` covers registry/base/quote/feed binding, decimal normalization, feed-rotation rejection, round completeness, positive answers, timestamp direction, and staleness. `PegKeeperV3ChainlinkOracleDeploymentTest` proves separate frxUSD and USDS deployments, while `ChainlinkStablecoinOracleForkTest` verifies both pinned mainnet registry pairs through contract calls.
+`CurveStablecoinOracleTest` covers pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection. `PegKeeperV3UnifiedDeploymentTest` and the launch-proposal fork suite validate the five Curve adapter orientations. `ChainlinkStablecoinOracleTest` covers registry/base/quote/feed binding, decimal normalization, feed-rotation rejection, round completeness, positive answers, timestamp direction, and staleness. `ChainlinkStablecoinOracleForkTest` runs the unified deployment against both pinned mainnet registry pairs.
 
 ### `PegKeeperV3FoundationTest`
 
@@ -255,17 +249,18 @@ Verifies the atomic governance policy surface, margin ordering and ppm bounds, k
 
 Deploys the locked implementation with its immutable preview-module address, checks full initcode and actual runtime limits, then creates an exact 55-byte EIP-1167 initcode payload and verifies its 45-byte runtime embeds the implementation address.
 
-### `PegKeeperV3DeploymentTest`
+### `PegKeeperV3UnifiedDeploymentTest`
 
-Runs the direct deployment helper against deterministic endpoints and verifies every constructor field, one-based identity and name, Factory stablecoin discovery, fully paused startup, configured capacity, and the deployed EIP-170 bound.
+Runs the complete deployment against deterministic local dependencies. It verifies ten direct monotonic CREATEs from one deployer, locked implementation/preview binding, immutable factory wiring and defaults, all five Curve orientations, both Chainlink adapters, the explicit hardcoded mainnet configuration, and complete JSON address readback.
+
+### `PegKeeperV3ProposalDeploymentJsonTest`
+
+Writes the unified deployment schema and verifies that the Curve proposal loads its factory and selected Curve-adapter inputs from that JSON instead of environment variables.
 
 ### `PegKeeperV3FactoryTest`
 
 Deploys V3 through the real minimal-proxy factory and verifies owner-only creation, immutable implementation binding, target/backing derivation, one-based names, mandatory oracles, route and execution-default installation, dynamic shared role and fee-recipient resolution, fully paused startup, exact proxy runtime, atomic rollback and CREATE nonce preservation, registry state, and two-step factory ownership.
 
-### `PegKeeperV3FactoryDeploymentTest`
-
-Runs the canonical implementation, preview-module, and factory deployment helper and verifies implementation lock, preview binding, EIP-170/EIP-3860 bounds, immutable factory implementation, owner, ControllerFactory endpoint, complete deployment defaults, and zero initial keeper count.
 
 ### `PegKeeperV3ExpansionForkTest`
 

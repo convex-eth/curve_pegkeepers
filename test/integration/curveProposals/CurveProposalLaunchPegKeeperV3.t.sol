@@ -3,8 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {DeployPegKeeperV3Factory} from "../../../script/DeployPegKeeperV3Factory.s.sol";
-import {DeployPegKeeperV3Oracles} from "../../../script/DeployPegKeeperV3Oracles.s.sol";
+import {DeployPegKeeperV3} from "../../../script/DeployPegKeeperV3.s.sol";
 import {BaseCurveProposal} from "../../../script/proposals/curve/BaseCurveProposal.sol";
 import {
     CurveProposalLaunchPegKeeperV3
@@ -66,45 +65,19 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         vm.etch(EDAO_PROXY, address(proxyHarness).code);
 
         proposal = new CurveProposalLaunchPegKeeperV3();
-        DeployPegKeeperV3Oracles oracleDeployer = new DeployPegKeeperV3Oracles();
-        DeployPegKeeperV3Oracles.Config memory oracleConfig = DeployPegKeeperV3Oracles.Config({
-            usdcUsdtPool: proposal.USDC_USDT_ORACLE_POOL(),
-            frxUsdSusdsPool: proposal.FRXUSD_SUSDS_ORACLE_POOL(),
-            sfrxUsdFrxUsdPool: proposal.FRXUSD_SFRXUSD_POOL(),
-            frxUsd: proposal.FRXUSD(),
-            sfrxUsd: proposal.SFRXUSD(),
-            susds: proposal.SUSDS(),
-            usdc: proposal.USDC(),
-            usdt: proposal.USDT()
-        });
-        (
-            address frxUsdOracle,
-            address frxUsdBackingOracle,
-            address usdcOracle,
-            address usdtOracle,
-            address susdsBackingOracle
-        ) = oracleDeployer.deploy(oracleConfig);
+        DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
+        DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
         proposal.setOracleAdapters(
-            frxUsdOracle, frxUsdBackingOracle, usdcOracle, usdtOracle, susdsBackingOracle
+            deployment.frxUsdTargetOracle,
+            deployment.sfrxUsdBackingOracle,
+            deployment.usdcTargetOracle,
+            deployment.usdtTargetOracle,
+            deployment.susdsBackingOracle
         );
 
-        DeployPegKeeperV3Factory deployer = new DeployPegKeeperV3Factory();
-        DeployPegKeeperV3Factory.Config memory config = DeployPegKeeperV3Factory.Config({
-            owner: OWNERSHIP_AGENT,
-            controllerFactory: CONTROLLER_FACTORY,
-            admin: OWNERSHIP_AGENT,
-            emergencyAdmin: proposal.CURVE_EMERGENCY_ADMIN(),
-            feeReceiver: proposal.FEE_SPLITTER(),
-            maxDeployedCrvUsd: FRXUSD_CAP,
-            targetAmmExecutionBufferBps: 5,
-            minDownstreamAttemptGas: 1_500_000,
-            fallbackSettlementGasReserve: 300_000,
-            expansionMaxRouteLossBps: 100
-        });
-        (, address factoryAddress) = deployer.deploy(config);
-        factory = IPegKeeperV3Factory(factoryAddress);
+        factory = IPegKeeperV3Factory(deployment.factory);
 
-        proposal.setDeploymentFactory(factoryAddress);
+        proposal.setDeploymentFactory(deployment.factory);
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);
         expectedUsdcKeeper = proposal.expectedKeeper(2);
         expectedUsdtKeeper = proposal.expectedKeeper(3);

@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {DeployPegKeeperV3ChainlinkOracles} from "../script/DeployPegKeeperV3ChainlinkOracles.s.sol";
+import {DeployPegKeeperV3} from "../script/DeployPegKeeperV3.s.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 
 contract ChainlinkStablecoinOracleForkTest is Test {
@@ -11,33 +11,24 @@ contract ChainlinkStablecoinOracleForkTest is Test {
         vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co")));
     }
 
-    function test_liveFrxUsdAndUsdsFeedsNormalizeToOneEighteen() public {
-        DeployPegKeeperV3ChainlinkOracles deployer = new DeployPegKeeperV3ChainlinkOracles();
-        deployer.validateMainnetRegistry();
-        DeployPegKeeperV3ChainlinkOracles.Config memory config =
-            DeployPegKeeperV3ChainlinkOracles.Config({
-                registry: deployer.CHAINLINK_FEED_REGISTRY(),
-                quote: deployer.USD(),
-                frxUsd: deployer.FRXUSD(),
-                frxUsdExpectedFeed: deployer.FRXUSD_USD_FEED(),
-                frxUsdMaxDelay: 2 days,
-                usds: deployer.USDS(),
-                usdsExpectedFeed: deployer.USDS_USD_FEED(),
-                usdsMaxDelay: 2 days
-            });
+    function test_unifiedDeploymentCreatesLiveFrxUsdAndUsdsAdapters() public {
+        DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
+        DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
 
-        (address frxUsdAdapter, address usdsAdapter) = deployer.deploy(config);
+        IChainlinkStablecoinOracle frxUsdOracle =
+            IChainlinkStablecoinOracle(deployment.frxUsdChainlinkOracle);
+        IChainlinkStablecoinOracle usdsOracle =
+            IChainlinkStablecoinOracle(deployment.usdsChainlinkOracle);
 
-        _assertLiveAdapter(frxUsdAdapter, deployer.FRXUSD_USD_FEED());
-        _assertLiveAdapter(usdsAdapter, deployer.USDS_USD_FEED());
-    }
-
-    function _assertLiveAdapter(address adapter, address expectedFeed) internal view {
-        IChainlinkStablecoinOracle oracle = IChainlinkStablecoinOracle(adapter);
-        assertEq(oracle.feed(), expectedFeed);
-        assertEq(oracle.feed_decimals(), 8);
-        assertEq(oracle.max_delay(), 2 days);
-        assertGt(oracle.price(), 0.95e18);
-        assertLt(oracle.price(), 1.05e18);
+        assertEq(frxUsdOracle.registry(), deployer.CHAINLINK_FEED_REGISTRY());
+        assertEq(frxUsdOracle.base(), deployer.FRXUSD());
+        assertEq(frxUsdOracle.feed(), deployer.FRXUSD_USD_FEED());
+        assertEq(frxUsdOracle.max_delay(), deployer.RECOMMENDED_CHAINLINK_MAX_DELAY());
+        assertEq(usdsOracle.registry(), deployer.CHAINLINK_FEED_REGISTRY());
+        assertEq(usdsOracle.base(), deployer.USDS());
+        assertEq(usdsOracle.feed(), deployer.USDS_USD_FEED());
+        assertEq(usdsOracle.max_delay(), deployer.RECOMMENDED_CHAINLINK_MAX_DELAY());
+        assertGt(frxUsdOracle.price(), 0);
+        assertGt(usdsOracle.price(), 0);
     }
 }

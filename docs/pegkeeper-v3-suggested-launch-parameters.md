@@ -7,7 +7,7 @@ Implementation:
 - Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
 - Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
 
-The proposal expects an audited, fresh EIP-1167 deployment factory in `PKV3_FACTORY` and five predeployed, orientation-checked Curve EMA adapters. It deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
+`script/DeployPegKeeperV3.s.sol` performs one explicit deployment of the preview module, locked implementation, immutable EIP-1167 factory, five Curve EMA adapters, and both alternative Chainlink adapters. It uses hardcoded public mainnet configuration and writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`. The proposal reads its factory and selected Curve adapters from that file, deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
 
 ## Initial launch scope
 
@@ -94,7 +94,7 @@ If selected, the frxUSD/USD adapter can serve both the frxUSD target check and t
 | frxUSD/USD feed resolved by registry | `0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D` |
 | USDS/USD feed resolved by registry | `0x592700e4FcDd674dC54d2681DED3B63f54F63f9A` |
 
-Both feeds report 8 decimals and normalize to `1e18`. Direct contract calls to these feed proxies currently revert `No access`; the adapter therefore reads through the authorized Feed Registry and fails closed if the registry later resolves a different feed. If Chainlink is selected, governance must approve independent `maxDelay` values and re-confirm registry resolution, feed descriptions, decimals, round freshness, and contract-read access immediately before deployment.
+Both feeds report 8 decimals and normalize to `1e18`. Direct contract calls to these feed proxies currently revert `No access`; the adapter therefore reads through the authorized Feed Registry and fails closed if the registry later resolves a different feed. The unified deployer currently uses a provisional `26 hours` maximum delay for both adapters, based on recent roughly daily registry updates plus limited grace. This value is not approved policy: re-confirm both feed mappings, descriptions, decimals, recent update intervals, contract-read access, and the independent freshness limits before broadcast.
 
 Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
 
