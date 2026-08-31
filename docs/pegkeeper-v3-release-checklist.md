@@ -4,7 +4,7 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `236d4b33b3be7deb037a9b6440195b0ffca06193`.
+- [x] Production source commit: `066fa9bde882f5d5e15348cfcd2349b3aa20185a`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
@@ -18,9 +18,7 @@ Canonical files:
 - `deployments/mainnet/PegKeeperV3-release.json`
 - `scripts/verify-release-manifest.py`
 - `script/PegKeeperV3ReleaseCanary.s.sol`
-- `script/DeployPegKeeperV3Factory.s.sol`
-- `script/DeployPegKeeperV3Oracles.s.sol`
-- `script/DeployPegKeeperV3ChainlinkOracles.s.sol`
+- `script/DeployPegKeeperV3.s.sol`
 - `script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`
 
 ## 1. Architecture and bytecode evidence
@@ -75,16 +73,16 @@ Canonical files:
 
 ## 2. Mandatory unresolved decisions
 
-These are release blockers. Do not substitute defaults or infer governance intent.
+These are release blockers. The deployer exposes one explicit recommended configuration; hardcoding it does not substitute for governance confirmation.
 
 - [ ] Choose one oracle family for the final proposal and manifest deployment section:
   - Curve StableSwap-NG EMA adapters; or
   - Chainlink Feed Registry adapters.
-- [ ] If Chainlink is selected, approve an independent nonzero `maxDelay` for `frxUSD/USD`.
-- [ ] If Chainlink is selected, approve an independent nonzero `maxDelay` for `USDS/USD`.
+- [ ] If Chainlink is selected, reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `frxUSD/USD`.
+- [ ] If Chainlink is selected, independently reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `USDS/USD`.
 - [ ] Document how the selected `USDS/USD` check is applied to sUSDS economic backing and any required share-to-asset conversion.
 - [ ] Confirm the independent USDC and USDT target-health checks; selecting Chainlink for frxUSD/USDS does not remove them.
-- [ ] Confirm deployment-factory owner.
+- [ ] Confirm the hardcoded deployment-factory owner: Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968`.
 - [ ] Confirm all shared factory defaults and candidate addresses.
 - [ ] Obtain explicit authorization before any broadcast, proposal submission, vote, registration, debt-ceiling update, unpause, or activation.
 
@@ -142,6 +140,8 @@ Pinned candidate configuration:
 - frxUSD/USD feed: `0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D`
 - USDS base: `0xdC035D45d973E3EC169d2276DDab16f1e407384F`
 - USDS/USD feed: `0x592700e4FcDd674dC54d2681DED3B63f54F63f9A`
+- Provisional frxUSD/USD maximum delay: `93,600` seconds (`26 hours`).
+- Provisional USDS/USD maximum delay: `93,600` seconds (`26 hours`).
 
 Before selection:
 
@@ -186,7 +186,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `236d4b33b3be7deb037a9b6440195b0ffca06193`.
+All checked gates were run against production source commit `066fa9bde882f5d5e15348cfcd2349b3aa20185a`.
 
 ```bash
 forge fmt --check
@@ -196,7 +196,8 @@ forge build --sizes
 forge test --force --summary
 forge test --match-path 'test/PegKeeperV3*Fork.t.sol' -vv
 forge test --match-contract PegKeeperV3RuntimeSizeTest -vv
-forge test --match-contract PegKeeperV3FactoryDeploymentTest -vv
+forge test --match-contract PegKeeperV3UnifiedDeploymentTest -vv
+forge test --match-contract PegKeeperV3ProposalDeploymentJsonTest -vv
 forge script script/PegKeeperV3ReleaseCanary.s.sol:PegKeeperV3ReleaseCanary \
   --fork-url "$ETH_RPC_URL" \
   --fork-block-number 25868730 -vv
@@ -227,6 +228,8 @@ Recorded outcomes:
 - [x] PegKeeperV3 fork tests: pass.
 - [x] Curve adapter unit/deployment/proposal coverage: pass.
 - [x] Chainlink adapter unit/deployment/live-registry fork coverage: pass.
+- [x] Unified deployment and chain-bound JSON handoff coverage: pass.
+- [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: ten sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
 - [x] Mainnet canary at block `25,868,730`: pass with no broadcast.
 - [x] Manifest verifier: pass.
 
@@ -241,6 +244,8 @@ Canary route hashes:
 - [x] Chainlink adapter/deployment review: no findings; targeted non-fork suite `8 passed, 0 failed`.
 - [x] Preview/execution parity review: no logic finding.
 - [x] PegKeeperV3 invariant-helper refactor review: no security or logic findings; frozen source diff `880390b5f2d9d1eec7bbf3e95b98bfb1be4be5262d0f015704fa75e14476feb2`.
+- [x] Unified deployment review: no security or logic findings; frozen source diff `031c41652daba68622b3cfe1d816e0d9d63632421487b319494f1d78eeb8e77e`.
+- [x] Deployment-visibility correction review: no security or logic findings; frozen source diff `3e3f3231bfbd5f37c3ae8f80e0fd101adc0971b515ed96c69f8a08b38ee96010`.
 - [x] Reviewer-identified stale release evidence was resolved by replacing the blueprint-era manifest, verifier, and checklist with this proxy-era package.
 - The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
 
@@ -250,27 +255,24 @@ Do not add `--broadcast` until all unresolved decisions are checked and explicit
 
 1. Build from the exact production source commit.
 2. Run the manifest verifier.
-3. Select and document one oracle family.
-4. Simulate the selected oracle deployment script on a fresh mainnet fork.
-5. Validate deployed adapter code and immutable configuration in simulation.
-6. Simulate `DeployPegKeeperV3Factory.s.sol` with explicit owner/default inputs.
-7. Validate preview module, locked implementation, immutable factory implementation pointer, factory ownership, and all defaults.
-8. Populate candidate addresses in a separate reviewed deployment record; do not falsify this undeployed manifest.
-9. Re-run the current-block canary and complete test suite.
-10. Independently review the complete transaction batch.
+3. Simulate `DeployPegKeeperV3.s.sol` on a fresh mainnet fork with the intended deployment sender and no `--broadcast`.
+4. Confirm exactly ten sequential CREATEs: preview module, implementation, factory, five Curve adapters, then two Chainlink adapters.
+5. Validate every deployed contract and immutable configuration in simulation, including all factory defaults and both provisional Chainlink delays.
+6. Inspect `deployments/mainnet/PegKeeperV3-deployment.json`; confirm chain ID and all ten addresses match the transaction batch.
+7. Select and document one coherent oracle family for the keeper proposal. Deploying both alternatives does not select one.
+8. Re-run the current-block canary and complete test suite.
+9. Independently review the complete transaction batch and deployment JSON.
+10. Add `--broadcast` only after explicit authorization and with the same reviewed sender/configuration.
 
 ## 8. Proposal simulation
 
-Required proposal inputs:
+Required proposal input:
 
 ```text
-PKV3_FACTORY
-PKV3_FRXUSD_ORACLE
-PKV3_FRXUSD_BACKING_ORACLE
-PKV3_USDC_ORACLE
-PKV3_USDT_ORACLE
-PKV3_SUSDS_BACKING_ORACLE
+deployments/mainnet/PegKeeperV3-deployment.json
 ```
+
+The proposal rejects a deployment file whose `chainId` differs from the active chain and then validates the factory, implementation, preview module, and selected Curve adapters on-chain before building calldata.
 
 Before proposal submission:
 

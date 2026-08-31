@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-31T06:33:37Z",
+  "generatedAtUtc": "2026-08-31T07:54:22Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "236d4b33b3be7deb037a9b6440195b0ffca06193",
+  "productionSourceCommit": "066fa9bde882f5d5e15348cfcd2349b3aa20185a",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -115,7 +115,7 @@
         "runtimeTemplateKeccak256": "0xfb1bf536fa996ce08fe9176ab628f2d33de000f9736291d93954a34a7ebe3ca6",
         "abiFunctions": 5
       },
-      "deploymentScript": "script/DeployPegKeeperV3Oracles.s.sol",
+      "deploymentScript": "script/DeployPegKeeperV3.s.sol",
       "adapters": [
         {
           "role": "frxUSD target",
@@ -167,7 +167,7 @@
         "runtimeTemplateKeccak256": "0x483af8563d48ebbfb2b139a5b17d599246cf9f64ea85129ad00366d89ffd740d",
         "abiFunctions": 7
       },
-      "deploymentScript": "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
+      "deploymentScript": "script/DeployPegKeeperV3.s.sol",
       "registry": "0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf",
       "quote": "0x0000000000000000000000000000000000000348",
       "adapters": [
@@ -176,18 +176,19 @@
           "base": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
           "expectedFeed": "0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D",
           "feedDecimals": 8,
-          "maxDelay": null
+          "maxDelay": 93600
         },
         {
           "role": "USDS/USD",
           "base": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
           "expectedFeed": "0x592700e4FcDd674dC54d2681DED3B63f54F63f9A",
           "feedDecimals": 8,
-          "maxDelay": null
+          "maxDelay": 93600
         }
       ],
       "directFeedContractReadsSupported": false,
-      "feedRotationFailsClosed": true
+      "feedRotationFailsClosed": true,
+      "maxDelayStatus": "provisional_reconfirm_before_broadcast"
     }
   },
   "launchConfiguration": {
@@ -236,7 +237,8 @@
     "factoryAbiParity": "pass",
     "chainlinkAbiParity": "pass",
     "runtimeSizeTest": "pass",
-    "factoryDeploymentTest": "pass",
+    "unifiedDeploymentTest": "pass",
+    "deploymentJsonTest": "pass",
     "curveOracleTests": "pass",
     "chainlinkOracleTests": "pass",
     "proposalTests": "pass",
@@ -244,6 +246,7 @@
     "independentFactoryReview": "pass",
     "independentChainlinkReview": "pass",
     "independentRefactorReview": "pass",
+    "independentDeploymentReview": "pass",
     "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit"
   },
   "latestMainnetCanary": {
@@ -259,14 +262,29 @@
     "broadcast": false
   },
   "operatorInputs": {
-    "factoryOwner": null,
+    "factoryOwner": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
     "factoryDefaultsApproved": false,
     "selectedOracleFamily": null,
-    "chainlinkFrxUsdMaxDelay": null,
-    "chainlinkUsdsMaxDelay": null,
+    "chainlinkFrxUsdMaxDelay": 93600,
+    "chainlinkUsdsMaxDelay": 93600,
     "operatorConfirmationRequired": true
   },
   "deployment": {
+    "script": "script/DeployPegKeeperV3.s.sol",
+    "outputPath": "deployments/mainnet/PegKeeperV3-deployment.json",
+    "environmentConfiguration": false,
+    "monotonicCreateOrder": [
+      "previewModule",
+      "implementation",
+      "factory",
+      "frxUsdTargetOracle",
+      "sfrxUsdBackingOracle",
+      "usdcTargetOracle",
+      "usdtTargetOracle",
+      "susdsBackingOracle",
+      "frxUsdChainlinkOracle",
+      "usdsChainlinkOracle"
+    ],
     "previewModuleAddress": null,
     "implementationAddress": null,
     "factoryAddress": null,
@@ -279,8 +297,8 @@
   },
   "activationBlockers": [
     "Governance must choose Curve EMA or Chainlink Feed Registry adapters for the frxUSD and USDS checks and record one coherent selection.",
-    "If Chainlink is selected, governance must approve independent frxUSD and USDS maxDelay values.",
-    "Governance must confirm the deployment-factory owner and all shared defaults.",
+    "If Chainlink is selected, governance must reconfirm or replace the provisional 93,600-second frxUSD and USDS maxDelay values after reviewing both feeds independently.",
+    "Governance must confirm the hardcoded Curve Ownership Agent factory owner and all shared defaults.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
     "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."
   ]

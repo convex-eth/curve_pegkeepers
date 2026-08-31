@@ -288,12 +288,63 @@ def main() -> None:
     for key in ("implementation", "factory", "preview", "curve", "chainlink"):
         verify_source_commit(source_commit, ARTIFACTS[key][0])
     for script in (
-        ROOT / "script/DeployPegKeeperV3Oracles.s.sol",
-        ROOT / "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
-        ROOT / "script/DeployPegKeeperV3Factory.s.sol",
+        ROOT / "script/DeployPegKeeperV3.s.sol",
+        ROOT / "script/PegKeeperV3ReleaseCanary.s.sol",
         ROOT / "script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol",
     ):
         verify_source_commit(source_commit, script)
+
+    deploy_script_path = ROOT / "script/DeployPegKeeperV3.s.sol"
+    proposal_script_path = ROOT / "script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol"
+    deploy_script = deploy_script_path.read_text()
+    proposal_script = proposal_script_path.read_text()
+    fail(
+        "unified deployment script inventory",
+        sorted(str(path.relative_to(ROOT)) for path in (ROOT / "script").glob("DeployPegKeeperV3*.s.sol")),
+        ["script/DeployPegKeeperV3.s.sol"],
+    )
+    for forbidden in ("vm.env", "PKV3_"):
+        if forbidden in deploy_script or forbidden in proposal_script:
+            raise SystemExit(f"environment-driven deployment input present: {forbidden}")
+
+    create_markers = [
+        "new PegKeeperV3PreviewModule()",
+        "_deployImplementation(deployment.previewModule)",
+        "_deployFactory(config, deployment.implementation)",
+        "deployment.frxUsdTargetOracle =",
+        "deployment.sfrxUsdBackingOracle =",
+        "deployment.usdcTargetOracle =",
+        "deployment.usdtTargetOracle =",
+        "deployment.susdsBackingOracle =",
+        "deployment.frxUsdChainlinkOracle =",
+        "deployment.usdsChainlinkOracle =",
+    ]
+    create_positions = [deploy_script.find(marker) for marker in create_markers]
+    if -1 in create_positions or create_positions != sorted(create_positions):
+        raise SystemExit("unified deployment CREATE order drift")
+
+    deployment_fields = [
+        "previewModule",
+        "implementation",
+        "factory",
+        "frxUsdTargetOracle",
+        "sfrxUsdBackingOracle",
+        "usdcTargetOracle",
+        "usdtTargetOracle",
+        "susdsBackingOracle",
+        "frxUsdChainlinkOracle",
+        "usdsChainlinkOracle",
+    ]
+    if 'vm.serializeUint(objectKey, "chainId", block.chainid)' not in deploy_script:
+        raise SystemExit("deployment JSON chainId missing")
+    for field in deployment_fields:
+        if f'vm.serializeAddress(objectKey, "{field}"' not in deploy_script:
+            raise SystemExit(f"deployment JSON field missing: {field}")
+    if 'vm.parseJsonUint(json, ".chainId") == block.chainid' not in proposal_script:
+        raise SystemExit("proposal deployment chain binding missing")
+    for field in deployment_fields[2:8]:
+        if f'vm.parseJsonAddress(json, ".{field}")' not in proposal_script:
+            raise SystemExit(f"proposal deployment field missing: {field}")
 
     impl_release = manifest["implementation"]["artifact"]
     fail("implementation constructor args", impl_release["constructorArgsBytes"], 32)
@@ -383,7 +434,7 @@ def main() -> None:
     fail("oracle floor", oracle["minimumLaunchPrice"], "999700000000000000")
     fail("Curve adapter count", len(oracle["curve"]["adapters"]), 5)
     fail("Chainlink adapter count", len(oracle["chainlink"]["adapters"]), 2)
-    fail("Curve deployment script", oracle["curve"]["deploymentScript"], "script/DeployPegKeeperV3Oracles.s.sol")
+    fail("Curve deployment script", oracle["curve"]["deploymentScript"], "script/DeployPegKeeperV3.s.sol")
     fail(
         "Curve adapter mappings",
         [
@@ -407,14 +458,19 @@ def main() -> None:
     fail(
         "Chainlink deployment script",
         oracle["chainlink"]["deploymentScript"],
-        "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
+        "script/DeployPegKeeperV3.s.sol",
     )
     fail("Chainlink registry", oracle["chainlink"]["registry"].lower(), "0x47fb2585d2c56fe188d0e6ec628a38b74fceeedf")
     fail("Chainlink quote", oracle["chainlink"]["quote"].lower(), "0x0000000000000000000000000000000000000348")
     fail("Chainlink rotation", oracle["chainlink"]["feedRotationFailsClosed"], True)
     fail("Chainlink direct reads", oracle["chainlink"]["directFeedContractReadsSupported"], False)
+    fail(
+        "Chainlink maxDelay status",
+        oracle["chainlink"]["maxDelayStatus"],
+        "provisional_reconfirm_before_broadcast",
+    )
     for adapter in oracle["chainlink"]["adapters"]:
-        fail(f"{adapter['role']} maxDelay unresolved", adapter["maxDelay"], None)
+        fail(f"{adapter['role']} provisional maxDelay", adapter["maxDelay"], 93_600)
         fail(f"{adapter['role']} decimals", adapter["feedDecimals"], 8)
     fail(
         "Chainlink adapter mappings",
@@ -481,7 +537,8 @@ def main() -> None:
         "factoryAbiParity",
         "chainlinkAbiParity",
         "runtimeSizeTest",
-        "factoryDeploymentTest",
+        "unifiedDeploymentTest",
+        "deploymentJsonTest",
         "curveOracleTests",
         "chainlinkOracleTests",
         "proposalTests",
@@ -489,6 +546,7 @@ def main() -> None:
         "independentFactoryReview",
         "independentChainlinkReview",
         "independentRefactorReview",
+        "independentDeploymentReview",
     ):
         fail(label, verification[label], "pass")
 
@@ -505,14 +563,28 @@ def main() -> None:
     fail("canary contraction hash", canary["contractionPathHash"], "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986")
 
     operator = manifest["operatorInputs"]
-    fail("factory owner unresolved", operator["factoryOwner"], None)
+    fail(
+        "factory owner",
+        str(operator["factoryOwner"] or "").lower(),
+        "0x40907540d8a6c65c637785e8f8b742ae6b0b9968",
+    )
     fail("oracle family unresolved", operator["selectedOracleFamily"], None)
-    fail("frxUSD Chainlink delay unresolved", operator["chainlinkFrxUsdMaxDelay"], None)
-    fail("USDS Chainlink delay unresolved", operator["chainlinkUsdsMaxDelay"], None)
+    fail("frxUSD provisional Chainlink delay", operator["chainlinkFrxUsdMaxDelay"], 93_600)
+    fail("USDS provisional Chainlink delay", operator["chainlinkUsdsMaxDelay"], 93_600)
     fail("factory defaults unapproved", operator["factoryDefaultsApproved"], False)
     fail("operator confirmation", operator["operatorConfirmationRequired"], True)
 
     deployment = manifest["deployment"]
+    fail("deployment script", deployment["script"], "script/DeployPegKeeperV3.s.sol")
+    fail(
+        "deployment output",
+        deployment["outputPath"],
+        "deployments/mainnet/PegKeeperV3-deployment.json",
+    )
+    fail("deployment environment configuration", deployment["environmentConfiguration"], False)
+    fail("deployment CREATE order", deployment["monotonicCreateOrder"], deployment_fields)
+    if (ROOT / deployment["outputPath"]).exists():
+        raise SystemExit("undeployed release contains a deployment output")
     for label in ("previewModuleAddress", "implementationAddress", "factoryAddress"):
         fail(f"undeployed {label}", deployment[label], None)
     for label in ("oracleAddresses", "keeperAddresses", "transactionHashes"):
