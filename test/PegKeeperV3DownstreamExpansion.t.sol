@@ -146,6 +146,23 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         vm.stopPrank();
     }
 
+    function test_targetOracleHaircutPreservesPreviewExecutionBranchParity() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        targetOracle.setPrice(MIN_ORACLE_PRICE);
+        targetPool.setPrices(1_020_000, 1_020_000);
+        targetToDaiPool.setPrices(989_900, 989_900);
+
+        (,,,,, bool expectedToDeploy) = pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertTrue(expectedToDeploy);
+
+        vm.prank(keeper);
+        (, uint256 retained, uint256 yieldReceived,, bool deployed) =
+            pegKeeper.expand(MIN_EXPANSION);
+        assertTrue(deployed);
+        assertEq(retained, 0);
+        assertGt(yieldReceived, 0);
+    }
+
     function test_yieldOracleDepegFallsBackToHealthyTarget() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
         yieldOracle.setPrice(MIN_ORACLE_PRICE - 1);

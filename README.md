@@ -91,6 +91,8 @@ Every keeper has mandatory target and downstream-backing oracle adapters. `addre
 
 The launch Curve adapters use three StableSwap-NG EMAs across five orientations. USDC and USDT are checked in opposite orientations of the USDC/USDT pool. The frxUSD target check uses frxUSD/sUSDS, while the frxUSD keeper's downstream `sfrxUSD` check uses the deeper sfrxUSD/frxUSD pool. The shared sUSDS downstream check uses the reverse sUSDS/frxUSD orientation of the frxUSD/sUSDS pool. The keeper converts held yield shares to backing assets with `convertToAssets()` before applying the capped downstream health multiplier; favorable oracle values are capped at par, so the share-rate relationship cannot over-credit backing. Typed-route quote floors, measured output, and route-loss checks remain separate from the oracle gates.
 
+A separate Chainlink alternative provides immutable frxUSD/USD and USDS/USD adapters through the canonical Ethereum Feed Registry. The live feed proxies reject direct contract reads with `No access`, so the adapter deliberately calls the authorized registry rather than wrapping each proxy. It pins the base asset, USD denomination, resolved feed, feed decimals, and a mandatory maximum delay; feed rotation, non-positive answers, incomplete rounds, stale data, or future timestamps revert. This alternative is implemented and tested but is not wired into the launch proposal. Governance must choose Curve EMA or Chainlink registry adapters for the frxUSD and USDS checks before release evidence is finalized.
+
 `trustedBackingValue` is normalized accounted `targetAsset` plus the current normalized `backingAsset` value represented by `accountedYieldTokenUnits`; it uses current `convertToAssets()` value rather than historical acquisition cost. For the USDT/sUSDS example, those components are undeployed USDT and the USDS-equivalent value of accounted sUSDS units. Yield appreciation and retained execution profit are not split into separate onchain buckets. Both contribute to `protocolSurplus = max(trustedBackingValue - deployedCrvUsd, 0)`. In direct buyback, deployed exposure falls by crvUSD received while trusted backing falls only by the trusted value of yield tokens paid, so surplus increases by `crvUsdReceived - trustedYieldValuePaid`. Direct buyback leaves `undeployedBacking` untouched; both that target inventory and remaining yield-token units continue supporting principal until `deployedCrvUsd` reaches zero, and only combined backing above remaining deployed exposure is profit. `deployedCrvUsd` means all accounted crvUSD externalized from V3 and requiring that backing, not only crvUSD sold through an AMM. Permissionless `claimSurplus(maxCrvUsdAmount)` transfers idle crvUSD directly to the current `PegKeeperV3Factory.fee_receiver()` and increases `deployedCrvUsd` by the exact amount transferred. Trusted backing stays invested while surplus falls by the same amount through the increased exposure. The claim cannot exceed protocol surplus, eligible idle inventory, Factory allocation, or `maxDeployedCrvUsd`, and it is disabled whenever expansion is paused.
 
 Governance route analysis also distinguishes gross PegKeeper output from DAO-consolidated cost. A Curve pool may direct some or all swap fees to Curve DAO admin balances rather than LPs. V3 still treats every fee as a local execution cost because it does not receive admin balances atomically, but governance can prefer DAO-capturing routes when comparing where protocol-level fees accrue. The current 3pool example is recorded in the V3 specification.
@@ -131,6 +133,7 @@ V3 is an implementation-complete release candidate. It has not been deployed. Th
 
 - [`script/DeployPegKeeperV3Factory.s.sol`](script/DeployPegKeeperV3Factory.s.sol): stateless preview module, locked implementation, and owner-gated EIP-1167 deployment-factory creation with fail-closed verification;
 - [`script/DeployPegKeeperV3Oracles.s.sol`](script/DeployPegKeeperV3Oracles.s.sol): orientation-checked Curve StableSwap-NG adapter deployment;
+- [`script/DeployPegKeeperV3ChainlinkOracles.s.sol`](script/DeployPegKeeperV3ChainlinkOracles.s.sol): separate registry-bound frxUSD/USD and USDS/USD Chainlink adapter deployment;
 - [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): low-level locked implementation and preview-module deployment helper;
 - [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting current-mainnet simulation of the complete USDT → DAI → USDS → sUSDS expansion;
 - [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
@@ -148,7 +151,7 @@ The release manifest records the latest non-broadcast mainnet canary. No deploym
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `23,085` bytes; its deployed runtime with the immutable preview-module address is `23,117` bytes, leaving `1,459` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `23,129` bytes; its deployed runtime with the immutable preview-module address is `23,161` bytes, leaving `1,415` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -167,6 +170,8 @@ ETH_RPC_URL=https://your-archive-rpc.example make test
 
 ## Source layout
 
+V3-focused release files are shown below; retained V2 contracts and compatibility tests are omitted for brevity.
+
 ```text
 docs/
 ├── pegkeeper-v3-release-checklist.md
@@ -176,52 +181,32 @@ deployments/mainnet/
 └── PegKeeperV3-release.json
 script/
 ├── DeployPegKeeperV3.s.sol
+├── DeployPegKeeperV3ChainlinkOracles.s.sol
 ├── DeployPegKeeperV3Factory.s.sol
+├── DeployPegKeeperV3Oracles.s.sol
 └── PegKeeperV3ReleaseCanary.s.sol
 scripts/
 └── verify-release-manifest.py
 src/
+├── PegKeeperV3PreviewModule.sol
 ├── interfaces/
-│   ├── IControllerFactory.sol
-│   ├── IDaiUsds.sol
-│   ├── IERC20.sol
-│   ├── IPegKeeperOffboarding.sol
-│   ├── IPegKeeperRegulator.sol
-│   ├── IPegKeeperV2.sol
+│   ├── IChainlinkStablecoinOracle.sol
+│   ├── ICurveStablecoinOracle.sol
 │   ├── IPegKeeperV3.sol
-│   ├── IPegKeeperV3Factory.sol
-│   ├── IStableSwap2Pool.sol
-│   └── IUSDT.sol
+│   └── IPegKeeperV3Factory.sol
 └── vyper/
-    ├── PegKeeperOffboarding.vy
-    ├── PegKeeperV2.vy
+    ├── ChainlinkStablecoinOracle.vy
+    ├── CurveStablecoinOracle.vy
     ├── PegKeeperV3.vy
     └── PegKeeperV3Factory.vy
 test/
-├── DaiUsdsConverter.t.sol
-├── PegKeeperLifecycle.t.sol
-├── PegKeeperV3BackingDeploymentFork.t.sol
-├── PegKeeperV3BackingDeployment.t.sol
-├── PegKeeperV3DirectBuybackFork.t.sol
-├── PegKeeperV3DirectBuyback.t.sol
-├── PegKeeperV3Deployment.t.sol
-├── PegKeeperV3DownstreamExpansionFork.t.sol
-├── PegKeeperV3DownstreamExpansion.t.sol
-├── PegKeeperV3ExpansionFork.t.sol
-├── PegKeeperV3Expansion.t.sol
-├── PegKeeperV3Factory.t.sol
-├── PegKeeperV3FactoryDeployment.t.sol
-├── PegKeeperV3Foundation.t.sol
-├── PegKeeperV3Policy.t.sol
-├── PegKeeperV3RoutesFork.t.sol
-├── PegKeeperV3Routes.t.sol
+├── ChainlinkStablecoinOracle.t.sol
+├── ChainlinkStablecoinOracleFork.t.sol
+├── CurveStablecoinOracle.t.sol
+├── PegKeeperV3ChainlinkOracleDeployment.t.sol
+├── PegKeeperV3OracleDeployment.t.sol
 ├── PegKeeperV3RuntimeSize.t.sol
-├── PegKeeperV3SurplusFork.t.sol
-├── PegKeeperV3Surplus.t.sol
-├── PegKeeperV3UndeployedContractionFork.t.sol
-├── PegKeeperV3UndeployedContraction.t.sol
-├── PegKeeperV3YieldContractionFork.t.sol
-└── PegKeeperV3YieldContraction.t.sol
+└── PegKeeperV3*.t.sol
 ```
 
 `PegKeeperV2.vy` and `PegKeeperOffboarding.vy` were taken from [`curvefi/curve-stablecoin`](https://github.com/curvefi/curve-stablecoin) at commit [`cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a`](https://github.com/curvefi/curve-stablecoin/tree/cf1d05fb6bf7c608973cc41786b2e1fd81dc3a6a). `PegKeeperV2.vy` matches the verified live V2 source (apart from the source file's final newline). `PegKeeperV3.vy` is the new implementation developed in this repository. All three pin Vyper `0.3.10`.
@@ -249,6 +234,10 @@ Current V2 PegKeepers covered by the retirement test:
 - GHO: `0x53876B157DeCf04389eEd66c7C29d73863f8C50b`
 
 ## Tests
+
+### Oracle alternatives
+
+`CurveStablecoinOracleTest` covers pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection. `PegKeeperV3OracleDeploymentTest` and the launch-proposal fork suite validate the five selected Curve adapter orientations against live pools. `ChainlinkStablecoinOracleTest` covers registry/base/quote/feed binding, decimal normalization, feed-rotation rejection, round completeness, positive answers, timestamp direction, and staleness. `PegKeeperV3ChainlinkOracleDeploymentTest` proves separate frxUSD and USDS deployments, while `ChainlinkStablecoinOracleForkTest` verifies both pinned mainnet registry pairs through contract calls.
 
 ### `PegKeeperV3FoundationTest`
 

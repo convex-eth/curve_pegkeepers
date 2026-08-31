@@ -81,6 +81,21 @@ Launch oracle pools:
 
 The frxUSD/sUSDS pool applies its sUSDS rate provider. Its EMA is therefore an underlying economic comparison, not a raw share-count quote. The frxUSD keeper instead checks downstream `sfrxUSD` health against the materially deeper sfrxUSD/frxUSD pool. Each keeper converts held shares to underlying assets once before applying the capped adapter multiplier; favorable values above par cannot over-credit backing. Route execution remains protected separately by quote floors, measured output, and route-loss limits.
 
+### Alternative Chainlink sources — not selected
+
+The repository also contains separate registry-bound Chainlink adapters for frxUSD/USD and USDS/USD. They are alternatives for the frxUSD and USDS checks above, not additional launch requirements. The current proposal remains Curve-only until governance selects one source family and updates the exact adapter addresses.
+
+If selected, the frxUSD/USD adapter can serve both the frxUSD target check and the frxUSD-valued downstream check after `sfrxUSD.convertToAssets()`. The USDS/USD adapter can replace the Curve sUSDS/frxUSD downstream check after `sUSDS.convertToAssets()`. This decision does not by itself replace the separately configured USDC and USDT target checks.
+
+| Item | Address |
+|---|---|
+| Ethereum Feed Registry | `0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf` |
+| USD denomination | `0x0000000000000000000000000000000000000348` |
+| frxUSD/USD feed resolved by registry | `0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D` |
+| USDS/USD feed resolved by registry | `0x592700e4FcDd674dC54d2681DED3B63f54F63f9A` |
+
+Both feeds report 8 decimals and normalize to `1e18`. Direct contract calls to these feed proxies currently revert `No access`; the adapter therefore reads through the authorized Feed Registry and fails closed if the registry later resolves a different feed. If Chainlink is selected, governance must approve independent `maxDelay` values and re-confirm registry resolution, feed descriptions, decimals, round freshness, and contract-read access immediately before deployment.
+
 Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
 
 ```text

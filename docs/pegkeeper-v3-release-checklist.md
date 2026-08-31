@@ -28,6 +28,7 @@ These are governance decisions. They are deliberately not guessed by the release
 - [ ] Confirm the shared `feeReceiver`, governance `admin`, and distinct `emergencyAdmin` dynamically resolved by every factory-created V3.
 - [ ] Select default `maxDeployedCrvUsd`.
 - [ ] Select the initial ControllerFactory debt ceiling/allocation.
+- [ ] Choose Curve EMA or Chainlink Feed Registry adapters for the frxUSD and USDS checks. Record one coherent choice in the proposal and manifest. If Chainlink is selected, approve both `maxDelay` values and re-confirm registry-resolved feeds, decimals, freshness, and contract-read access; if Curve is selected, re-confirm pool depth, coin order, EMA windows, and rate-provider behavior.
 - [ ] Confirm the exact EIP-5202 blueprint runtime hash before initial factory deployment and every future implementation update.
 - [ ] Refresh `docs/pegkeeper-v3-routing-and-path-costs.md` at a new pinned block and reject any route whose target-AMM or downstream ladder reaches nonlinear impact below the proposed capacity.
 - [ ] For any frxUSD-mint route, re-read the proxy implementation, `asset()`, `frxUSD()`, `mintFee()`, `mintCap()`, `frxUSDMinted()`, and `maxDeposit()`; keep configured capacity below the refreshed mint limit.

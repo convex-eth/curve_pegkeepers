@@ -1385,7 +1385,10 @@ def executeExpansionPath(
         self._yield_token.convertToAssets(yield_token_received) * self.backing_multiplier,
         yield_price,
     )
-    target_value: uint256 = _target_amount * self.target_multiplier
+    target_price: uint256 = self._target_price()
+    target_value: uint256 = self._oracle_value(
+        _target_amount * self.target_multiplier, target_price
+    )
     route_retained_value: uint256 = (
         trusted_yield_received
         + self._oracle_value(keeper_reward * self.backing_multiplier, yield_price)

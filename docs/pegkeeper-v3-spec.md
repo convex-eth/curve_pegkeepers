@@ -132,7 +132,7 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10` with the `codesize` optimizer. Its core runtime is `23,085` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,117`-byte implementation runtime, `1,459` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, factory-deployment, and release-manifest tests prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10` with the `codesize` optimizer. Its core runtime is `23,129` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,161`-byte implementation runtime, `1,415` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, factory-deployment, and shared-preview-runtime bounds are asserted in `test/PegKeeperV3RuntimeSize.t.sol` and `test/PegKeeperV3FactoryDeployment.t.sol`.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -332,13 +332,16 @@ For a completed downstream attempt, the keeper reward is calculated from the mea
 ```text
 completedRouteValue
     = trustedYieldValue(yieldTokenReceived)
-    + normalize(actualBackingRewardPaid)
+    + min(yieldOraclePrice, 1e18) * normalize(actualBackingRewardPaid) / 1e18
+
+sourceTargetValue
+    = min(targetOraclePrice, 1e18) * normalize(targetReceived) / 1e18
 
 conversionCost
-    = max(normalize(targetReceived) - completedRouteValue, 0)
+    = max(sourceTargetValue - completedRouteValue, 0)
 
 conversionCost
-    <= normalize(targetReceived)
+    <= sourceTargetValue
        * downstreamExpansionPath.maxRouteLossBps / 10_000
 
 trustedYieldValue(yieldTokenReceived)
@@ -354,7 +357,7 @@ For a target-only fallback:
 
 ```text
 fallbackGrossProfit
-    = normalize(targetAssetReceived)
+    = min(targetOraclePrice, 1e18) * normalize(targetAssetReceived) / 1e18
     - crvUsdSold
 
 fallbackKeeperRewardValue
@@ -364,7 +367,7 @@ targetAssetRetained
     = targetAssetReceived
     - denormalizeDown(fallbackKeeperRewardValue)
 
-normalize(targetAssetRetained)
+min(targetOraclePrice, 1e18) * normalize(targetAssetRetained) / 1e18
     >= crvUsdSold
        + crvUsdSold * entryMinProfitPpm / 1_000_000
 ```
@@ -758,7 +761,7 @@ Successful downstream deployment and contraction calls must consume the entire r
 
 `contractViaAmm()` executes the stored contraction path through the same bounded typed executor. Its first measured step consumes the fixed yield token and its last measured step produces crvUSD. Curve steps enforce `get_dy()`-relative minima, the canonical converter requires exact one-for-one native-unit output, and ERC-4626 deposit/redeem or frxUSD mint steps enforce their respective preview-relative minima. Any failed step, non-exact top-level yield spend, incorrect final crvUSD delta, insufficient post-reward margin, or principal-invariant failure reverts the complete transaction and all temporary approvals.
 
-After a target-to-yield route completes, V3 compares normalized target input with the trusted backing-asset value of measured final yield-token units and enforces `downstreamExpansionPath.maxRouteLossBps`. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, it reverts the maintenance call and leaves the target backing unchanged.
+After a target-to-yield route completes, V3 compares the capped target-oracle value of the normalized target input with the trusted backing-asset value of measured final yield-token units and enforces `downstreamExpansionPath.maxRouteLossBps`. Preview and execution use the same source valuation. In a new expansion, failure of that check reverts the isolated branch and selects target-only fallback. In `deployUndeployedBacking()`, which deploys already-accounted target backing rather than a newly oracle-gated expansion receipt, the maintenance accounting remains nominal; failure reverts the call and leaves the target backing unchanged.
 
 ### Exact-input routing and route-defined yield handling
 
@@ -1454,6 +1457,8 @@ Backing-quality checks are part of initial execution. Target and downstream adap
 The launch Curve configuration uses opposite orientations of the USDC/USDT EMA for the USDC and USDT target checks. It uses frxUSD/sUSDS for frxUSD target health, the deeper sfrxUSD/frxUSD EMA for the frxUSD keeper's downstream share-health check, and the reverse sUSDS/frxUSD orientation of frxUSD/sUSDS for sUSDS backing health. These are contagion checks against governance-trusted stable assets, not mathematical proof of absolute USD parity. Governance must monitor pool liquidity, EMA behavior, reference-asset health, and correlated failures.
 
 For either yield token, V3 converts held shares into underlying units with `convertToAssets()` and then applies the adapter's capped health multiplier. Favorable values are capped at par, preventing a share-price premium from being counted twice; an unfavorable share relationship applies a haircut. Typed-route slippage and measured-output guards remain independent of these oracle gates.
+
+An alternative Chainlink adapter binds the canonical Ethereum Feed Registry, a fixed base asset, the USD denomination, the registry-resolved feed, its decimals, and a mandatory maximum delay. Separate deployments cover frxUSD/USD and USDS/USD. Reads go through the Feed Registry because the current feed proxies reject direct contract calls with `No access`. The adapter fails closed if registry resolution changes and rejects non-positive answers, zero or future timestamps, stale rounds, and `answeredInRound < roundId`. This alternative is not selected by the current proposal; governance must choose between Curve EMA and Chainlink registry sources for the frxUSD and USDS checks and approve Chainlink maximum delays if selected.
 
 ## Remaining deployment decisions
 
