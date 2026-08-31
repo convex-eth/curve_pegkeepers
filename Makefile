@@ -20,6 +20,9 @@ check:
 	forge lint
 	forge build
 	forge build --sizes
+	python3 scripts/check-vyper-solidity-abi.py \
+		out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json \
+		out/IPegKeeperV3PreviewModule.sol/IPegKeeperV3PreviewModule.json
 	python3 scripts/verify-release-manifest.py
 	$(MAKE) test
 

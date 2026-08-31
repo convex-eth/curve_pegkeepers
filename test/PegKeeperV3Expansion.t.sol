@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
-import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
+import {IPegKeeperV3PreviewModule} from "../src/interfaces/IPegKeeperV3PreviewModule.sol";
 import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 interface IPegKeeperV3ExpansionSafety {
@@ -473,7 +473,7 @@ contract PegKeeperV3ExpansionTest is Test {
 
         address previewModule = pegKeeper.preview_module();
         vm.expectRevert();
-        PegKeeperV3PreviewModule(previewModule).previewExpansion(address(pegKeeper), MIN_EXPANSION);
+        IPegKeeperV3PreviewModule(previewModule).previewExpansion(address(pegKeeper), MIN_EXPANSION);
     }
 
     function test_previewExpansionRejectsTheStateChangingAmountBounds() public {

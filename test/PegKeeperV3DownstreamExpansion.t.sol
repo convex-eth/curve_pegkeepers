@@ -93,6 +93,16 @@ contract GasBurningRoutePool {
     }
 }
 
+contract OversizedExpansionOracle {
+    fallback() external {
+        assembly ("memory-safe") {
+            mstore(0, 1000000000000000000)
+            mstore(32, 0)
+            return(0, 64)
+        }
+    }
+}
+
 contract PegKeeperV3DownstreamExpansionTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant MIN_EXPANSION = 10_000e18;
@@ -194,6 +204,22 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(yieldReceived, 0);
         assertFalse(deployedToYield);
         assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+    }
+
+    function test_previewRejectsOversizedYieldOracleReturn() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        OversizedExpansionOracle oversizedOracle = new OversizedExpansionOracle();
+        vm.prank(governance);
+        pegKeeper.set_oracles(
+            address(targetOracle), address(oversizedOracle), MIN_ORACLE_PRICE, MIN_ORACLE_PRICE
+        );
+
+        (uint256 targetOut, uint256 backingOut,,, uint256 yieldOut, bool expectedToDeploy) =
+            pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertGt(targetOut, 0);
+        assertEq(backingOut, 0);
+        assertEq(yieldOut, 0);
+        assertFalse(expectedToDeploy);
     }
 
     function test_previewExpansionPredictsConfiguredDownstreamRoute() public {

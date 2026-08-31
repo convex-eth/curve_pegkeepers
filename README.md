@@ -148,7 +148,7 @@ The release manifest records the latest non-broadcast mainnet canary. No deploym
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `21,298` bytes; its deployed runtime with the immutable preview-module address is `21,330` bytes, leaving `3,246` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `21,298` bytes; its deployed runtime with the immutable preview-module address is `21,330` bytes, leaving `3,246` bytes below EIP-170. The stateless, keeper-identity-bound Vyper preview module is `6,680` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`, and `make check` compares the Vyper module ABI against `IPegKeeperV3PreviewModule`.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -180,24 +180,27 @@ script/
 ├── DeployPegKeeperV3.s.sol
 └── PegKeeperV3ReleaseCanary.s.sol
 scripts/
+├── check-vyper-solidity-abi.py
 └── verify-release-manifest.py
 src/
-├── PegKeeperV3PreviewModule.sol
 ├── interfaces/
 │   ├── IChainlinkStablecoinOracle.sol
 │   ├── ICurveStablecoinOracle.sol
 │   ├── IPegKeeperV3.sol
-│   └── IPegKeeperV3Factory.sol
+│   ├── IPegKeeperV3Factory.sol
+│   └── IPegKeeperV3PreviewModule.sol
 └── vyper/
     ├── ChainlinkStablecoinOracle.vy
     ├── CurveStablecoinOracle.vy
     ├── PegKeeperV3.vy
-    └── PegKeeperV3Factory.vy
+    ├── PegKeeperV3Factory.vy
+    └── PegKeeperV3PreviewModule.vy
 test/
 ├── ChainlinkStablecoinOracle.t.sol
 ├── ChainlinkStablecoinOracleFork.t.sol
 ├── CurveStablecoinOracle.t.sol
 ├── PegKeeperV3ProposalDeploymentJson.t.sol
+├── PegKeeperV3PreviewModuleVyper.t.sol
 ├── PegKeeperV3RuntimeSize.t.sol
 ├── PegKeeperV3UnifiedDeployment.t.sol
 └── PegKeeperV3*.t.sol

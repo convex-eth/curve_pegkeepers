@@ -22,7 +22,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
         0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0xb130d1b224b3d8e374f283de9b209f3b85cca034d8eecad1b5ea708811058807;
+        0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_DAI_USDS_CONVERTER = 1;

@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
-import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
 
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
@@ -12,28 +11,32 @@ contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 22_300;
     uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 21_484;
     uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 21_330;
-    uint256 internal constant RELEASE_PREVIEW_RUNTIME_SIZE = 8_201;
+    uint256 internal constant RELEASE_PREVIEW_INITCODE_SIZE = 6_717;
+    uint256 internal constant RELEASE_PREVIEW_RUNTIME_SIZE = 6_680;
     uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
     uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 
     function test_implementationPreviewModuleAndMinimalProxyFitProtocolLimits() public {
-        PegKeeperV3PreviewModule previewModule = new PegKeeperV3PreviewModule();
+        bytes memory previewCreationCode =
+            vm.getCode("out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json");
         assertEq(
-            address(previewModule).code.length,
-            RELEASE_PREVIEW_RUNTIME_SIZE,
-            "preview runtime drift"
+            previewCreationCode.length, RELEASE_PREVIEW_INITCODE_SIZE, "preview initcode drift"
         );
         assertLe(
-            address(previewModule).code.length,
-            EIP_170_RUNTIME_LIMIT,
-            "preview module exceeds EIP-170"
+            previewCreationCode.length, EIP_3860_INITCODE_LIMIT, "preview module exceeds EIP-3860"
         );
+        address previewModule;
+        assembly ("memory-safe") {
+            previewModule := create(0, add(previewCreationCode, 0x20), mload(previewCreationCode))
+        }
+        assertTrue(previewModule != address(0), "preview deployment failed");
+        assertEq(previewModule.code.length, RELEASE_PREVIEW_RUNTIME_SIZE, "preview runtime drift");
+        assertLe(previewModule.code.length, EIP_170_RUNTIME_LIMIT, "preview module exceeds EIP-170");
 
         // The Vyper artifact is the semantic template. The immutable preview address adds 32
         // bytes to both the full initcode and the specialized implementation runtime.
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory implementationInitCode =
-            bytes.concat(creationCode, abi.encode(address(previewModule)));
+        bytes memory implementationInitCode = bytes.concat(creationCode, abi.encode(previewModule));
         assertEq(
             implementationInitCode.length,
             RELEASE_IMPLEMENTATION_INITCODE_SIZE,
@@ -68,7 +71,7 @@ contract PegKeeperV3RuntimeSizeTest is Test {
             "implementation exceeds refactor budget"
         );
         assertTrue(IPegKeeperV3(implementation).initialized(), "implementation is not locked");
-        assertEq(IPegKeeperV3(implementation).preview_module(), address(previewModule));
+        assertEq(IPegKeeperV3(implementation).preview_module(), previewModule);
 
         bytes memory proxyInitCode = abi.encodePacked(
             hex"3d602d80600a3d3981f3",

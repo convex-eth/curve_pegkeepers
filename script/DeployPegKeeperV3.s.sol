@@ -8,7 +8,6 @@ import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
-import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
 
 interface IChainlinkFeedRegistry {
     function getFeed(address base, address quote) external view returns (address);
@@ -136,7 +135,7 @@ contract DeployPegKeeperV3 is Script {
 
     function deploy(Config memory config) public returns (Deployment memory deployment) {
         console2.log("Deploying PegKeeperV3PreviewModule");
-        deployment.previewModule = address(new PegKeeperV3PreviewModule());
+        deployment.previewModule = _deployPreviewModule();
 
         console2.log("Deploying locked PegKeeperV3 implementation");
         deployment.implementation = _deployImplementation(deployment.previewModule);
@@ -195,6 +194,18 @@ contract DeployPegKeeperV3 is Script {
         string memory json =
             vm.serializeAddress(objectKey, "usdsChainlinkOracle", deployment.usdsChainlinkOracle);
         vm.writeJson(json, outputPath);
+    }
+
+    function _deployPreviewModule() internal returns (address deployed) {
+        bytes memory creationCode =
+            vm.getCode("out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json");
+        assembly ("memory-safe") {
+            deployed := create(0, add(creationCode, 0x20), mload(creationCode))
+            if iszero(deployed) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
     }
 
     function _deployImplementation(address previewModule) internal returns (address deployed) {

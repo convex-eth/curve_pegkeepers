@@ -4,7 +4,6 @@ pragma solidity ^0.8.30;
 import {Vm} from "forge-std/Vm.sol";
 
 import {IPegKeeperV3} from "../../src/interfaces/IPegKeeperV3.sol";
-import {PegKeeperV3PreviewModule} from "../../src/PegKeeperV3PreviewModule.sol";
 
 contract PegKeeperV3TestOracle {
     uint256 internal _price = 1e18;
@@ -108,9 +107,18 @@ library PegKeeperV3TestDeployer {
     }
 
     function _deployImplementation() private returns (address implementation) {
-        PegKeeperV3PreviewModule module = new PegKeeperV3PreviewModule();
+        bytes memory previewCreationCode =
+            vm.getCode("out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json");
+        address module;
+        assembly ("memory-safe") {
+            module := create(0, add(previewCreationCode, 0x20), mload(previewCreationCode))
+            if iszero(module) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory initCode = bytes.concat(creationCode, abi.encode(address(module)));
+        bytes memory initCode = bytes.concat(creationCode, abi.encode(module));
         assembly ("memory-safe") {
             implementation := create(0, add(initCode, 0x20), mload(initCode))
             if iszero(implementation) {
