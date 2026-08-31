@@ -4,7 +4,7 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `3fdbf9fdc26068c7a4d00d9bc047fb72a9136b7e`.
+- [x] Production source commit: `236d4b33b3be7deb037a9b6440195b0ffca06193`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
@@ -27,12 +27,13 @@ Canonical files:
 
 ### PegKeeper implementation
 
-- [x] Semantic-core runtime: `23,129` bytes.
-- [x] Semantic-core hash: `0x2501e99f9b32ed5319c9e4d28890a199bbd3367689027341f955c5dffc35aeba`.
-- [x] Specialized deployed runtime: `23,161` bytes.
-- [x] EIP-170 headroom: `1,415` bytes.
-- [x] Full implementation initcode: `23,315` bytes.
-- [x] EIP-3860 headroom: `25,837` bytes.
+- [x] Semantic-core runtime: `21,298` bytes.
+- [x] Semantic-core hash: `0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828`.
+- [x] Specialized deployed runtime: `21,330` bytes.
+- [x] Refactor regression budget: at most `22,300` bytes.
+- [x] EIP-170 headroom: `3,246` bytes.
+- [x] Full implementation initcode: `21,484` bytes.
+- [x] EIP-3860 headroom: `27,668` bytes.
 - [x] Operational initialization is locked on the standalone implementation.
 - [x] Keeper ABI is exactly `76 functions / 12 events` and matches `IPegKeeperV3`.
 
@@ -185,7 +186,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `3fdbf9fdc26068c7a4d00d9bc047fb72a9136b7e`.
+All checked gates were run against production source commit `236d4b33b3be7deb037a9b6440195b0ffca06193`.
 
 ```bash
 forge fmt --check
@@ -239,6 +240,7 @@ Canary route hashes:
 - [x] Immutable EIP-1167 factory review: no findings; targeted factory suite `19 passed, 0 failed`.
 - [x] Chainlink adapter/deployment review: no findings; targeted non-fork suite `8 passed, 0 failed`.
 - [x] Preview/execution parity review: no logic finding.
+- [x] PegKeeperV3 invariant-helper refactor review: no security or logic findings; frozen source diff `880390b5f2d9d1eec7bbf3e95b98bfb1be4be5262d0f015704fa75e14476feb2`.
 - [x] Reviewer-identified stale release evidence was resolved by replacing the blueprint-era manifest, verifier, and checklist with this proxy-era package.
 - The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
 

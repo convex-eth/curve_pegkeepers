@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
+REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 22_300
 EXPECTED_TESTS = 243
 
 ARTIFACTS = {
@@ -302,6 +303,11 @@ def main() -> None:
     fail("implementation deployed runtime", len(impl_runtime) + 32, impl_release["deployedRuntimeBytes"])
     fail("implementation runtime limit", impl_release["eip170LimitBytes"], EIP_170_LIMIT)
     fail("implementation runtime margin", EIP_170_LIMIT - len(impl_runtime) - 32, impl_release["deployedRuntimeMarginBytes"])
+    if len(impl_runtime) + 32 > REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET:
+        raise SystemExit(
+            "implementation refactor budget exceeded: "
+            f"{len(impl_runtime) + 32} > {REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET}"
+        )
     fail(
         "implementation operational initialization lock",
         manifest["implementation"]["lockedAgainstOperationalInitialization"],
@@ -482,6 +488,7 @@ def main() -> None:
         "releaseCanary",
         "independentFactoryReview",
         "independentChainlinkReview",
+        "independentRefactorReview",
     ):
         fail(label, verification[label], "pass")
 

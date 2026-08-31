@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-31T04:54:06Z",
+  "generatedAtUtc": "2026-08-31T06:33:37Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "3fdbf9fdc26068c7a4d00d9bc047fb72a9136b7e",
+  "productionSourceCommit": "236d4b33b3be7deb037a9b6440195b0ffca06193",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -14,21 +14,21 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "e2dc7447ded98f7c4968552f317001c14fad8950e7b294fec13bba743762b2c2"
+      "sha256": "66567739b5f64d8f027a39ea5d6f15fef8a96496e4c277e7a75d1abc74c89e79"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 23283,
-      "compilerCreationKeccak256": "0x675ed564857a66c77913fb8b27ec0c192062fb1cfe8d431d1ffa0b033a4c7cbe",
-      "semanticCoreRuntimeBytes": 23129,
-      "semanticCoreRuntimeKeccak256": "0x2501e99f9b32ed5319c9e4d28890a199bbd3367689027341f955c5dffc35aeba",
+      "compilerCreationBytes": 21452,
+      "compilerCreationKeccak256": "0xca9b14ca0035fe501c02d5715bfe40d748bccbbf17525420103e4b14323ae04a",
+      "semanticCoreRuntimeBytes": 21298,
+      "semanticCoreRuntimeKeccak256": "0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 23315,
+      "fullInitCodeBytes": 21484,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 25837,
-      "deployedRuntimeBytes": 23161,
+      "fullInitCodeMarginBytes": 27668,
+      "deployedRuntimeBytes": 21330,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 1415,
+      "deployedRuntimeMarginBytes": 3246,
       "abiFunctions": 76,
       "abiEvents": 12
     },
@@ -243,6 +243,7 @@
     "releaseCanary": "pass",
     "independentFactoryReview": "pass",
     "independentChainlinkReview": "pass",
+    "independentRefactorReview": "pass",
     "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit"
   },
   "latestMainnetCanary": {
