@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-31T07:54:22Z",
+  "generatedAtUtc": "2026-08-31T10:38:34Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "066fa9bde882f5d5e15348cfcd2349b3aa20185a",
+  "productionSourceCommit": "b45211758a97d3806bdadba14f4ec2631cd25568",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -36,17 +36,19 @@
   },
   "previewModule": {
     "source": {
-      "path": "src/PegKeeperV3PreviewModule.sol",
-      "sha256": "37c7ab356f36ffb5e8d9511c3108e22e9a759dd6d7fb353961761f4f80375a30"
+      "path": "src/vyper/PegKeeperV3PreviewModule.vy",
+      "sha256": "6af8135d8ccf9af7b4711b75a13ebeca589ba7651220e4ee1099cca24987bf01"
     },
     "artifact": {
-      "path": "out/PegKeeperV3PreviewModule.sol/PegKeeperV3PreviewModule.json",
-      "creationBytes": 8229,
-      "creationKeccak256": "0x8dbad6d7cd7c00352a53e057e43e0be446bd330a8d37bc665dcb65b1f2e09f8b",
-      "runtimeBytes": 8201,
-      "runtimeKeccak256": "0xb130d1b224b3d8e374f283de9b209f3b85cca034d8eecad1b5ea708811058807",
+      "path": "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
+      "creationBytes": 6717,
+      "creationKeccak256": "0xfabd1f4c403e773e7ded5c1ff6b4ff911b027ec0d0bbff5d02c17cf759406754",
+      "runtimeBytes": 6680,
+      "runtimeKeccak256": "0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324",
       "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 16375
+      "runtimeMarginBytes": 17896,
+      "abiFunctions": 3,
+      "abiEvents": 0
     },
     "stateless": true,
     "keeperIdentityBound": true
@@ -157,37 +159,42 @@
     "chainlink": {
       "source": {
         "path": "src/vyper/ChainlinkStablecoinOracle.vy",
-        "sha256": "2dc71478cc7f617b1d1481eba00be7ca25c50968479fa3651e7c8710ae4ccdbc"
+        "sha256": "0196276671b4eef6bc3a922d12054869851081626704a07eeb3c6ab2affa0b7e"
       },
       "artifact": {
         "path": "out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json",
-        "compilerCreationBytes": 1089,
-        "compilerCreationKeccak256": "0x7e8351cefe9fed9d46a61cbfde004bf8b9cb776d47107a93f7bf321d942b5004",
-        "runtimeTemplateBytes": 647,
-        "runtimeTemplateKeccak256": "0x483af8563d48ebbfb2b139a5b17d599246cf9f64ea85129ad00366d89ffd740d",
-        "abiFunctions": 7
+        "compilerCreationBytes": 664,
+        "compilerCreationKeccak256": "0xf88e81c6981547438000a0375b9c0e5c5579f5615deb4d1d817854b4e7dda483",
+        "runtimeTemplateBytes": 460,
+        "runtimeTemplateKeccak256": "0xe03c54b8bf499010cf16ccbd53437316c3fe05e6cc35ef26b042fa36efcc64b3",
+        "abiFunctions": 4,
+        "abiEvents": 0
       },
       "deploymentScript": "script/DeployPegKeeperV3.s.sol",
-      "registry": "0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf",
-      "quote": "0x0000000000000000000000000000000000000348",
       "adapters": [
         {
           "role": "frxUSD/USD",
-          "base": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
-          "expectedFeed": "0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D",
+          "ens": "frxusd-usd.data.eth",
+          "proxy": "0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83",
+          "officialListing": "https://data.chain.link/feeds/ethereum/mainnet/frxusd-usd",
+          "deviationThresholdBps": 50,
+          "heartbeatSeconds": 86400,
           "feedDecimals": 8,
           "maxDelay": 93600
         },
         {
           "role": "USDS/USD",
-          "base": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-          "expectedFeed": "0x592700e4FcDd674dC54d2681DED3B63f54F63f9A",
+          "ens": "usds-usd.data.eth",
+          "proxy": "0xfF30586cD0F29eD462364C7e81375FC0C71219b1",
+          "officialListing": "https://data.chain.link/feeds/ethereum/mainnet/usds-usd",
+          "deviationThresholdBps": 30,
+          "heartbeatSeconds": 86400,
           "feedDecimals": 8,
           "maxDelay": 93600
         }
       ],
-      "directFeedContractReadsSupported": false,
-      "feedRotationFailsClosed": true,
+      "directProxyReadsSupported": true,
+      "underlyingAggregatorRotationSupported": true,
       "maxDelayStatus": "provisional_reconfirm_before_broadcast"
     }
   },
@@ -230,7 +237,7 @@
     ]
   },
   "verification": {
-    "testsPassed": 243,
+    "testsPassed": 246,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
@@ -247,7 +254,11 @@
     "independentChainlinkReview": "pass",
     "independentRefactorReview": "pass",
     "independentDeploymentReview": "pass",
-    "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit"
+    "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit",
+    "previewAbiParity": "pass",
+    "independentCanonicalProxySemanticReview": "pass",
+    "independentCanonicalProxyIntegrationReview": "pass",
+    "manifestMutationTests": "pass"
   },
   "latestMainnetCanary": {
     "block": 25868730,
@@ -296,7 +307,7 @@
     "activated": false
   },
   "activationBlockers": [
-    "Governance must choose Curve EMA or Chainlink Feed Registry adapters for the frxUSD and USDS checks and record one coherent selection.",
+    "Governance must choose Curve EMA or direct canonical Chainlink proxy adapters for the frxUSD and USDS checks and record one coherent selection.",
     "If Chainlink is selected, governance must reconfirm or replace the provisional 93,600-second frxUSD and USDS maxDelay values after reviewing both feeds independently.",
     "Governance must confirm the hardcoded Curve Ownership Agent factory owner and all shared defaults.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",

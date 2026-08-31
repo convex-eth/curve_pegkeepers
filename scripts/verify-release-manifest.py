@@ -16,7 +16,7 @@ MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
 REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 22_300
-EXPECTED_TESTS = 243
+EXPECTED_TESTS = 246
 
 ARTIFACTS = {
     "implementation": (
@@ -30,9 +30,9 @@ ARTIFACTS = {
         ROOT / "out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json",
     ),
     "preview": (
-        ROOT / "src/PegKeeperV3PreviewModule.sol",
-        ROOT / "out/PegKeeperV3PreviewModule.sol/PegKeeperV3PreviewModule.json",
-        None,
+        ROOT / "src/vyper/PegKeeperV3PreviewModule.vy",
+        ROOT / "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
+        ROOT / "out/IPegKeeperV3PreviewModule.sol/IPegKeeperV3PreviewModule.json",
     ),
     "curve": (
         ROOT / "src/vyper/CurveStablecoinOracle.vy",
@@ -308,7 +308,7 @@ def main() -> None:
             raise SystemExit(f"environment-driven deployment input present: {forbidden}")
 
     create_markers = [
-        "new PegKeeperV3PreviewModule()",
+        "_deployPreviewModule()",
         "_deployImplementation(deployment.previewModule)",
         "_deployFactory(config, deployment.implementation)",
         "deployment.frxUsdTargetOracle =",
@@ -460,29 +460,76 @@ def main() -> None:
         oracle["chainlink"]["deploymentScript"],
         "script/DeployPegKeeperV3.s.sol",
     )
-    fail("Chainlink registry", oracle["chainlink"]["registry"].lower(), "0x47fb2585d2c56fe188d0e6ec628a38b74fceeedf")
-    fail("Chainlink quote", oracle["chainlink"]["quote"].lower(), "0x0000000000000000000000000000000000000348")
-    fail("Chainlink rotation", oracle["chainlink"]["feedRotationFailsClosed"], True)
-    fail("Chainlink direct reads", oracle["chainlink"]["directFeedContractReadsSupported"], False)
+    chainlink_release = oracle["chainlink"]
+    for obsolete in (
+        "registry",
+        "quote",
+        "directFeedContractReadsSupported",
+        "feedRotationFailsClosed",
+    ):
+        if obsolete in chainlink_release:
+            raise SystemExit(f"obsolete Chainlink registry evidence present: {obsolete}")
+    fail("Chainlink direct proxy reads", chainlink_release["directProxyReadsSupported"], True)
+    fail(
+        "Chainlink underlying aggregator rotation",
+        chainlink_release["underlyingAggregatorRotationSupported"],
+        True,
+    )
     fail(
         "Chainlink maxDelay status",
-        oracle["chainlink"]["maxDelayStatus"],
+        chainlink_release["maxDelayStatus"],
         "provisional_reconfirm_before_broadcast",
     )
-    for adapter in oracle["chainlink"]["adapters"]:
+    for adapter in chainlink_release["adapters"]:
         fail(f"{adapter['role']} provisional maxDelay", adapter["maxDelay"], 93_600)
         fail(f"{adapter['role']} decimals", adapter["feedDecimals"], 8)
     fail(
         "Chainlink adapter mappings",
         [
-            (adapter["role"], adapter["base"].lower(), adapter["expectedFeed"].lower())
-            for adapter in oracle["chainlink"]["adapters"]
+            (
+                adapter["role"],
+                adapter["ens"],
+                adapter["proxy"].lower(),
+                adapter["officialListing"],
+                adapter["deviationThresholdBps"],
+                adapter["heartbeatSeconds"],
+            )
+            for adapter in chainlink_release["adapters"]
         ],
         [
-            ("frxUSD/USD", "0xcacd6fd266af91b8aed52accc382b4e165586e29", "0x62a897c3e81d809c7444bb63d7d51e1f2ebb6c3d"),
-            ("USDS/USD", "0xdc035d45d973e3ec169d2276ddab16f1e407384f", "0x592700e4fcdd674dc54d2681ded3b63f54f63f9a"),
+            (
+                "frxUSD/USD",
+                "frxusd-usd.data.eth",
+                "0x9b4a96210bc8d9d55b1908b465d8b0de68b7ff83",
+                "https://data.chain.link/feeds/ethereum/mainnet/frxusd-usd",
+                50,
+                86_400,
+            ),
+            (
+                "USDS/USD",
+                "usds-usd.data.eth",
+                "0xff30586cd0f29ed462364c7e81375fc0c71219b1",
+                "https://data.chain.link/feeds/ethereum/mainnet/usds-usd",
+                30,
+                86_400,
+            ),
         ],
     )
+    lowered_deploy_script = deploy_script.lower()
+    for required_proxy in (
+        "0x9b4a96210bc8d9d55b1908b465d8b0de68b7ff83",
+        "0xff30586cd0f29ed462364c7e81375fc0c71219b1",
+    ):
+        if required_proxy not in lowered_deploy_script:
+            raise SystemExit(f"canonical Chainlink proxy missing from deployer: {required_proxy}")
+    for obsolete_aggregator in (
+        "0x62a897c3e81d809c7444bb63d7d51e1f2ebb6c3d",
+        "0x592700e4fcdd674dc54d2681ded3b63f54f63f9a",
+    ):
+        if obsolete_aggregator in lowered_deploy_script:
+            raise SystemExit(
+                f"underlying Chainlink aggregator pinned in deployer: {obsolete_aggregator}"
+            )
     if len(curve_runtime) > EIP_170_LIMIT or len(chainlink_runtime) > EIP_170_LIMIT:
         raise SystemExit("oracle runtime exceeds EIP-170")
 
@@ -535,6 +582,7 @@ def main() -> None:
     for label in (
         "keeperAbiParity",
         "factoryAbiParity",
+        "previewAbiParity",
         "chainlinkAbiParity",
         "runtimeSizeTest",
         "unifiedDeploymentTest",
@@ -547,6 +595,9 @@ def main() -> None:
         "independentChainlinkReview",
         "independentRefactorReview",
         "independentDeploymentReview",
+        "independentCanonicalProxySemanticReview",
+        "independentCanonicalProxyIntegrationReview",
+        "manifestMutationTests",
     ):
         fail(label, verification[label], "pass")
 
@@ -593,7 +644,7 @@ def main() -> None:
         fail(f"undeployed {label}", deployment[label], False)
 
     print(
-        "PegKeeperV3 proxy-era release manifest verified: "
+        "PegKeeperV3 Vyper/direct-proxy release manifest verified: "
         f"source={source_commit} tests={EXPECTED_TESTS} "
         f"implementation_runtime={len(impl_runtime) + 32} "
         f"factory_runtime={len(factory_runtime) + 64} "

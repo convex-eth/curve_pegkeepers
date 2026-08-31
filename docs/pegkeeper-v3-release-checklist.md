@@ -4,7 +4,7 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `066fa9bde882f5d5e15348cfcd2349b3aa20185a`.
+- [x] Production source commit: `b45211758a97d3806bdadba14f4ec2631cd25568`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
@@ -37,10 +37,13 @@ Canonical files:
 
 ### Preview module
 
-- [x] Runtime: `8,201` bytes.
-- [x] Runtime hash: `0xb130d1b224b3d8e374f283de9b209f3b85cca034d8eecad1b5ea708811058807`.
+- [x] Canonical source: `src/vyper/PegKeeperV3PreviewModule.vy`, compiled with Vyper `0.3.10 --optimize codesize`.
+- [x] Creation code: `6,717` bytes.
+- [x] Runtime: `6,680` bytes.
+- [x] Runtime hash: `0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324`.
+- [x] ABI is exactly `3 functions / 0 events` and matches `IPegKeeperV3PreviewModule`.
 - [x] Module is stateless.
-- [x] Every keeper-dependent preview entry point requires `keeper_ == msg.sender`.
+- [x] Every keeper-dependent preview derives keeper identity from `msg.sender`; no spoofable keeper argument exists.
 - [x] Preview projects post-action global backing, oracle health/value, route/fallback branch, and keeper-local velocity.
 
 ### Deployment factory
@@ -77,7 +80,7 @@ These are release blockers. The deployer exposes one explicit recommended config
 
 - [ ] Choose one oracle family for the final proposal and manifest deployment section:
   - Curve StableSwap-NG EMA adapters; or
-  - Chainlink Feed Registry adapters.
+  - direct canonical Chainlink proxy adapters.
 - [ ] If Chainlink is selected, reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `frxUSD/USD`.
 - [ ] If Chainlink is selected, independently reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `USDS/USD`.
 - [ ] Document how the selected `USDS/USD` check is applied to sUSDS economic backing and any required share-to-asset conversion.
@@ -130,29 +133,29 @@ Before selection:
 - [ ] Record current pool liquidity, recent EMA behavior, and relative-pair contagion risk.
 - [ ] Record five deployed adapter addresses and verify their immutable configuration.
 
-### Chainlink Feed Registry alternative
+### Direct Chainlink proxy alternative
 
 Pinned candidate configuration:
 
-- Registry: `0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf`
-- USD quote denomination: `0x0000000000000000000000000000000000000348`
-- frxUSD base: `0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29`
-- frxUSD/USD feed: `0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D`
-- USDS base: `0xdC035D45d973E3EC169d2276DDab16f1e407384F`
-- USDS/USD feed: `0x592700e4FcDd674dC54d2681DED3B63f54F63f9A`
+- frxUSD/USD ENS: `frxusd-usd.data.eth`
+- frxUSD/USD canonical proxy: `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83`
+- frxUSD/USD official deviation threshold: `0.5%`; heartbeat: `86,400` seconds (`24 hours`).
+- USDS/USD ENS: `usds-usd.data.eth`
+- USDS/USD canonical proxy: `0xfF30586cD0F29eD462364C7e81375FC0C71219b1`
+- USDS/USD official deviation threshold: `0.3%`; heartbeat: `86,400` seconds (`24 hours`).
 - Provisional frxUSD/USD maximum delay: `93,600` seconds (`26 hours`).
 - Provisional USDS/USD maximum delay: `93,600` seconds (`26 hours`).
 
 Before selection:
 
-- [ ] Reconfirm `registry.getFeed(base, USD)` equals each pinned expected feed.
-- [ ] Reconfirm feed decimals, current positive answer, completed round, update timestamp, and approved freshness window.
+- [ ] Reconfirm both canonical proxy addresses against Chainlink's official feed listings and ENS records.
+- [ ] Reconfirm proxy code, 8-decimal metadata, current positive answer, completed round, update timestamp, and approved freshness window.
 - [ ] Record the rationale for each approved `maxDelay`; do not copy one threshold without reviewing both feeds.
-- [ ] Record two separately deployed adapter addresses and verify registry/base/quote/feed/decimals/max-delay immutables.
-- [ ] Confirm every adapter `price()` succeeds through the canonical registry.
-- [ ] Confirm feed rotation fails closed and requires deliberate adapter replacement.
+- [ ] Record two separately deployed adapter addresses and verify proxy/feed-decimals/max-delay immutables.
+- [ ] Confirm every adapter `price()` succeeds through its canonical proxy.
+- [ ] Confirm underlying aggregator rotation remains live through the same immutable proxy address.
 
-Direct reads from the two currently resolved feed proxies reverted with `No access` during fork investigation. The adapter therefore reads round data through the canonical Feed Registry while pinning and rechecking the resolved feed address.
+Fork tests confirm direct `latestRoundData()` reads through both canonical proxies. The access-controlled addresses previously returned by the Feed Registry were underlying OCR aggregators, not the stable consumer-facing proxy endpoints.
 
 ## 4. Launch configuration
 
@@ -186,7 +189,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `066fa9bde882f5d5e15348cfcd2349b3aa20185a`.
+All checked gates were run against production source commit `b45211758a97d3806bdadba14f4ec2631cd25568`.
 
 ```bash
 forge fmt --check
@@ -207,13 +210,16 @@ PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-release-manifest.py
 ABI checks:
 
 ```bash
-python3 /home/c2tp/.hermes/skills/software-development/solidity-defi-review/scripts/check-vyper-solidity-abi.py \
+python3 scripts/check-vyper-solidity-abi.py \
   out/PegKeeperV3.vy/PegKeeperV3.json \
   out/IPegKeeperV3.sol/IPegKeeperV3.json
-python3 /home/c2tp/.hermes/skills/software-development/solidity-defi-review/scripts/check-vyper-solidity-abi.py \
+python3 scripts/check-vyper-solidity-abi.py \
   out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json \
   out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json
-python3 /home/c2tp/.hermes/skills/software-development/solidity-defi-review/scripts/check-vyper-solidity-abi.py \
+python3 scripts/check-vyper-solidity-abi.py \
+  out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json \
+  out/IPegKeeperV3PreviewModule.sol/IPegKeeperV3PreviewModule.json
+python3 scripts/check-vyper-solidity-abi.py \
   out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json \
   out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json
 ```
@@ -224,14 +230,15 @@ Recorded outcomes:
 - [x] `git diff --check`: pass.
 - [x] `forge lint`: pass.
 - [x] `forge build --sizes`: pass.
-- [x] Complete suite: `243 passed, 0 failed, 0 skipped`.
+- [x] Complete suite: `246 passed, 0 failed, 0 skipped`.
 - [x] PegKeeperV3 fork tests: pass.
 - [x] Curve adapter unit/deployment/proposal coverage: pass.
-- [x] Chainlink adapter unit/deployment/live-registry fork coverage: pass.
+- [x] Chainlink adapter unit/deployment/live-proxy fork coverage: pass.
 - [x] Unified deployment and chain-bound JSON handoff coverage: pass.
 - [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: ten sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
 - [x] Mainnet canary at block `25,868,730`: pass with no broadcast.
 - [x] Manifest verifier: pass.
+- [x] Manifest mutation tests reject wrong proxy, heartbeat, preview artifact, test inventory, direct-read policy, and undeployed-state values; byte-exact restoration passes.
 
 Canary route hashes:
 
@@ -246,7 +253,9 @@ Canary route hashes:
 - [x] PegKeeperV3 invariant-helper refactor review: no security or logic findings; frozen source diff `880390b5f2d9d1eec7bbf3e95b98bfb1be4be5262d0f015704fa75e14476feb2`.
 - [x] Unified deployment review: no security or logic findings; frozen source diff `031c41652daba68622b3cfe1d816e0d9d63632421487b319494f1d78eeb8e77e`.
 - [x] Deployment-visibility correction review: no security or logic findings; frozen source diff `3e3f3231bfbd5f37c3ae8f80e0fd101adc0971b515ed96c69f8a08b38ee96010`.
-- [x] Reviewer-identified stale release evidence was resolved by replacing the blueprint-era manifest, verifier, and checklist with this proxy-era package.
+- [x] Vyper preview semantic-parity and integration reviews: no blocking findings; frozen source diff `2fb94ff190d694b359fd91c9f80ad2ccb6721d9f6ba6f727e56006d38223f5d8`.
+- [x] Canonical Chainlink proxy semantic/security and deployment/integration reviews: no blocking findings; frozen source diff `879bfffa66d470cb3c9eacdcef455f8c01156626cb67a8ac85cb1929e2957eb6`.
+- [x] Reviewer-identified stale release evidence was resolved by replacing the Solidity-preview and Feed-Registry-era manifest, verifier, and checklist claims with this Vyper/direct-proxy package.
 - The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
 
 ## 7. Pre-broadcast simulation only
