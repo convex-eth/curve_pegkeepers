@@ -74,7 +74,7 @@ Governance selects the deployment's fixed token endpoints and configures debt ca
 
 ### Deployment factory owner
 
-The owner of `PegKeeperV3Factory` is the only account that can deploy a factory-managed PegKeeper, update shared roles and deployment defaults, nominate a replacement factory owner, or select a different EIP-5202 implementation blueprint. Factory-created PegKeepers are ordinary constructor-specialized contracts, not proxies, so an implementation update affects only later deployments and cannot alter existing runtime code. The factory owner and the shared PegKeeper admin remain separate roles; changing the factory's admin, emergency admin, or fee receiver is intentionally visible to every V3 that resolves those values from the factory.
+The owner of `PegKeeperV3Factory` is the only account that can deploy a factory-managed PegKeeper, update shared roles and deployment defaults, or nominate a replacement factory owner. The factory's implementation is immutable. Every keeper is a non-upgradeable EIP-1167 minimal proxy whose runtime embeds that implementation address; there is no proxy admin, implementation setter, or mutable implementation slot. The factory owner and shared PegKeeper admin remain separate roles; changing the factory's admin, emergency admin, or fee receiver is intentionally visible to every V3 that resolves those values from the factory.
 
 ### Emergency admin
 
@@ -132,21 +132,21 @@ undeployedContractionPaused
 yieldContractionPaused
 ```
 
-The production implementation uses Vyper `0.3.10`. Its verified foundation pins the fixed endpoints, parameters, accounting counters, deployment-factory/controller-factory references, pause state, typed routes, identity, and lifecycle described here. Production compilation uses Vyper's `codesize` optimizer. The compiler runtime template is `22,606` bytes; after Vyper appends its constructor-specialized immutable data section, the authoritative deployed runtime is `22,862` bytes, `1,714` bytes below EIP-170. Full initcode with seven static constructor arguments is `24,370` bytes, `24,782` bytes below EIP-3860. The EIP-5202 blueprint runtime is `24,149` bytes, `427` bytes below EIP-170. Executable runtime/initcode, blueprint/factory deployment, and release-manifest tests prevent artifact drift or limit regression.
+The production implementation uses Vyper `0.3.10` with the `codesize` optimizer. Its core runtime is `23,085` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,117`-byte implementation runtime, `1,459` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, factory-deployment, and release-manifest tests prevent artifact drift or limit regression.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
 `targetAsset`, `backingAsset`, and `yieldToken` are fixed for the lifetime of a V3 deployment. The initial implementation requires the final yield token to expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `yieldToken.asset() == backingAsset` at construction. It does not require the yield token itself to accept `deposit()` or `withdraw()`. Governance may replace venues and typed paths only when they preserve those endpoints. Supporting another yield token or accounting model requires a new V3 deployment rather than mutating the backing identity and accounting assumptions of the existing contract.
 
-### Deployment factory and immutable instances
+### Deployment factory and non-upgradeable minimal proxies
 
-The canonical deployment factory stores one current EIP-5202 blueprint, the shared PegKeeper admin, distinct emergency admin, fee receiver, and deployment defaults for maximum deployed crvUSD, target-AMM execution buffer, downstream attempt gas, fallback reserve, and expansion route-loss bound. Only the factory owner can change those values or deploy. Existing V3 instances read the three shared addresses dynamically; other defaults are copied at deployment.
+The canonical deployment factory stores one immutable implementation, the shared PegKeeper admin, distinct emergency admin, fee receiver, and deployment defaults for maximum deployed crvUSD, target-AMM execution buffer, downstream attempt gas, fallback reserve, and expansion route-loss bound. Only the factory owner can change policy values or deploy. Existing V3 instances read the three shared addresses dynamically; all accounting, endpoints, routes, pause state, oracle configuration, and velocity state live in each proxy's storage.
 
-The owner supplies four deployment-specific values: `targetAmm`, `yieldToken`, `expansionSteps`, and `contractionSteps`. The factory discovers crvUSD from the fixed ControllerFactory, requires the target AMM to contain exactly crvUSD and one other token, treats that other token as `targetAsset`, and reads `backingAsset = yieldToken.asset()`. It assigns `keeperIndex = keeperCount + 1` and passes that index into V3 construction. The resulting getters expose the numeric index and `name = "Pegkeeper " + uint2str(index)`.
+The owner supplies six deployment-specific values: `targetAmm`, `yieldToken`, mandatory `targetOracle` and `yieldOracle` adapters, `expansionSteps`, and `contractionSteps`. The factory discovers crvUSD from the fixed ControllerFactory, derives `targetAsset` from the two-coin target AMM, reads `backingAsset = yieldToken.asset()`, assigns `keeperIndex = keeperCount + 1`, and passes all configuration into one-time initialization. The resulting getters expose the numeric index and `name = "Pegkeeper " + uint2str(index)`.
 
-Initialization is atomic. V3 is constructed with immutable deployment-factory and ControllerFactory references, fixed endpoints, capacity, and index. The deployment factory is authorized to perform only the initial path and gas-configuration calls exposed by its immutable code; V3 has no local role state to rotate. The factory validates and stores both typed routes, applies the deployment defaults, and records the instance. Any failed constructor, route validation, or configuration call reverts the entire factory transaction without consuming the index. Every direction remains paused.
+Initialization is atomic. The factory performs exactly one `CREATE` for the minimal proxy and initializes it in the same transaction. The proxy marks itself initialized before external validation, accepts initialization only from its immutable factory binding, validates and stores both routes and all defaults, and rejects reinitialization. Any failure reverts creation and nonce consumption. The implementation is locked at construction and cannot be initialized for operational use. Every proxy starts fully paused.
 
-The blueprint is copied as creation bytecode and executed with ordinary constructor arguments. Deployed PegKeepers contain no proxy fallback, delegatecall upgrade hook, or reference that can redirect their runtime logic. `setImplementation()` therefore selects creation code only for future instances. Capacity and execution defaults are copied only into later deployments. Shared `admin`, `emergency_admin`, and `fee_receiver` changes intentionally apply to every existing V3 through factory getters; V3 exposes no local setters for those values. Existing PegKeepers otherwise retain their code, capacity, identity, endpoints, and routes.
+The proxy fallback delegates only to the implementation address embedded in its runtime. There is no upgrade hook or implementation storage slot. Capacity and execution defaults are copied only into later deployments. Shared `admin`, `emergency_admin`, and `fee_receiver` changes intentionally apply to every existing V3 through factory getters; V3 exposes no local setters for those values. Existing proxies otherwise retain their independent capacity, identity, endpoints, routes, oracle addresses, balances, accounting, and velocity state.
 
 ## Supply accounting and Factory integration
 
@@ -178,9 +178,10 @@ The current ControllerFactory does not inspect or mark to market assets held by 
 
 V3 makes that trust assumption explicit and narrow:
 
-- governance approves the AMM-facing stablecoin, final yield token, accounting backing asset, and typed conversion paths;
-- one normalized unit of an approved backing stablecoin is accounted as one dollar and one crvUSD unit;
-- yield-token units are not treated as one dollar each; the fixed `yieldToken` converts them into units of its approved `backingAsset` through `convertToAssets()`;
+- governance approves the AMM-facing stablecoin, final yield token, accounting backing asset, typed conversion paths, and two mandatory independent oracle adapters;
+- `address(0)` cannot disable oracle checking;
+- target and downstream prices are normalized to `1e18`, launch with `0.9997e18` floors before increasing exposure, and receive at most par credit through `min(price, 1e18)`; governance may replace code-bearing adapters or change nonzero floors up to par without resetting pressure;
+- yield-token units are converted into backing-asset units through `convertToAssets()` before the downstream oracle haircut is applied;
 - only `undeployedBacking` and the configured yield position count toward V3 principal and surplus accounting;
 - unsolicited tokens and arbitrary assets sent to V3 do not count as backing.
 
@@ -191,7 +192,7 @@ trustedYieldValue(yieldTokenAmount)
     = normalizeDown(yieldToken.convertToAssets(yieldTokenAmount))
 ```
 
-The returned backing-asset units are then trusted at par because that backing asset and final yield token were approved by governance for this PegKeeper deployment. No target-AMM spot price is used to value the final position.
+The returned backing-asset units are valued through the mandatory downstream adapter. The launch Curve adapters read rate-provider-normalized StableSwap-NG EMAs, so the sUSDS/frxUSD observation represents the underlying USDS economic comparison rather than raw share count. V3 performs `convertToAssets()` once, then applies the capped adapter price. The target AMM is never used as the backing-quality reference.
 
 The minimal read-only accounting interface is:
 
@@ -261,20 +262,21 @@ deployedCrvUsd <= trustedBackingValue
 
 Expansion is keeper-driven. V3 does not offer a separate direct upward-price quote in the initial design.
 
-Expansion has no time cooldown. The target-AMM sale is the peg-critical leg; downstream yield deployment is preferred but best effort. The initial `0.1 bps` entry margin requires whichever branch completes to retain principal plus that margin after its realized route costs, terminal rounding, and keeper reward.
+Expansion has no time cooldown, but every exposure increase is bounded by the keeper-local velocity bucket. The target-AMM sale is the peg-critical leg; downstream yield deployment is allowed only when its independent adapter is healthy. The initial `0.1 bps` entry margin requires whichever branch completes to retain principal plus that margin after realized costs and reward.
 
 ```text
 1. Verify expansion is enabled.
-2. Do not require the target AMM spot price to remain close to its EMA. A sharp upward move in crvUSD is the opportunity V3 is meant to act on.
-3. Verify the keeper's requested amount is at least `minExpansionAmount`, no greater than idle crvUSD, and within the remaining `maxDeployedCrvUsd` capacity.
-4. Sell crvUSD into the designated target AMM.
-5. Receive the target asset.
-6. Attempt the configured target-to-yield path in an isolated, typed, `onlySelf` call with protocol-calculated minima. That subcall includes full-route balance measurement, keeper payment in the backing asset, terminal yield deployment, and the final yield-backing floor.
-7. Treat the downstream branch as successful only if the isolated call completes all of those operations and returns consistent measured deltas.
-8. If the downstream call reverts, roll back only that subcall, calculate fallback gross profit from the target asset actually received, pay the keeper in target asset, and retain the remainder as `undeployedBacking`.
-9. Require the selected branch to satisfy the configured entry floor after reward and require the complete state to preserve the global backing invariant. A failure of both branches reverts the complete expansion, including the target-AMM swap.
-10. Increase `deployedCrvUsd` and set `lastExpansionAt` to the current timestamp.
-11. Emit the branch, complete execution result, gross profit, keeper reward, undeployed backing retained, and maturity time.
+2. Read the mandatory target adapter; revert on failure or a value below 0.9997e18.
+3. Verify the requested amount against minExpansionAmount, idle crvUSD, remaining local capacity, and available keeper-local velocity.
+4. Consume velocity pressure; a later revert rolls this state back.
+5. Sell crvUSD into the designated target AMM and measure target received.
+6. Read the mandatory downstream adapter.
+7. If the downstream adapter fails or is below 0.9997e18, skip downstream execution and use the target-retention fallback.
+8. Otherwise attempt the configured target-to-yield path in an isolated, typed, onlySelf call with protocol-calculated minima.
+9. Treat the downstream branch as successful only if the isolated call completes and returns consistent measured deltas.
+10. If downstream execution fails, roll back only that subcall, pay reward only from realized fallback profit, and retain the remainder as undeployedBacking.
+11. Require the selected branch to satisfy the entry floor and complete backing invariant. A failure of both branches reverts the full transaction and pressure consumption.
+12. Increase deployedCrvUsd, update lastExpansionAt, and emit the branch and measured execution result.
 ```
 
 The downstream call is not an arbitrary keeper-controlled call. `expand()` invokes the ABI-visible `executeExpansionPath(targetAmount, crvUsdSold, keeper)` entry point only through a call to itself; every external caller is rejected. The helper uses the active typed path, exact temporary approvals, the original expansion caller as the fixed reward recipient, and a bounded forwarded-gas amount. Any route, reward, terminal yield-acquisition, or full-route economic failure reverts the isolated call and selects fallback with the original target asset still held by V3. If the isolated call returns success but its returned target or yield-token deltas are inconsistent with the outer snapshots, the outer expansion reverts entirely rather than accepting fallback after state has committed.
@@ -785,7 +787,7 @@ The keeper can use `previewExpansion(amount)` or `previewKeeperBuyback(yieldToke
 
 Under-sizing may leave a second profitable action available, but percentage-only compensation does not increase the aggregate configured share merely because one opportunity is split across calls. Token rounding and changing AMM execution can alter exact results, and each call must independently leave V3 with its configured post-reward margin and pay its own gas. `minExpansionAmount` blocks true dust without adding quote probes or a full-path search.
 
-`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Governance can update it as capacity and observed execution behavior change. There is no separate per-call action-size maximum or rolling-flow throttle: idle inventory, available backing, and `maxDeployedCrvUsd` are the actual exposure bounds.
+`minExpansionAmount` remains important because a successful expansion resets the global contraction timer. Its initial value is `10_000e18` crvUSD. Independently, one global leaky bucket per keeper covers every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`. Maximum pressure is `5%` of `maxDeployedCrvUsd`; pressure refills linearly to zero over `300` seconds. All calls and callers share it, transaction splitting cannot bypass it, contraction does not refund it, and a reverted transaction consumes no pressure. Updating policy, ceilings, factory defaults, oracle adapters, or floors does not reset pressure.
 
 ## Profitability and execution controls
 
@@ -1443,15 +1445,15 @@ An updatable path can direct all future flows into a malicious venue. The DAO's 
 
 The owner can intentionally bypass typed routes and move or approve assets through `execute()`. This is an explicit trust assumption, not a permissionless surface. A compromised owner can drain V3, but the designated DAO already controls crvUSD minting and the protocol configuration that determines V3's capacity. Ownership must not be delegated to a weaker hot-key or keeper role.
 
-## Future considerations
+## Independent backing safety
 
-### Optional backing-depeg guard
+### Mandatory independent backing adapters
 
-A backing-depeg guard is a possible later risk-control layer, not core V3 accounting or initial execution logic. If added, it should evaluate the target asset, yield-token underlying, or redemption health against references independent of crvUSD. A cheap crvUSD is exactly when contraction should buy it, and an expensive crvUSD is exactly when expansion should sell it; using crvUSD itself as the depeg reference would confuse the desired action signal with backing quality.
+Backing-quality checks are part of initial execution. Target and downstream adapters are mandatory, independent of the designated crvUSD execution AMM, and directional: target failure blocks expansion, while downstream failure selects target retention. Exposure-reducing contraction, slow wind-down, and owner recovery do not depend on successful oracle reads.
 
-For a USDT-facing deployment, candidate observations include a robust USDT/USD oracle and time-weighted USDT/USDC or USDT/USDS markets that are independent of the designated crvUSD/USDT execution AMM. A production design would need explicit staleness rules, minimum liquidity and observation windows, treatment of disagreement between references, and protection against correlated stablecoin failures. No single comparison to another governance-approved stablecoin proves dollar parity.
+The launch Curve configuration uses opposite orientations of the USDC/USDT EMA for the USDC and USDT target checks. It uses frxUSD/sUSDS for frxUSD target health, the deeper sfrxUSD/frxUSD EMA for the frxUSD keeper's downstream share-health check, and the reverse sUSDS/frxUSD orientation of frxUSD/sUSDS for sUSDS backing health. These are contagion checks against governance-trusted stable assets, not mathematical proof of absolute USD parity. Governance must monitor pool liquidity, EMA behavior, reference-asset health, and correlated failures.
 
-Any later guard should be directional. It may stop expansion or downstream deployment from increasing exposure to an impaired target or backing asset while preserving contraction, route-defined unwind, slow wind-down, and owner recovery actions that reduce that exposure. For a yield token, the relevant checks are the approved backing asset's external value, the final token's accounting behavior, and actual unwind-route liquidity; an illiquid yield-token market quote or `convertToAssets()` alone is not a complete depeg test.
+For either yield token, V3 converts held shares into underlying units with `convertToAssets()` and then applies the adapter's capped health multiplier. Favorable values are capped at par, preventing a share-price premium from being counted twice; an unfavorable share relationship applies a haircut. Typed-route slippage and measured-output guards remain independent of these oracle gates.
 
 ## Remaining deployment decisions
 

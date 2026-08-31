@@ -5,13 +5,14 @@ import {Test} from "forge-std/Test.sol";
 
 import {DeployPegKeeperV3Factory} from "../script/DeployPegKeeperV3Factory.s.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {MockFactory, MockToken} from "./PegKeeperV3Foundation.t.sol";
 
 contract PegKeeperV3FactoryDeploymentTest is Test {
-    uint256 internal constant RELEASE_FACTORY_INITCODE_SIZE = 5_058;
-    uint256 internal constant RELEASE_FACTORY_RUNTIME_SIZE = 3_778;
+    uint256 internal constant RELEASE_FACTORY_INITCODE_SIZE = 5_376;
+    uint256 internal constant RELEASE_FACTORY_RUNTIME_SIZE = 3_912;
 
-    function test_deploymentScriptCreatesVerifiedBlueprintAndFactory() public {
+    function test_deploymentScriptCreatesLockedImplementationAndMinimalProxyFactory() public {
         MockToken crvUsd = new MockToken(18);
         MockFactory controllerFactory =
             new MockFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
@@ -33,27 +34,27 @@ contract PegKeeperV3FactoryDeploymentTest is Test {
             expansionMaxRouteLossBps: 100
         });
 
-        (address blueprint, address deployedFactory) = deployer.deploy(config);
+        (address implementation, address deployedFactory) = deployer.deploy(config);
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployedFactory);
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
 
-        assertGt(blueprint.code.length, 3);
-        assertLe(blueprint.code.length, 24_576);
-        assertEq(uint8(blueprint.code[0]), 0xfe);
-        assertEq(uint8(blueprint.code[1]), 0x71);
-        assertEq(uint8(blueprint.code[2]), 0x00);
+        assertGt(implementation.code.length, 0);
+        assertLe(implementation.code.length, 24_576);
+        assertTrue(IPegKeeperV3(implementation).initialized());
+        address previewModule = IPegKeeperV3(implementation).preview_module();
+        assertGt(previewModule.code.length, 0);
         bytes memory factoryCreationCode =
             vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
         bytes memory factoryInitCode = bytes.concat(
             factoryCreationCode,
-            abi.encode(config.owner, config.controllerFactory, blueprint, defaults_)
+            abi.encode(config.owner, config.controllerFactory, implementation, defaults_)
         );
         assertEq(factoryInitCode.length, RELEASE_FACTORY_INITCODE_SIZE);
         assertEq(deployedFactory.code.length, RELEASE_FACTORY_RUNTIME_SIZE);
         assertLe(deployedFactory.code.length, 24_576);
         assertEq(factory.owner(), address(this));
         assertEq(factory.controllerFactory(), address(controllerFactory));
-        assertEq(factory.implementation(), blueprint);
+        assertEq(factory.implementation(), implementation);
         assertEq(defaults_.admin, admin);
         assertEq(defaults_.emergencyAdmin, emergencyAdmin);
         assertEq(defaults_.feeReceiver, feeReceiver);

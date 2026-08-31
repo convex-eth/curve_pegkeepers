@@ -12,12 +12,48 @@ import {
     MockYieldToken
 } from "./PegKeeperV3Foundation.t.sol";
 
-contract PegKeeperV3Blueprint {
-    constructor(bytes memory creationCode) {
-        bytes memory blueprintCode = bytes.concat(hex"fe7100", creationCode);
-        assembly {
-            return(add(blueprintCode, 0x20), mload(blueprintCode))
-        }
+contract FactoryOracle {
+    function price() external pure returns (uint256) {
+        return 1e18;
+    }
+}
+
+contract FactoryPreviewModule {
+    function previewExpansion(address, uint256)
+        external
+        pure
+        returns (uint256, uint256, uint256, uint256, uint256, bool)
+    {
+        return (11, 12, 13, 14, 15, true);
+    }
+
+    function previewUndeployedContraction(address, uint256)
+        external
+        pure
+        returns (uint256, uint256, uint256, bool)
+    {
+        return (21, 22, 23, true);
+    }
+
+    function previewKeeperBuyback(address, uint256)
+        external
+        pure
+        returns (uint256, uint256, uint256, bool)
+    {
+        return (31, 32, 33, false);
+    }
+}
+
+contract RevertingKeeperImplementation {
+    address public immutable preview_module;
+    bool public constant initialized = true;
+
+    constructor(address module) {
+        preview_module = module;
+    }
+
+    fallback() external {
+        revert();
     }
 }
 
@@ -44,7 +80,10 @@ contract PegKeeperV3FactoryTest is Test {
     MockTwoCoinPool internal backingToCrvUsdPool;
 
     IPegKeeperV3Factory internal factory;
-    address internal blueprint;
+    address internal implementation;
+    FactoryOracle internal targetOracle;
+    FactoryOracle internal yieldOracle;
+    FactoryPreviewModule internal previewModule;
 
     function setUp() public {
         crvUsd = new MockToken(18);
@@ -57,11 +96,14 @@ contract PegKeeperV3FactoryTest is Test {
         targetToBackingPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
         backingToCrvUsdPool = new MockTwoCoinPool(address(backingAsset), address(crvUsd));
 
-        blueprint = _deployBlueprint();
+        targetOracle = new FactoryOracle();
+        yieldOracle = new FactoryOracle();
+        previewModule = new FactoryPreviewModule();
+        implementation = _deployImplementation(address(previewModule));
         factory = _deployFactory(
             address(this),
             address(controllerFactory),
-            blueprint,
+            implementation,
             _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18)
         );
     }
@@ -71,14 +113,24 @@ contract PegKeeperV3FactoryTest is Test {
             _paths();
 
         address deployed = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
         IPegKeeperV3 pegKeeper = IPegKeeperV3(deployed);
 
         assertEq(factory.keeperCount(), 1);
         assertEq(factory.keeperAt(1), deployed);
         assertTrue(factory.isPegKeeper(deployed));
-        assertEq(factory.implementationOf(deployed), blueprint);
+        assertEq(factory.implementationOf(deployed), implementation);
+        assertEq(deployed.code.length, 45);
+        assertEq(pegKeeper.preview_module(), address(previewModule));
+        assertTrue(pegKeeper.initialized());
+        assertEq(pegKeeper.target_oracle(), address(targetOracle));
+        assertEq(pegKeeper.yield_oracle(), address(yieldOracle));
 
         assertEq(pegKeeper.name(), "Pegkeeper 1");
         assertEq(pegKeeper.keeper_index(), 1);
@@ -113,10 +165,20 @@ contract PegKeeperV3FactoryTest is Test {
             _paths();
 
         address first = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
         address second = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
 
         assertEq(IPegKeeperV3(first).name(), "Pegkeeper 1");
@@ -127,27 +189,43 @@ contract PegKeeperV3FactoryTest is Test {
         assertEq(factory.keeperAt(2), second);
     }
 
-    function test_implementationAndCapacityAffectFutureWhileSharedRolesUpdateExisting() public {
+    function test_implementationIsImmutableWhileDefaultsAffectFutureAndSharedRolesUpdateExisting()
+        public
+    {
         (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
             _paths();
         address first = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
         bytes32 firstCodeHash = first.codehash;
 
-        address nextBlueprint = _deployBlueprint();
-        factory.setImplementation(nextBlueprint);
+        address nextImplementation = _deployImplementation(address(previewModule));
+        (bool implementationChanged,) = address(factory)
+            .call(abi.encodeWithSignature("setImplementation(address)", nextImplementation));
+        assertFalse(implementationChanged);
+        assertEq(factory.implementation(), implementation);
+
         factory.setDefaults(
             _defaults(nextGovernance, nextEmergencyAdmin, nextFeeReceiver, 50_000_000e18)
         );
-
         address second = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
 
-        assertEq(factory.implementationOf(first), blueprint);
-        assertEq(factory.implementationOf(second), nextBlueprint);
+        assertEq(factory.implementationOf(first), implementation);
+        assertEq(factory.implementationOf(second), implementation);
         assertEq(first.codehash, firstCodeHash);
+        assertEq(second.codehash, firstCodeHash);
         assertEq(IPegKeeperV3(first).admin(), nextGovernance);
         assertEq(IPegKeeperV3(first).emergency_admin(), nextEmergencyAdmin);
         assertEq(IPegKeeperV3(first).fee_receiver(), nextFeeReceiver);
@@ -162,7 +240,12 @@ contract PegKeeperV3FactoryTest is Test {
         (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
             _paths();
         address deployed = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
 
         vm.prank(governance);
@@ -187,9 +270,14 @@ contract PegKeeperV3FactoryTest is Test {
 
         vm.startPrank(stranger);
         vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
-        factory.deployPegKeeper(address(targetAmm), address(yieldToken), expansion, contraction);
-        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
-        factory.setImplementation(blueprint);
+        factory.deployPegKeeper(
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
+        );
         vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
         factory.setDefaults(defaults_);
         vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
@@ -201,27 +289,49 @@ contract PegKeeperV3FactoryTest is Test {
 
     function test_invalidRoutesRevertAtomicallyWithoutConsumingIndex() public {
         IPegKeeperV3.RouteStep[] memory empty = new IPegKeeperV3.RouteStep[](0);
+        address expectedFirstKeeper = vm.computeCreateAddress(address(factory), 1);
 
         vm.expectRevert();
-        factory.deployPegKeeper(address(targetAmm), address(yieldToken), empty, empty);
+        factory.deployPegKeeper(
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            empty,
+            empty
+        );
 
         assertEq(factory.keeperCount(), 0);
         assertEq(factory.keeperAt(1), address(0));
+
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
+        );
+        assertEq(deployed, expectedFirstKeeper);
     }
 
-    function test_factoryRejectsNonBlueprintImplementation() public {
+    function test_factoryRejectsNonImplementationImplementation() public {
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
+            _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
         vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
-        factory.setImplementation(address(targetAmm));
+        _deployFactory(address(this), address(controllerFactory), address(targetAmm), defaults_);
 
-        address shortBlueprint = makeAddr("shortBlueprint");
-        vm.etch(shortBlueprint, hex"fe7100");
+        address shortImplementation = makeAddr("shortImplementation");
+        vm.etch(shortImplementation, hex"fe7100");
         vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
-        factory.setImplementation(shortBlueprint);
+        _deployFactory(address(this), address(controllerFactory), shortImplementation, defaults_);
 
         address wrongPreamble = makeAddr("wrongPreamble");
         vm.etch(wrongPreamble, hex"fe71016000");
         vm.expectRevert(IPegKeeperV3Factory.InvalidImplementation.selector);
-        factory.setImplementation(wrongPreamble);
+        _deployFactory(address(this), address(controllerFactory), wrongPreamble, defaults_);
     }
 
     function test_factoryRejectsInvalidOwnerAndControllerFactory() public {
@@ -229,10 +339,10 @@ contract PegKeeperV3FactoryTest is Test {
             _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18);
 
         vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
-        _deployFactory(address(0), address(controllerFactory), blueprint, defaults_);
+        _deployFactory(address(0), address(controllerFactory), implementation, defaults_);
 
         vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
-        _deployFactory(address(this), address(0), blueprint, defaults_);
+        _deployFactory(address(this), address(0), implementation, defaults_);
 
         vm.expectRevert(IPegKeeperV3Factory.InvalidOwner.selector);
         factory.transferOwnership(address(0));
@@ -257,32 +367,44 @@ contract PegKeeperV3FactoryTest is Test {
 
         vm.expectRevert(IPegKeeperV3Factory.InvalidTargetAmm.selector);
         factory.deployPegKeeper(
-            address(invalidTargetAmm), address(yieldToken), expansion, contraction
+            address(invalidTargetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
 
         assertEq(factory.keeperCount(), 0);
         assertEq(factory.keeperAt(1), address(0));
     }
 
-    function test_failedBlueprintDeploymentUsesCustomErrorAndDoesNotConsumeIndex() public {
-        address revertingBlueprint = address(new PegKeeperV3Blueprint(hex"60006000fd"));
-        factory.setImplementation(revertingBlueprint);
+    function test_failedImplementationDeploymentUsesCustomErrorAndDoesNotConsumeIndex() public {
+        address revertingImplementation =
+            address(new RevertingKeeperImplementation(address(previewModule)));
+        IPegKeeperV3Factory badFactory = IPegKeeperV3Factory(
+            _deployFactory(
+                address(this),
+                address(controllerFactory),
+                revertingImplementation,
+                _defaults(governance, emergencyAdmin, feeReceiver, 25_000_000e18)
+            )
+        );
         (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
             _paths();
-        address expectedFirstKeeper = vm.computeCreateAddress(address(factory), 1);
 
         vm.expectRevert(IPegKeeperV3Factory.DeploymentFailed.selector);
-        factory.deployPegKeeper(address(targetAmm), address(yieldToken), expansion, contraction);
-
-        assertEq(factory.keeperCount(), 0);
-        assertEq(factory.keeperAt(1), address(0));
-
-        factory.setImplementation(blueprint);
-        address deployed = factory.deployPegKeeper(
-            address(targetAmm), address(yieldToken), expansion, contraction
+        badFactory.deployPegKeeper(
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
-        assertEq(deployed, expectedFirstKeeper);
-        assertEq(factory.keeperAt(1), expectedFirstKeeper);
+
+        assertEq(badFactory.keeperCount(), 0);
+        assertEq(badFactory.keeperAt(1), address(0));
     }
 
     function test_factoryRejectsInvalidSharedRolesAndFeeReceiver() public {
@@ -336,22 +458,107 @@ contract PegKeeperV3FactoryTest is Test {
         factory.setDefaults(invalid);
     }
 
-    function test_unknownSelectorAndDirectBlueprintFallbackCallsRevert() public {
+    function test_unknownSelectorReverts() public {
         (bool unknownSelectorSucceeded,) = address(factory).call(hex"deadbeef");
         assertFalse(unknownSelectorSucceeded);
+    }
 
-        bytes memory selfCallData = abi.encodeWithSignature(
-            "__deployFromBlueprint(address,address,address,address,address,uint256,uint256)",
-            blueprint,
+    function test_proxyRuntimePinsImplementationWithoutUpgradeSlot() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address deployed = factory.deployPegKeeper(
             address(targetAmm),
-            address(targetAsset),
-            address(backingAsset),
             address(yieldToken),
-            25_000_000e18,
-            1
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
         );
-        (bool directFallbackSucceeded,) = address(factory).call(selfCallData);
-        assertFalse(directFallbackSucceeded);
+
+        bytes memory expectedRuntime = abi.encodePacked(
+            hex"363d3d373d3d3d363d73", bytes20(implementation), hex"5af43d82803e903d91602b57fd5bf3"
+        );
+        assertEq(deployed.code, expectedRuntime);
+        assertEq(factory.implementationOf(deployed), implementation);
+    }
+
+    function test_implementationAndProxyCannotBeReinitialized() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm),
+            address(yieldToken),
+            address(targetOracle),
+            address(yieldOracle),
+            expansion,
+            contraction
+        );
+        bytes memory initialization = abi.encodeCall(
+            IPegKeeperV3.initialize,
+            (
+                address(targetAmm),
+                address(targetAsset),
+                address(backingAsset),
+                address(yieldToken),
+                25_000_000e18,
+                1,
+                address(targetOracle),
+                address(yieldOracle)
+            )
+        );
+
+        (bool implementationInitialized,) = implementation.call(initialization);
+        assertFalse(implementationInitialized);
+        (bool proxyInitialized,) = deployed.call(initialization);
+        assertFalse(proxyInitialized);
+    }
+
+    function test_previewSelectorsDelegateToSharedStatelessModule() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        IPegKeeperV3 pegKeeper = IPegKeeperV3(
+            factory.deployPegKeeper(
+                address(targetAmm),
+                address(yieldToken),
+                address(targetOracle),
+                address(yieldOracle),
+                expansion,
+                contraction
+            )
+        );
+
+        (bool expansionOk, bytes memory expansionResult) =
+            address(pegKeeper).staticcall(abi.encodeCall(IPegKeeperV3.previewExpansion, (1)));
+        assertTrue(expansionOk);
+        assertEq(expansionResult, abi.encode(11, 12, 13, 14, 15, true));
+        (bool undeployedOk, bytes memory undeployedResult) = address(pegKeeper)
+            .staticcall(abi.encodeCall(IPegKeeperV3.previewUndeployedContraction, (1)));
+        assertTrue(undeployedOk);
+        assertEq(undeployedResult, abi.encode(21, 22, 23, true));
+        (bool buybackOk, bytes memory buybackResult) =
+            address(pegKeeper).staticcall(abi.encodeCall(IPegKeeperV3.previewKeeperBuyback, (1)));
+        assertTrue(buybackOk);
+        assertEq(buybackResult, abi.encode(31, 32, 33, false));
+    }
+
+    function test_adminExecuteRecoveryPathRemainsOperational() public {
+        (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
+            _paths();
+        IPegKeeperV3 pegKeeper = IPegKeeperV3(
+            factory.deployPegKeeper(
+                address(targetAmm),
+                address(yieldToken),
+                address(targetOracle),
+                address(yieldOracle),
+                expansion,
+                contraction
+            )
+        );
+
+        vm.prank(governance);
+        bytes memory result =
+            pegKeeper.execute(address(targetAsset), 0, abi.encodeWithSignature("decimals()"));
+        assertEq(abi.decode(result, (uint256)), 6);
     }
 
     function test_twoStepOwnershipTransfer() public {
@@ -366,9 +573,16 @@ contract PegKeeperV3FactoryTest is Test {
         assertEq(factory.pendingOwner(), address(0));
     }
 
-    function _deployBlueprint() internal returns (address) {
+    function _deployImplementation(address module) internal returns (address deployed) {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        return address(new PegKeeperV3Blueprint(creationCode));
+        bytes memory initCode = bytes.concat(creationCode, abi.encode(module));
+        assembly {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
     }
 
     function _deployFactory(

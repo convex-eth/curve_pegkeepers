@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 import {
     MockFactory,
     MockToken,
@@ -172,27 +173,18 @@ contract PegKeeperV3PolicyTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3Policy deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
-            address(factory),
-            address(targetAmm),
-            address(targetAsset),
-            address(backingAsset),
-            address(yieldToken),
-            MAX_DEPLOYED,
-            1
+        deployedPegKeeper = IPegKeeperV3Policy(
+            address(
+                PegKeeperV3TestDeployer.deploy(
+                    address(factory),
+                    address(targetAmm),
+                    address(targetAsset),
+                    address(backingAsset),
+                    address(yieldToken),
+                    MAX_DEPLOYED,
+                    1
+                )
+            )
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3Policy(deployed);
     }
 }

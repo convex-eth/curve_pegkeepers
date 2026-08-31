@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {MockPegKeeperFactory} from "./PegKeeperV3Foundation.t.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
@@ -39,7 +40,7 @@ contract PegKeeperV3DownstreamExpansionForkTest is Test {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
-    uint256 internal constant ALLOCATION = 1_000_000e18;
+    uint256 internal constant ALLOCATION = 2_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
 
     address internal governance = makeAddr("governance");
@@ -163,21 +164,10 @@ contract PegKeeperV3DownstreamExpansionForkTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 pegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         MockPegKeeperFactory pegKeeperFactory =
             new MockPegKeeperFactory(FACTORY, governance, emergencyAdmin, FEE_SPLITTER);
-        bytes memory constructorArgs =
-            abi.encode(address(pegKeeperFactory), USDT_POOL, USDT, USDS, SUSDS, ALLOCATION, 1);
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        pegKeeper = IPegKeeperV3(deployed);
+        pegKeeper = PegKeeperV3TestDeployer.deploy(
+            address(pegKeeperFactory), USDT_POOL, USDT, USDS, SUSDS, ALLOCATION, 1
+        );
     }
 }

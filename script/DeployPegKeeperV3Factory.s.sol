@@ -3,20 +3,12 @@ pragma solidity ^0.8.30;
 
 import {Script} from "forge-std/Script.sol";
 
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
-
-contract PegKeeperV3BlueprintDeployer {
-    constructor(bytes memory creationCode) {
-        bytes memory blueprintCode = bytes.concat(hex"fe7100", creationCode);
-        assembly {
-            return(add(blueprintCode, 0x20), mload(blueprintCode))
-        }
-    }
-}
+import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
 
 contract DeployPegKeeperV3Factory is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
-    uint256 internal constant BLUEPRINT_PREAMBLE = 0xfe7100;
 
     struct Config {
         address owner;
@@ -31,7 +23,7 @@ contract DeployPegKeeperV3Factory is Script {
         uint256 expansionMaxRouteLossBps;
     }
 
-    function run() external returns (address blueprint, address factory) {
+    function run() external returns (address implementation, address factory) {
         Config memory config = Config({
             owner: vm.envAddress("PKV3_DEPLOYMENT_FACTORY_OWNER"),
             controllerFactory: vm.envAddress("PKV3_CONTROLLER_FACTORY"),
@@ -46,13 +38,13 @@ contract DeployPegKeeperV3Factory is Script {
         });
 
         vm.startBroadcast();
-        (blueprint, factory) = deploy(config);
+        (implementation, factory) = deploy(config);
         vm.stopBroadcast();
     }
 
-    function deploy(Config memory config) public returns (address blueprint, address factory) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        blueprint = address(new PegKeeperV3BlueprintDeployer(creationCode));
+    function deploy(Config memory config) public returns (address implementation, address factory) {
+        address previewModule = address(new PegKeeperV3PreviewModule());
+        implementation = _deployImplementation(previewModule);
 
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
             IPegKeeperV3Factory.DeploymentDefaults({
@@ -65,22 +57,28 @@ contract DeployPegKeeperV3Factory is Script {
                 fallbackSettlementGasReserve: config.fallbackSettlementGasReserve,
                 expansionMaxRouteLossBps: config.expansionMaxRouteLossBps
             });
-        factory = _deployFactory(config.owner, config.controllerFactory, blueprint, defaults_);
-
-        _verifyDeployment(blueprint, IPegKeeperV3Factory(factory), config);
+        factory = _deployFactory(config.owner, config.controllerFactory, implementation, defaults_);
+        _verifyDeployment(implementation, previewModule, IPegKeeperV3Factory(factory), config);
     }
 
-    function _verifyDeployment(address blueprint, IPegKeeperV3Factory factory, Config memory config)
-        internal
-        view
-    {
-        require(blueprint.code.length <= EIP_170_RUNTIME_LIMIT, "blueprint runtime too large");
-        require(_blueprintPreamble(blueprint) == BLUEPRINT_PREAMBLE, "invalid blueprint preamble");
+    function _verifyDeployment(
+        address implementation,
+        address previewModule,
+        IPegKeeperV3Factory factory,
+        Config memory config
+    ) internal view {
+        require(implementation.code.length <= EIP_170_RUNTIME_LIMIT, "implementation too large");
+        require(previewModule.code.length > 0, "preview module missing");
+        require(IPegKeeperV3(implementation).initialized(), "implementation not locked");
+        require(
+            IPegKeeperV3(implementation).preview_module() == previewModule,
+            "preview module mismatch"
+        );
         require(factory.owner() == config.owner, "owner mismatch");
         require(
             factory.controllerFactory() == config.controllerFactory, "controller factory mismatch"
         );
-        require(factory.implementation() == blueprint, "implementation mismatch");
+        require(factory.implementation() == implementation, "implementation mismatch");
         require(factory.keeperCount() == 0, "initial keeper count");
 
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
@@ -109,6 +107,18 @@ contract DeployPegKeeperV3Factory is Script {
         );
     }
 
+    function _deployImplementation(address previewModule) internal returns (address deployed) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory initCode = bytes.concat(creationCode, abi.encode(previewModule));
+        assembly {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            if iszero(deployed) {
+                returndatacopy(0, 0, returndatasize())
+                revert(0, returndatasize())
+            }
+        }
+    }
+
     function _deployFactory(
         address initialOwner,
         address controllerFactory,
@@ -126,16 +136,5 @@ contract DeployPegKeeperV3Factory is Script {
                 revert(0, returndatasize())
             }
         }
-    }
-
-    function _blueprintPreamble(address blueprint) internal view returns (uint256 preamble) {
-        uint256 firstWord;
-        assembly {
-            let pointer := mload(0x40)
-            mstore(pointer, 0)
-            extcodecopy(blueprint, pointer, 0, 3)
-            firstWord := mload(pointer)
-        }
-        preamble = firstWord >> 232;
     }
 }

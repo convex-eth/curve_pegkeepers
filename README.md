@@ -1,4 +1,4 @@
-# Curve PegKeeper Experiments
+# Curve PegKeeper V3
 
 Foundry workspace for reproducing Curve's live crvUSD `PegKeeperV2`, testing protocol offboarding, and implementing an asymmetric V3 from an executable specification.
 
@@ -87,7 +87,9 @@ The current admin reported by `PegKeeperV3Factory.admin()` also has a separate `
 
 V3 does not require the target crvUSD AMM spot price to remain close to its EMA or pass a separate aggregate crvUSD oracle trigger. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. Exact amount bounds, protocol-calculated route minima, realized post-reward profitability, final backing checks, and exposure limits gate execution. After the target swap, V3 attempts the fixed downstream path in an isolated call. Success finishes in yield backing; failure rolls back only the downstream attempt and retains the target asset as `undeployedBacking`. The keeper cannot select the branch, route, minima, or recipient, and an implementation gas reserve prevents deliberate fallback through gas starvation.
 
-V3 treats governance-approved backing stablecoins as one-dollar assets for PegKeeper accounting. The fixed final yield token must expose the read-only ERC-4626 accounting methods `asset()`, `convertToAssets()`, and `convertToShares()`, with `asset() == backingAsset`; it need not accept deposits or withdrawals itself. V3 values its explicitly accounted yield-token units through `convertToAssets()` and rounds trusted value down. Accounted units increase and decrease only through measured protocol routes or transfers; unsolicited tokens do not become backing. Raw token count is never assumed to equal backing assets, and acquisition/unwind behavior comes from typed route steps rather than an accounting adapter. This permits an sUSDS route ending in an ERC-4626 deposit and an sfrxUSD route ending in a Curve swap. The target AMM spot is not used to price the final position. This matches the Factory trust model: the Factory mints an allocation to an approved PegKeeper but does not independently inspect or mark to market what that PegKeeper acquires. A real depeg or redemption failure is therefore governance collateral risk, handled initially through pauses, slow wind-down, and the owner execute escape hatch—not something the nominal profit check can detect. A future optional guard could compare USDT against independent USDT/USD, USDT/USDC, or USDT/USDS references and separately check yield-underlying and redemption health. It should not use crvUSD as the backing-quality reference or block risk-reducing exits.
+Every keeper has mandatory target and downstream-backing oracle adapters. `address(0)` never disables a check. Before increasing exposure, V3 requires the target adapter to return at least `0.9997e18`; failure or a lower value reverts. A healthy target with an unhealthy downstream adapter still allows the peg-critical target-AMM trade, but retains the measured target asset as `undeployedBacking` instead of entering the yield route. Oracle credit is capped at par with `min(price, 1e18)`. Contraction, wind-down, and owner recovery remain available during oracle failures.
+
+The launch Curve adapters use three StableSwap-NG EMAs across five orientations. USDC and USDT are checked in opposite orientations of the USDC/USDT pool. The frxUSD target check uses frxUSD/sUSDS, while the frxUSD keeper's downstream `sfrxUSD` check uses the deeper sfrxUSD/frxUSD pool. The shared sUSDS downstream check uses the reverse sUSDS/frxUSD orientation of the frxUSD/sUSDS pool. The keeper converts held yield shares to backing assets with `convertToAssets()` before applying the capped downstream health multiplier; favorable oracle values are capped at par, so the share-rate relationship cannot over-credit backing. Typed-route quote floors, measured output, and route-loss checks remain separate from the oracle gates.
 
 `trustedBackingValue` is normalized accounted `targetAsset` plus the current normalized `backingAsset` value represented by `accountedYieldTokenUnits`; it uses current `convertToAssets()` value rather than historical acquisition cost. For the USDT/sUSDS example, those components are undeployed USDT and the USDS-equivalent value of accounted sUSDS units. Yield appreciation and retained execution profit are not split into separate onchain buckets. Both contribute to `protocolSurplus = max(trustedBackingValue - deployedCrvUsd, 0)`. In direct buyback, deployed exposure falls by crvUSD received while trusted backing falls only by the trusted value of yield tokens paid, so surplus increases by `crvUsdReceived - trustedYieldValuePaid`. Direct buyback leaves `undeployedBacking` untouched; both that target inventory and remaining yield-token units continue supporting principal until `deployedCrvUsd` reaches zero, and only combined backing above remaining deployed exposure is profit. `deployedCrvUsd` means all accounted crvUSD externalized from V3 and requiring that backing, not only crvUSD sold through an AMM. Permissionless `claimSurplus(maxCrvUsdAmount)` transfers idle crvUSD directly to the current `PegKeeperV3Factory.fee_receiver()` and increases `deployedCrvUsd` by the exact amount transferred. Trusted backing stays invested while surplus falls by the same amount through the increased exposure. The claim cannot exceed protocol surplus, eligible idle inventory, Factory allocation, or `maxDeployedCrvUsd`, and it is disabled whenever expansion is paused.
 
@@ -101,7 +103,7 @@ Future target-to-yield fees are not deducted hypothetically from fallback keeper
 
 Existing undeployed target-asset backing is not combined with a newly rewarded expansion or automatically flushed afterward. It is handled only through a separate explicit `deployUndeployedBacking(amount)` call, so old assets cannot contaminate the new expansion's profit attribution or make a healthy peg action fail from excessive combined size.
 
-Keeper execution remains fully open. Rewarded keeper functions accept an exact amount but no caller-selected route or minimum-output parameters. The contract validates available inventory, backing, total deployed capacity, every path minimum, and the selected branch's realized profit. There is no separate per-call action-size maximum or rolling-flow throttle, and V3 does not calculate or probe for a maximum profitable amount. Percentage-only compensation is split-invariant before token rounding, changing AMM execution, or a changing solvency-recovery basis: dividing one realized gross-profit opportunity across calls does not increase the aggregate configured share. `minExpansionAmount` blocks true dust.
+Keeper execution remains fully open. Rewarded keeper functions accept an exact amount but no caller-selected route or minimum-output parameters. Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, consumes one keeper-local leaky bucket. Maximum pressure is `5%` of `maxDeployedCrvUsd` and fully refills linearly over `300` seconds. Calls, callers, oracle updates, policy updates, and ceiling changes share the same pressure; splitting calls cannot bypass it, contraction does not refund it, and reverted transactions consume nothing. Percentage-only compensation remains split-invariant before token rounding and changing AMM execution. `minExpansionAmount` blocks true dust.
 
 Timing is intentionally asymmetric. Expansion has no cooldown and initially requires a `0.1 bps` realized margin after route costs and keeper compensation. The unsigned entry parameter cannot authorize a local loss, and every expansion must preserve `trustedBackingValue >= deployedCrvUsd`. Mature contraction requires `10 bps`; early contraction requires `50 bps`, corresponding roughly to `0.999` and `0.995` crvUSD before accounting for costs and reward. The higher early margin makes realized distress—not a manipulable spot trigger—the override. The timer gates contraction rather than token destruction: once crvUSD is reacquired it is already out of circulation, so delaying its later Factory burn would not prevent market churn.
 
@@ -119,16 +121,17 @@ The production implementation is complete in independently reviewed Vyper `0.3.1
 
 ## V3 deployment factory
 
-`PegKeeperV3Factory` is implemented in pinned Vyper `0.3.10`. It is an owner-gated deployment registry, not an upgrade proxy. Its implementation pointer must reference an EIP-5202 blueprint containing the Vyper creation bytecode. Updating that pointer changes only future deployments; each deployed PegKeeper contains its own constructor-specialized runtime and cannot be upgraded through the factory.
+`PegKeeperV3Factory` is implemented in pinned Vyper `0.3.10`. It is an owner-gated deployment registry that creates non-upgradeable EIP-1167 minimal proxies. The implementation address is embedded directly in each 45-byte proxy runtime: there is no proxy admin, implementation setter, or mutable implementation slot. The implementation itself is locked against operational initialization.
 
-The factory stores the shared PegKeeper admin, distinct emergency admin, fee receiver, and defaults for maximum exposure, target-AMM buffer, downstream gas bounds, and expansion route-loss limit. Every V3 reads `admin()`, `emergency_admin()`, and `fee_receiver()` dynamically from this factory; V3 has no local role or receiver setters. A deployment call supplies only the target AMM, final yield token, expansion route, and contraction route. The factory derives the target asset from the AMM's crvUSD pair and the backing asset from `yieldToken.asset()`, assigns the next one-based index, deploys the blueprint, and installs both routes and execution defaults atomically. The result starts fully paused and exposes `keeper_index()` plus `name()` in the form `Pegkeeper 1`, `Pegkeeper 2`, and so on. Updating shared roles or the fee receiver applies immediately to every factory-created V3; changing the blueprint or deployment-only defaults affects only later deployments.
+The factory stores the shared PegKeeper admin, distinct emergency admin, fee receiver, immutable implementation, and deployment defaults. A deployment supplies target AMM, final yield token, mandatory target/yield oracle adapters, expansion route, and contraction route. The factory performs exactly one `CREATE` per keeper, atomically initializes the proxy, installs routes/defaults, and records it. A failed initialization reverts creation and nonce consumption. Every proxy owns its own endpoint configuration, accounting, routes, pause state, oracle addresses, velocity pressure, and timestamps; only executable code is shared. The result starts fully paused and exposes `keeper_index()` plus `name()` as `Pegkeeper 1`, `Pegkeeper 2`, and so on.
 
 ## V3 release package
 
 V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
 
-- [`script/DeployPegKeeperV3Factory.s.sol`](script/DeployPegKeeperV3Factory.s.sol): environment-explicit EIP-5202 blueprint and owner-gated deployment-factory creation with fail-closed verification;
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): low-level implementation deployment helper used by deterministic deployment tests;
+- [`script/DeployPegKeeperV3Factory.s.sol`](script/DeployPegKeeperV3Factory.s.sol): stateless preview module, locked implementation, and owner-gated EIP-1167 deployment-factory creation with fail-closed verification;
+- [`script/DeployPegKeeperV3Oracles.s.sol`](script/DeployPegKeeperV3Oracles.s.sol): orientation-checked Curve StableSwap-NG adapter deployment;
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): low-level locked implementation and preview-module deployment helper;
 - [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting current-mainnet simulation of the complete USDT → DAI → USDS → sUSDS expansion;
 - [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
 - [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
@@ -141,11 +144,11 @@ The release manifest records the latest non-broadcast mainnet canary. No deploym
 ## Toolchain
 
 - Foundry with native Vyper compilation support (verified with Forge `1.7.1`)
-- Solidity `0.8.30`
+- Solidity `0.8.35`
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. `forge build --sizes` reports the `22,606`-byte compiler runtime template. Vyper appends a `256`-byte constructor-specialized immutable data section, so the authoritative deployed runtime measured after actual construction is `22,862` bytes, leaving `1,714` bytes below EIP-170. Full initcode, including the seven static constructor arguments, is `24,370` bytes, leaving `24,782` bytes below EIP-3860. The EIP-5202 blueprint runtime is `24,149` bytes, leaving `427` bytes below EIP-170. `PegKeeperV3RuntimeSizeTest`, `PegKeeperV3DeploymentTest`, `PegKeeperV3FactoryDeploymentTest`, and the release-manifest verifier enforce these bounds.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `23,085` bytes; its deployed runtime with the immutable preview-module address is `23,117` bytes, leaving `1,459` bytes below EIP-170. The stateless, keeper-identity-bound Solidity preview module is `8,201` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -261,7 +264,7 @@ Verifies the atomic governance policy surface, margin ordering and ppm bounds, k
 
 ### `PegKeeperV3RuntimeSizeTest`
 
-Deploys the exact creation artifact with all seven static constructor arguments, checks the full initcode against EIP-3860, then checks the constructor-specialized deployed runtime against EIP-170. It also pins both release sizes to detect artifact drift.
+Deploys the locked implementation with its immutable preview-module address, checks full initcode and actual runtime limits, then creates an exact 55-byte EIP-1167 initcode payload and verifies its 45-byte runtime embeds the implementation address.
 
 ### `PegKeeperV3DeploymentTest`
 
@@ -269,11 +272,11 @@ Runs the direct deployment helper against deterministic endpoints and verifies e
 
 ### `PegKeeperV3FactoryTest`
 
-Deploys V3 through a real EIP-5202 blueprint and verifies owner-only creation, target/backing derivation, one-based names, route and execution-default installation, dynamic shared role and fee-recipient resolution, fully paused startup, atomic rollback on invalid routes, registry state, two-step factory ownership, blueprint validation, and future-only implementation/capacity defaults and immediate shared-role propagation.
+Deploys V3 through the real minimal-proxy factory and verifies owner-only creation, immutable implementation binding, target/backing derivation, one-based names, mandatory oracles, route and execution-default installation, dynamic shared role and fee-recipient resolution, fully paused startup, exact proxy runtime, atomic rollback and CREATE nonce preservation, registry state, and two-step factory ownership.
 
 ### `PegKeeperV3FactoryDeploymentTest`
 
-Runs the canonical blueprint-and-factory deployment helper and verifies the blueprint preamble and EIP-170 bound, factory owner, ControllerFactory endpoint, implementation pointer, complete deployment defaults, and zero initial keeper count.
+Runs the canonical implementation, preview-module, and factory deployment helper and verifies implementation lock, preview binding, EIP-170/EIP-3860 bounds, immutable factory implementation, owner, ControllerFactory endpoint, complete deployment defaults, and zero initial keeper count.
 
 ### `PegKeeperV3ExpansionForkTest`
 

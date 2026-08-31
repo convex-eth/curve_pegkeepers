@@ -4,7 +4,13 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
-import {ExpansionFactory, ExpansionPool, ExpansionToken} from "./PegKeeperV3Expansion.t.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
+import {
+    ExpansionFactory,
+    ExpansionOracle,
+    ExpansionPool,
+    ExpansionToken
+} from "./PegKeeperV3Expansion.t.sol";
 import {
     ExecutionDaiUsds,
     ExecutionRoutePool,
@@ -95,6 +101,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
+    uint256 internal constant MIN_ORACLE_PRICE = 999_700_000_000_000_000;
 
     address internal governance = makeAddr("governance");
     address internal emergencyAdmin = makeAddr("emergencyAdmin");
@@ -111,6 +118,8 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
     ExecutionRoutePool internal targetToDaiPool;
     ExecutionRoutePool internal backingToCrvUsdPool;
     ExecutionDaiUsds internal daiUsds;
+    ExpansionOracle internal targetOracle;
+    ExpansionOracle internal yieldOracle;
     IPegKeeperV3 internal pegKeeper;
 
     function setUp() public {
@@ -124,6 +133,8 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         targetToDaiPool = new ExecutionRoutePool(targetAsset, dai);
         backingToCrvUsdPool = new ExecutionRoutePool(backingAsset, crvUsd);
         daiUsds = new ExecutionDaiUsds(dai, backingAsset);
+        targetOracle = new ExpansionOracle();
+        yieldOracle = new ExpansionOracle();
         pegKeeper = _deploy();
 
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
@@ -133,6 +144,39 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
         vm.stopPrank();
+    }
+
+    function test_yieldOracleDepegFallsBackToHealthyTarget() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        yieldOracle.setPrice(MIN_ORACLE_PRICE - 1);
+
+        (uint256 targetOut, uint256 backingOut,,,, bool expectedToDeploy) =
+            pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertGt(targetOut, 0);
+        assertEq(backingOut, 0);
+        assertFalse(expectedToDeploy);
+
+        vm.prank(keeper);
+        (, uint256 retained, uint256 yieldReceived,, bool deployedToYield) =
+            pegKeeper.expand(MIN_EXPANSION);
+        assertGt(retained, 0);
+        assertEq(yieldReceived, 0);
+        assertFalse(deployedToYield);
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+    }
+
+    function test_yieldOracleFailureFallsBackToHealthyTarget() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        yieldOracle.setShouldRevert(true);
+
+        (,,,,, bool expectedToDeploy) = pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertFalse(expectedToDeploy);
+
+        vm.prank(keeper);
+        (,, uint256 yieldReceived,, bool deployedToYield) = pegKeeper.expand(MIN_EXPANSION);
+        assertEq(yieldReceived, 0);
+        assertFalse(deployedToYield);
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
     }
 
     function test_previewExpansionPredictsConfiguredDownstreamRoute() public {
@@ -160,6 +204,21 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(keeperReward, expectedReward);
         assertEq(yieldOut, expectedYield);
         assertTrue(expectedToDeploy);
+    }
+
+    function test_previewExpansionRejectsGloballyInsolventPostActionBacking() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        yieldToken.setRates(1_000_000, 1_000_000, 900_000);
+
+        vm.expectRevert();
+        pegKeeper.previewExpansion(MIN_EXPANSION);
+
+        vm.expectRevert();
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
     }
 
     function test_previewExpansionIsAdvisoryWhenRouteQuoteChanges() public {
@@ -514,26 +573,16 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
             address(factory),
             address(targetPool),
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
             MAX_DEPLOYED,
-            1
+            1,
+            address(targetOracle),
+            address(yieldOracle)
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
     }
 }

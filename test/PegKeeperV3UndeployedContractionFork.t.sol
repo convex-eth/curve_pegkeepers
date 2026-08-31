@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {MockPegKeeperFactory} from "./PegKeeperV3Foundation.t.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
@@ -23,7 +24,7 @@ contract PegKeeperV3UndeployedContractionForkTest is Test {
     address internal constant SFRXUSD = 0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6;
     address internal constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
 
-    uint256 internal constant ALLOCATION = 1_000_000e18;
+    uint256 internal constant ALLOCATION = 2_000_100e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
     uint256 internal constant TARGET_AMOUNT = 50_000e6;
     uint256 internal constant TARGET_MULTIPLIER = 1e12;
@@ -86,22 +87,10 @@ contract PegKeeperV3UndeployedContractionForkTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         MockPegKeeperFactory pegKeeperFactory =
             new MockPegKeeperFactory(FACTORY, governance, emergencyAdmin, FEE_SPLITTER);
-        bytes memory constructorArgs =
-            abi.encode(address(pegKeeperFactory), USDT_POOL, USDT, FRXUSD, SFRXUSD, ALLOCATION, 1);
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
+            address(pegKeeperFactory), USDT_POOL, USDT, FRXUSD, SFRXUSD, ALLOCATION, 1
+        );
     }
 }

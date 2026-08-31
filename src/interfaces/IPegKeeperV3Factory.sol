@@ -23,9 +23,6 @@ interface IPegKeeperV3Factory {
     error InvalidTargetAmm();
     error DeploymentFailed();
 
-    event ImplementationUpdated(
-        address indexed oldImplementation, address indexed newImplementation
-    );
     event DefaultsUpdated(
         address indexed admin,
         address indexed emergencyAdmin,
@@ -62,11 +59,12 @@ interface IPegKeeperV3Factory {
     function deployPegKeeper(
         address targetAmm,
         address yieldToken,
+        address targetOracle,
+        address yieldOracle,
         IPegKeeperV3.RouteStep[] calldata expansionSteps,
         IPegKeeperV3.RouteStep[] calldata contractionSteps
     ) external returns (address pegKeeper);
 
-    function setImplementation(address newImplementation) external;
     function setDefaults(DeploymentDefaults calldata newDefaults) external;
     function transferOwnership(address newOwner) external;
     function acceptOwnership() external;

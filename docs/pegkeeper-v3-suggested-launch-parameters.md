@@ -7,7 +7,7 @@ Implementation:
 - Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
 - Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
 
-The proposal expects an audited, fresh deployment factory in `PKV3_FACTORY`. It deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
+The proposal expects an audited, fresh EIP-1167 deployment factory in `PKV3_FACTORY` and five predeployed, orientation-checked Curve EMA adapters. It deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
 
 ## Initial launch scope
 
@@ -61,6 +61,41 @@ The keeper reward remains:
 keeperReward = floor(realizedProfit * 3,000 / 10,000)
 ```
 
+## Mandatory oracle and velocity configuration
+
+Every deployment requires nonzero target and downstream adapters. Both launch floors are `0.9997e18`; favorable prices receive no more than par credit. Governance may replace code-bearing adapters and set nonzero floors up to par without resetting velocity pressure. Target failure blocks expansion. Downstream failure retains the acquired target asset rather than entering the yield route. Contraction and recovery remain available.
+
+| Keeper | Target adapter | Downstream backing adapter |
+|---|---|---|
+| frxUSD → sfrxUSD | frxUSD/sUSDS EMA, frxUSD orientation | sfrxUSD/frxUSD EMA, sfrxUSD orientation |
+| USDC → sUSDS | USDC/USDT EMA, USDC orientation | rate-normalized frxUSD/sUSDS EMA, sUSDS/frxUSD orientation |
+| USDT → sUSDS | USDC/USDT EMA, USDT orientation | rate-normalized frxUSD/sUSDS EMA, sUSDS/frxUSD orientation |
+
+Launch oracle pools:
+
+| Pool | Address | Current depth snapshot | EMA window |
+|---|---|---:|---:|
+| USDC/USDT | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | approximately `$5.44m` | `866s` |
+| frxUSD/sUSDS | `0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7` | approximately `$1.86m` | `866s` |
+| sfrxUSD/frxUSD | `0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978` | approximately `$11.86m` | verify before launch |
+
+The frxUSD/sUSDS pool applies its sUSDS rate provider. Its EMA is therefore an underlying economic comparison, not a raw share-count quote. The frxUSD keeper instead checks downstream `sfrxUSD` health against the materially deeper sfrxUSD/frxUSD pool. Each keeper converts held shares to underlying assets once before applying the capped adapter multiplier; favorable values above par cannot over-credit backing. Route execution remains protected separately by quote floors, measured output, and route-loss limits.
+
+Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
+
+```text
+maxBurst = 5% of maxDeployedCrvUsd
+fullRefillPeriod = 300 seconds
+```
+
+| Keeper | Max burst | Linear refill rate |
+|---|---:|---:|
+| frxUSD | `125,000 crvUSD` | `25,000 crvUSD/minute` |
+| USDC | `125,000 crvUSD` | `25,000 crvUSD/minute` |
+| USDT | `250,000 crvUSD` | `50,000 crvUSD/minute` |
+
+Pressure is shared across callers and calls. Splitting cannot bypass it; contraction does not refund it; configuration changes do not reset it; reverted transactions consume nothing.
+
 ## Address registry
 
 ### Tokens
@@ -89,6 +124,8 @@ keeperReward = floor(realizedProfit * 3,000 / 10,000)
 | sUSDS vault | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` | ERC-4626 deposit / redeem |
 | Frax USDC minter | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC to frxUSD mint only |
 | frxUSD/sUSDS pool | `0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7` | `frxUSD[0], sUSDS[1]` |
+| sfrxUSD/frxUSD pool | `0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978` | `sfrxUSD[0], frxUSD[1]` |
+| USDC/USDT oracle pool | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | `USDC[0], USDT[1]` |
 
 ## Target-AMM configuration
 
@@ -204,7 +241,7 @@ USDT → DAI → USDS → sUSDS
 
 Every keeper is deployed fully paused.
 
-1. Verify the blueprint hash, factory, ControllerFactory, aggregate monetary-policy membership, target AMM, fixed endpoints, path hashes, role getters, fee receiver, local capacity, and ControllerFactory debt ceiling.
+1. Verify the implementation core hash, preview-module hash, 45-byte proxy runtime and embedded target, factory, ControllerFactory, oracle pool/orientation, aggregate monetary-policy membership, target AMM, fixed endpoints, path hashes, role getters, fee receiver, local capacity, zero launch pressure, and ControllerFactory debt ceiling.
 2. Run a fork canary for each exact keeper configuration and both route directions.
 3. While global execution remains paused, unpause backing deployment, direct buyback, undeployed-backing contraction, and yield contraction.
 4. Unpause global execution.

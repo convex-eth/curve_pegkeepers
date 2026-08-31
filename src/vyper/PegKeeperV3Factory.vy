@@ -2,8 +2,8 @@
 """
 @title PegKeeperV3Factory
 @license MIT
-@notice Owner-gated deployment registry for immutable PegKeeperV3 instances.
-@dev The implementation is an EIP-5202 creation-code blueprint used only by future deployments.
+@notice Owner-gated deployment registry for non-upgradeable PegKeeperV3 minimal proxies.
+@dev Each proxy pins the implementation in its 45-byte EIP-1167 runtime and is initialized atomically.
 """
 
 
@@ -30,6 +30,18 @@ struct RouteStep:
 
 
 interface PegKeeperV3:
+    def initialize(
+        _target_amm: address,
+        _target_asset: address,
+        _backing_asset: address,
+        _yield_token: address,
+        _max_deployed_crvusd: uint256,
+        _keeper_index: uint256,
+        _target_oracle: address,
+        _yield_oracle: address,
+    ): nonpayable
+    def initialized() -> bool: view
+    def preview_module() -> address: view
     def setPaths(
         _expansion_steps: DynArray[RouteStep, 16],
         _expansion_max_route_loss_bps: uint256,
@@ -52,20 +64,6 @@ struct DeploymentDefaults:
     fallbackSettlementGasReserve: uint256
     expansionMaxRouteLossBps: uint256
 
-
-struct BlueprintDeployment:
-    blueprint: address
-    targetAmm: address
-    targetAsset: address
-    backingAsset: address
-    yieldToken: address
-    maxDeployedCrvUsd: uint256
-    index: uint256
-
-
-event ImplementationUpdated:
-    oldImplementation: indexed(address)
-    newImplementation: indexed(address)
 
 
 event DefaultsUpdated:
@@ -98,18 +96,17 @@ event OwnershipTransferred:
 
 
 BPS: constant(uint256) = 10_000
-BLUEPRINT_CODE_OFFSET: constant(uint256) = 3
-BLUEPRINT_DEPLOY_CALLDATA_BYTES: constant(uint256) = 228
-BLUEPRINT_DEPLOY_ARGS_BYTES: constant(uint256) = 224
-BLUEPRINT_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id(
-    "__deployFromBlueprint(address,address,address,address,address,uint256,uint256)"
+CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
+CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
+INITIALIZE_SELECTOR: constant(Bytes[4]) = method_id(
+    "initialize(address,address,address,address,uint256,uint256,address,address)"
 )
 
 CONTROLLER_FACTORY: immutable(address)
+IMPLEMENTATION: immutable(address)
 
 owner: public(address)
 pendingOwner: public(address)
-implementation: public(address)
 _defaults: DeploymentDefaults
 
 keeperCount: public(uint256)
@@ -129,8 +126,10 @@ def __init__(
         raw_revert(method_id("InvalidOwner()"))
 
     CONTROLLER_FACTORY = _controllerFactory
+    if not self._is_locked_implementation(_implementation):
+        raw_revert(method_id("InvalidImplementation()"))
+    IMPLEMENTATION = _implementation
     self.owner = _initialOwner
-    self._set_implementation(_implementation)
     self._set_defaults(_defaults)
 
     log OwnershipTransferred(empty(address), _initialOwner)
@@ -140,6 +139,12 @@ def __init__(
 @pure
 def controllerFactory() -> address:
     return CONTROLLER_FACTORY
+
+
+@external
+@pure
+def implementation() -> address:
+    return IMPLEMENTATION
 
 
 @external
@@ -170,6 +175,8 @@ def fee_receiver() -> address:
 def deployPegKeeper(
     _targetAmm: address,
     _yieldToken: address,
+    _targetOracle: address,
+    _yieldOracle: address,
     _expansionSteps: DynArray[RouteStep, 16],
     _contractionSteps: DynArray[RouteStep, 16],
 ) -> address:
@@ -180,16 +187,18 @@ def deployPegKeeper(
     target_asset, backing_asset = self._resolve_assets(_targetAmm, _yieldToken)
 
     index: uint256 = self.keeperCount + 1
-    blueprint: address = self.implementation
+    implementation: address = IMPLEMENTATION
     config: DeploymentDefaults = self._defaults
     peg_keeper: address = self._deploy_keeper(
-        blueprint,
+        implementation,
         _targetAmm,
         target_asset,
         backing_asset,
         _yieldToken,
         config.maxDeployedCrvUsd,
         index,
+        _targetOracle,
+        _yieldOracle,
     )
 
     PegKeeperV3(peg_keeper).setPaths(
@@ -206,16 +215,10 @@ def deployPegKeeper(
     self.keeperCount = index
     self.keeperAt[index] = peg_keeper
     self.isPegKeeper[peg_keeper] = True
-    self.implementationOf[peg_keeper] = blueprint
+    self.implementationOf[peg_keeper] = implementation
 
-    log PegKeeperDeployed(index, peg_keeper, blueprint, _targetAmm, _yieldToken)
+    log PegKeeperDeployed(index, peg_keeper, implementation, _targetAmm, _yieldToken)
     return peg_keeper
-
-
-@external
-def setImplementation(_newImplementation: address):
-    self._check_owner()
-    self._set_implementation(_newImplementation)
 
 
 @external
@@ -247,29 +250,14 @@ def acceptOwnership():
 
 @external
 def __default__() -> address:
-    # Vyper's checked create_from_blueprint reverts before returning zero. Keep that
-    # deployment attempt inside a self-call so deployPegKeeper can translate any
-    # CREATE failure into the legacy DeploymentFailed() custom-error selector.
-    if msg.sender != self or len(msg.data) != BLUEPRINT_DEPLOY_CALLDATA_BYTES:
+    # Keep checked proxy creation inside a self-call so any CREATE failure can be
+    # translated into the legacy DeploymentFailed() selector.
+    if msg.sender != self or len(msg.data) != CLONE_DEPLOY_CALLDATA_BYTES:
         raw_revert(b"")
-    if slice(msg.data, 0, 4) != BLUEPRINT_DEPLOY_SELECTOR:
+    if slice(msg.data, 0, 4) != CLONE_DEPLOY_SELECTOR:
         raw_revert(b"")
-
-    args: BlueprintDeployment = _abi_decode(
-        slice(msg.data, 4, BLUEPRINT_DEPLOY_ARGS_BYTES),
-        BlueprintDeployment,
-    )
-    return create_from_blueprint(
-        args.blueprint,
-        self,
-        args.targetAmm,
-        args.targetAsset,
-        args.backingAsset,
-        args.yieldToken,
-        args.maxDeployedCrvUsd,
-        args.index,
-        code_offset=BLUEPRINT_CODE_OFFSET,
-    )
+    implementation: address = _abi_decode(slice(msg.data, 4, 32), address)
+    return create_minimal_proxy_to(implementation)
 
 
 @internal
@@ -299,45 +287,46 @@ def _resolve_assets(_targetAmm: address, _yieldToken: address) -> (address, addr
 
 @internal
 def _deploy_keeper(
-    _blueprint: address,
+    _implementation: address,
     _targetAmm: address,
     _targetAsset: address,
     _backingAsset: address,
     _yieldToken: address,
     _maxDeployedCrvUsd: uint256,
     _index: uint256,
+    _targetOracle: address,
+    _yieldOracle: address,
 ) -> address:
     succeeded: bool = False
     response: Bytes[32] = empty(Bytes[32])
     succeeded, response = raw_call(
         self,
-        _abi_encode(
-            _blueprint,
-            _targetAmm,
-            _targetAsset,
-            _backingAsset,
-            _yieldToken,
-            _maxDeployedCrvUsd,
-            _index,
-            method_id=BLUEPRINT_DEPLOY_SELECTOR,
-        ),
+        _abi_encode(_implementation, method_id=CLONE_DEPLOY_SELECTOR),
         max_outsize=32,
         revert_on_failure=False,
     )
     if not succeeded or len(response) != 32:
         raw_revert(method_id("DeploymentFailed()"))
 
-    return _abi_decode(response, address)
-
-
-@internal
-def _set_implementation(_newImplementation: address):
-    if not self._is_blueprint(_newImplementation):
-        raw_revert(method_id("InvalidImplementation()"))
-
-    old_implementation: address = self.implementation
-    self.implementation = _newImplementation
-    log ImplementationUpdated(old_implementation, _newImplementation)
+    peg_keeper: address = _abi_decode(response, address)
+    initialized: bool = raw_call(
+        peg_keeper,
+        _abi_encode(
+            _targetAmm,
+            _targetAsset,
+            _backingAsset,
+            _yieldToken,
+            _maxDeployedCrvUsd,
+            _index,
+            _targetOracle,
+            _yieldOracle,
+            method_id=INITIALIZE_SELECTOR,
+        ),
+        revert_on_failure=False,
+    )
+    if not initialized:
+        raw_revert(method_id("DeploymentFailed()"))
+    return peg_keeper
 
 
 @internal
@@ -372,8 +361,28 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
 
 @internal
 @view
-def _is_blueprint(_candidate: address) -> bool:
-    if _candidate.codesize <= BLUEPRINT_CODE_OFFSET:
+def _is_locked_implementation(_candidate: address) -> bool:
+    if _candidate.codesize == 0:
         return False
-    preamble: Bytes[3] = slice(_candidate.code, 0, BLUEPRINT_CODE_OFFSET)
-    return keccak256(preamble) == keccak256(b"\xfe\x71\x00")
+    ok: bool = False
+    response: Bytes[32] = empty(Bytes[32])
+    ok, response = raw_call(
+        _candidate,
+        method_id("initialized()"),
+        max_outsize=32,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not ok or len(response) != 32 or not _abi_decode(response, bool):
+        return False
+    ok, response = raw_call(
+        _candidate,
+        method_id("preview_module()"),
+        max_outsize=32,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not ok or len(response) != 32:
+        return False
+    module: address = _abi_decode(response, address)
+    return module != empty(address) and module.codesize > 0

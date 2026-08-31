@@ -4,6 +4,43 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
+
+interface IPegKeeperV3ExpansionSafety {
+    function target_oracle() external view returns (address);
+    function yield_oracle() external view returns (address);
+    function min_target_oracle_price() external view returns (uint256);
+    function min_yield_oracle_price() external view returns (uint256);
+    function max_expansion_burst_bps() external view returns (uint256);
+    function expansion_refill_period() external view returns (uint256);
+    function expansion_pressure() external view returns (uint256);
+    function available_expansion_velocity() external view returns (uint256);
+    function set_oracles(
+        address targetOracle,
+        address yieldOracle,
+        uint256 minTargetPrice,
+        uint256 minYieldPrice
+    ) external;
+}
+
+contract ExpansionOracle {
+    uint256 internal _price = 1e18;
+    bool public shouldRevert;
+
+    function setPrice(uint256 price_) external {
+        _price = price_;
+    }
+
+    function setShouldRevert(bool shouldRevert_) external {
+        shouldRevert = shouldRevert_;
+    }
+
+    function price() external view returns (uint256) {
+        require(!shouldRevert, "oracle failure");
+        return _price;
+    }
+}
 
 contract ExpansionToken {
     uint8 public immutable decimals;
@@ -147,6 +184,9 @@ contract PegKeeperV3ExpansionTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant MIN_EXPANSION = 10_000e18;
     uint256 internal constant TARGET_MULTIPLIER = 1e12;
+    uint256 internal constant MIN_ORACLE_PRICE = 999_700_000_000_000_000;
+    uint256 internal constant MAX_BURST_BPS = 500;
+    uint256 internal constant REFILL_PERIOD = 5 minutes;
 
     address internal governance = makeAddr("governance");
     address internal emergencyAdmin = makeAddr("emergencyAdmin");
@@ -159,6 +199,8 @@ contract PegKeeperV3ExpansionTest is Test {
     ExpansionYieldToken internal yieldToken;
     ExpansionFactory internal factory;
     ExpansionPool internal pool;
+    ExpansionOracle internal targetOracle;
+    ExpansionOracle internal yieldOracle;
     IPegKeeperV3 internal pegKeeper;
 
     function setUp() public {
@@ -168,8 +210,203 @@ contract PegKeeperV3ExpansionTest is Test {
         yieldToken = new ExpansionYieldToken(address(backingAsset));
         factory = new ExpansionFactory(address(crvUsd), governance, emergencyAdmin, feeReceiver);
         pool = new ExpansionPool(crvUsd, targetAsset);
+        targetOracle = new ExpansionOracle();
+        yieldOracle = new ExpansionOracle();
         pegKeeper = _deploy();
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
+    }
+
+    function test_constructorRequiresBothOracleAdapters() public {
+        vm.expectRevert();
+        this.deployWithOracles(address(0), address(yieldOracle));
+        vm.expectRevert();
+        this.deployWithOracles(address(targetOracle), address(0));
+    }
+
+    function test_initializationStoresOracleAndVelocityParameters() public view {
+        IPegKeeperV3ExpansionSafety safety = IPegKeeperV3ExpansionSafety(address(pegKeeper));
+        assertEq(safety.target_oracle(), address(targetOracle));
+        assertEq(safety.yield_oracle(), address(yieldOracle));
+        assertEq(safety.min_target_oracle_price(), MIN_ORACLE_PRICE);
+        assertEq(safety.min_yield_oracle_price(), MIN_ORACLE_PRICE);
+        assertEq(safety.max_expansion_burst_bps(), MAX_BURST_BPS);
+        assertEq(safety.expansion_refill_period(), REFILL_PERIOD);
+    }
+
+    function test_governanceUpdatesOraclePolicyWithoutResettingPressure() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        uint256 pressureBefore =
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure();
+
+        ExpansionOracle nextTarget = new ExpansionOracle();
+        ExpansionOracle nextYield = new ExpansionOracle();
+        vm.prank(governance);
+        IPegKeeperV3ExpansionSafety(address(pegKeeper))
+            .set_oracles(
+                address(nextTarget),
+                address(nextYield),
+                999_600_000_000_000_000,
+                999_500_000_000_000_000
+            );
+
+        IPegKeeperV3ExpansionSafety safety = IPegKeeperV3ExpansionSafety(address(pegKeeper));
+        assertEq(safety.target_oracle(), address(nextTarget));
+        assertEq(safety.yield_oracle(), address(nextYield));
+        assertEq(safety.min_target_oracle_price(), 999_600_000_000_000_000);
+        assertEq(safety.min_yield_oracle_price(), 999_500_000_000_000_000);
+        assertEq(safety.expansion_pressure(), pressureBefore);
+    }
+
+    function test_oraclePolicyUpdateRequiresGovernanceAndValidConfiguration() public {
+        ExpansionOracle nextOracle = new ExpansionOracle();
+        IPegKeeperV3ExpansionSafety safety = IPegKeeperV3ExpansionSafety(address(pegKeeper));
+
+        vm.expectRevert();
+        safety.set_oracles(
+            address(nextOracle), address(nextOracle), MIN_ORACLE_PRICE, MIN_ORACLE_PRICE
+        );
+
+        vm.startPrank(governance);
+        vm.expectRevert();
+        safety.set_oracles(address(0), address(nextOracle), MIN_ORACLE_PRICE, MIN_ORACLE_PRICE);
+        vm.expectRevert();
+        safety.set_oracles(address(nextOracle), address(1), MIN_ORACLE_PRICE, MIN_ORACLE_PRICE);
+        vm.expectRevert();
+        safety.set_oracles(address(nextOracle), address(nextOracle), 0, MIN_ORACLE_PRICE);
+        vm.expectRevert();
+        safety.set_oracles(address(nextOracle), address(nextOracle), MIN_ORACLE_PRICE, 1e18 + 1);
+        vm.stopPrank();
+    }
+
+    function test_targetOracleDepegBlocksPreviewAndExpansion() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        targetOracle.setPrice(MIN_ORACLE_PRICE - 1);
+        _enableExpansion(0);
+
+        vm.expectRevert();
+        pegKeeper.previewExpansion(MIN_EXPANSION);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+
+        assertEq(IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure(), 0);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+    }
+
+    function test_targetOracleFailureBlocksExpansion() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        targetOracle.setShouldRevert(true);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+    }
+
+    function test_claimSurplusUsesOracleCappedBackingAndDoesNotConsumePressureOnFailure() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        uint256 pressureBefore =
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure();
+
+        targetOracle.setPrice(MIN_ORACLE_PRICE - 1);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.claimSurplus(type(uint256).max);
+
+        assertEq(
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure(), pressureBefore
+        );
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+    }
+
+    function test_claimSurplusConsumesTheSameKeeperLocalVelocityBucket() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+        uint256 pressureBefore =
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure();
+
+        vm.prank(keeper);
+        uint256 claimed = pegKeeper.claimSurplus(1e18);
+
+        assertEq(claimed, 1e18);
+        assertEq(
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure(),
+            pressureBefore + claimed
+        );
+    }
+
+    function test_targetFallbackUsesOracleAdjustedMarginalValue() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        targetOracle.setPrice(MIN_ORACLE_PRICE);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+    }
+
+    function test_sameBlockExpansionCannotExceedFivePercentBurst() public {
+        uint256 maxBurst = MAX_DEPLOYED * MAX_BURST_BPS / 10_000;
+        crvUsd.mint(address(pegKeeper), maxBurst + MIN_EXPANSION);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+
+        vm.prank(keeper);
+        pegKeeper.expand(maxBurst);
+
+        assertEq(IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure(), maxBurst);
+        assertEq(pegKeeper.available_expansion(), 0);
+        vm.prank(feeReceiver);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
+    }
+
+    function test_velocityRefillsTwentyPercentOfBurstPerMinute() public {
+        uint256 maxBurst = MAX_DEPLOYED * MAX_BURST_BPS / 10_000;
+        crvUsd.mint(address(pegKeeper), 2 * maxBurst);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+        vm.warp(1_800_000_000);
+
+        vm.prank(keeper);
+        pegKeeper.expand(maxBurst);
+        vm.warp(block.timestamp + 1 minutes);
+
+        uint256 expectedAvailable = maxBurst / 5;
+        IPegKeeperV3ExpansionSafety safety = IPegKeeperV3ExpansionSafety(address(pegKeeper));
+        assertEq(safety.expansion_pressure(), maxBurst - expectedAvailable);
+        assertEq(safety.available_expansion_velocity(), expectedAvailable);
+        assertEq(pegKeeper.available_expansion(), expectedAvailable);
+    }
+
+    function test_contractionDoesNotRefundExpansionVelocity() public {
+        uint256 maxBurst = MAX_DEPLOYED * MAX_BURST_BPS / 10_000;
+        crvUsd.mint(address(pegKeeper), maxBurst);
+        pool.setPrices(1_010_000, 1_010_000);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(maxBurst);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        vm.prank(keeper);
+        pegKeeper.contractUndeployedBacking(1_000e6);
+
+        IPegKeeperV3ExpansionSafety safety = IPegKeeperV3ExpansionSafety(address(pegKeeper));
+        assertEq(safety.expansion_pressure(), maxBurst);
+        assertEq(safety.available_expansion_velocity(), 0);
     }
 
     function test_adminConfiguresExpansionSafety() public {
@@ -228,6 +465,15 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(reward, 30e6);
         assertEq(targetAsset.balanceOf(keeper), 30e6);
         assertEq(pegKeeper.protocol_surplus(), 70e18);
+    }
+
+    function test_previewModuleRejectsSpoofedKeeperIdentity() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        _enableExpansion(0);
+
+        address previewModule = pegKeeper.preview_module();
+        vm.expectRevert();
+        PegKeeperV3PreviewModule(previewModule).previewExpansion(address(pegKeeper), MIN_EXPANSION);
     }
 
     function test_previewExpansionRejectsTheStateChangingAmountBounds() public {
@@ -327,17 +573,17 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(crvUsd.balanceOf(address(pegKeeper)), 10 * MIN_EXPANSION);
     }
 
-    function test_repeatedSameBlockExpansionsExhaustLocalCapacity() public {
+    function test_loweringLocalCapacityAlsoLowersSameBlockBurst() public {
         crvUsd.mint(address(pegKeeper), 20 * MIN_EXPANSION);
         pool.setPrices(1_010_000, 1_010_000);
         vm.prank(governance);
         pegKeeper.set_policy(50, 1_000, 5_000, 3_000, 2 days, MIN_EXPANSION, 10 * MIN_EXPANSION);
         _enableExpansion(0);
 
-        _runSplitExpansions(10);
-
-        assertEq(pegKeeper.available_expansion(), 0);
-        assertEq(crvUsd.balanceOf(address(pegKeeper)), 10 * MIN_EXPANSION);
+        assertEq(pegKeeper.available_expansion(), 5_000e18);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.expand(MIN_EXPANSION);
     }
 
     function test_splitMinimumCallsPaySameAggregateShareAsOneLargeCall() public {
@@ -369,7 +615,7 @@ contract PegKeeperV3ExpansionTest is Test {
         crvUsd.mint(address(pegKeeper), 20_000_000e18);
         factory.setDebtCeiling(address(pegKeeper), 18_000_000e18);
 
-        assertEq(pegKeeper.available_expansion(), 18_000_000e18);
+        assertEq(pegKeeper.available_expansion(), MAX_DEPLOYED * MAX_BURST_BPS / 10_000);
     }
 
     function test_fallbackExpansionPaysKeeperAndAccountsMeasuredBacking() public {
@@ -663,27 +909,35 @@ contract PegKeeperV3ExpansionTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
             address(factory),
             address(pool),
             address(targetAsset),
             address(backingAsset),
             address(yieldToken),
             MAX_DEPLOYED,
-            1
+            1,
+            address(targetOracle),
+            address(yieldOracle)
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
+    }
 
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
+    function deployWithOracles(address targetOracle_, address yieldOracle_)
+        external
+        returns (address)
+    {
+        return address(
+            PegKeeperV3TestDeployer.deploy(
+                address(factory),
+                address(pool),
+                address(targetAsset),
+                address(backingAsset),
+                address(yieldToken),
+                MAX_DEPLOYED,
+                1,
+                targetOracle_,
+                yieldOracle_
+            )
+        );
     }
 }

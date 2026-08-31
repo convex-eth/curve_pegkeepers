@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 contract MockToken {
     uint8 public immutable decimals;
@@ -227,7 +228,7 @@ contract PegKeeperV3FoundationTest is Test {
     function test_constructorRejectsPoolWithoutExactCrvUsdTargetPair() public {
         MockTwoCoinPool wrongPool = new MockTwoCoinPool(address(targetAsset), address(backingAsset));
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(wrongPool), address(targetAsset), address(backingAsset), address(yieldToken)
         );
     }
@@ -248,7 +249,7 @@ contract PegKeeperV3FoundationTest is Test {
     function test_constructorRejectsYieldAssetMismatch() public {
         MockYieldToken wrongYield = new MockYieldToken(address(targetAsset));
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(targetAmm), address(targetAsset), address(backingAsset), address(wrongYield)
         );
     }
@@ -258,7 +259,7 @@ contract PegKeeperV3FoundationTest is Test {
             new MockIncompleteYieldToken(address(backingAsset));
 
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(targetAmm),
             address(targetAsset),
             address(backingAsset),
@@ -272,7 +273,7 @@ contract PegKeeperV3FoundationTest is Test {
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
 
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
     }
@@ -282,7 +283,7 @@ contract PegKeeperV3FoundationTest is Test {
         targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
 
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
     }
@@ -292,7 +293,7 @@ contract PegKeeperV3FoundationTest is Test {
         yieldToken = new MockYieldToken(address(backingAsset));
 
         vm.expectRevert();
-        _deploy(
+        this.deployForInvalidInitialization(
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
     }
@@ -462,27 +463,23 @@ contract PegKeeperV3FoundationTest is Test {
         assertEq(address(pegKeeper).balance, 1 ether);
     }
 
+    function deployForInvalidInitialization(
+        address targetAmm_,
+        address targetAsset_,
+        address backingAsset_,
+        address yieldToken_
+    ) external returns (IPegKeeperV3 pegKeeper) {
+        pegKeeper = _deploy(targetAmm_, targetAsset_, backingAsset_, yieldToken_);
+    }
+
     function _deploy(
         address targetAmm_,
         address targetAsset_,
         address backingAsset_,
         address yieldToken_
     ) internal returns (IPegKeeperV3 pegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
+        pegKeeper = PegKeeperV3TestDeployer.deploy(
             address(factory), targetAmm_, targetAsset_, backingAsset_, yieldToken_, MAX_DEPLOYED, 1
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        pegKeeper = IPegKeeperV3(deployed);
     }
 }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {DeployPegKeeperV3Factory} from "../../../script/DeployPegKeeperV3Factory.s.sol";
+import {DeployPegKeeperV3Oracles} from "../../../script/DeployPegKeeperV3Oracles.s.sol";
 import {BaseCurveProposal} from "../../../script/proposals/curve/BaseCurveProposal.sol";
 import {
     CurveProposalLaunchPegKeeperV3
@@ -14,6 +15,7 @@ import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
+import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
 
 contract CurveEDAOProxyHarness {
     function execute(address target, bytes calldata data)
@@ -64,6 +66,28 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         vm.etch(EDAO_PROXY, address(proxyHarness).code);
 
         proposal = new CurveProposalLaunchPegKeeperV3();
+        DeployPegKeeperV3Oracles oracleDeployer = new DeployPegKeeperV3Oracles();
+        DeployPegKeeperV3Oracles.Config memory oracleConfig = DeployPegKeeperV3Oracles.Config({
+            usdcUsdtPool: proposal.USDC_USDT_ORACLE_POOL(),
+            frxUsdSusdsPool: proposal.FRXUSD_SUSDS_ORACLE_POOL(),
+            sfrxUsdFrxUsdPool: proposal.FRXUSD_SFRXUSD_POOL(),
+            frxUsd: proposal.FRXUSD(),
+            sfrxUsd: proposal.SFRXUSD(),
+            susds: proposal.SUSDS(),
+            usdc: proposal.USDC(),
+            usdt: proposal.USDT()
+        });
+        (
+            address frxUsdOracle,
+            address frxUsdBackingOracle,
+            address usdcOracle,
+            address usdtOracle,
+            address susdsBackingOracle
+        ) = oracleDeployer.deploy(oracleConfig);
+        proposal.setOracleAdapters(
+            frxUsdOracle, frxUsdBackingOracle, usdcOracle, usdtOracle, susdsBackingOracle
+        );
+
         DeployPegKeeperV3Factory deployer = new DeployPegKeeperV3Factory();
         DeployPegKeeperV3Factory.Config memory config = DeployPegKeeperV3Factory.Config({
             owner: OWNERSHIP_AGENT,
@@ -119,6 +143,44 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _assertMonetaryPolicyAction(actions[16], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
+    function test_OracleAdaptersUseSelectedExternalCurvePools() public view {
+        _assertOracle(
+            proposal.frxUsdOracle(),
+            proposal.FRXUSD_SUSDS_ORACLE_POOL(),
+            proposal.FRXUSD(),
+            proposal.SUSDS(),
+            true
+        );
+        _assertOracle(
+            proposal.frxUsdBackingOracle(),
+            proposal.FRXUSD_SFRXUSD_POOL(),
+            proposal.SFRXUSD(),
+            proposal.FRXUSD(),
+            true
+        );
+        _assertOracle(
+            proposal.usdcOracle(),
+            proposal.USDC_USDT_ORACLE_POOL(),
+            proposal.USDC(),
+            proposal.USDT(),
+            true
+        );
+        _assertOracle(
+            proposal.usdtOracle(),
+            proposal.USDC_USDT_ORACLE_POOL(),
+            proposal.USDT(),
+            proposal.USDC(),
+            false
+        );
+        _assertOracle(
+            proposal.susdsBackingOracle(),
+            proposal.FRXUSD_SUSDS_ORACLE_POOL(),
+            proposal.SUSDS(),
+            proposal.FRXUSD(),
+            false
+        );
+    }
+
     function test_ProposalDeploysThreePausedKeepersWithSuggestedCapacities() public {
         _executeProposal();
 
@@ -133,6 +195,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.FRXUSD(),
             proposal.FRXUSD(),
             proposal.SFRXUSD(),
+            proposal.frxUsdOracle(),
+            proposal.frxUsdBackingOracle(),
             FRXUSD_CAP
         );
         _assertKeeperEndpoints(
@@ -141,6 +205,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDC(),
             proposal.USDS(),
             proposal.SUSDS(),
+            proposal.usdcOracle(),
+            proposal.susdsBackingOracle(),
             USDC_CAP
         );
         _assertKeeperEndpoints(
@@ -149,6 +215,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDT(),
             proposal.USDS(),
             proposal.SUSDS(),
+            proposal.usdtOracle(),
+            proposal.susdsBackingOracle(),
             USDT_CAP
         );
 
@@ -262,6 +330,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         address targetAsset,
         address backingAsset,
         address yieldToken,
+        address targetOracle,
+        address yieldOracle,
         uint256 cap
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
@@ -269,13 +339,37 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.target_asset(), targetAsset);
         assertEq(keeper.backing_asset(), backingAsset);
         assertEq(keeper.yield_token(), yieldToken);
+        assertEq(keeper.target_oracle(), targetOracle);
+        assertEq(keeper.yield_oracle(), yieldOracle);
+        assertEq(keeper.min_target_oracle_price(), proposal.MIN_ORACLE_PRICE());
+        assertEq(keeper.min_yield_oracle_price(), proposal.MIN_ORACLE_PRICE());
+        assertEq(keeper.max_expansion_burst_bps(), 500);
+        assertEq(keeper.expansion_refill_period(), 300);
         assertEq(keeper.max_deployed_crvusd(), cap);
+        assertEq(keeper.expansion_pressure(), 0);
+        assertEq(keeper.available_expansion_velocity(), cap * 500 / 10_000);
+        assertEq(factory.implementationOf(keeperAddress), factory.implementation());
         assertTrue(keeper.expansion_paused());
         assertTrue(keeper.backing_deployment_paused());
         assertTrue(keeper.direct_buyback_paused());
         assertTrue(keeper.undeployed_contraction_paused());
         assertTrue(keeper.yield_contraction_paused());
         assertTrue(keeper.all_execution_paused());
+    }
+
+    function _assertOracle(
+        address adapter,
+        address pool,
+        address asset,
+        address referenceAsset,
+        bool inverted
+    ) internal view {
+        ICurveStablecoinOracle oracle = ICurveStablecoinOracle(adapter);
+        assertEq(oracle.pool(), pool);
+        assertEq(oracle.asset(), asset);
+        assertEq(oracle.reference_asset(), referenceAsset);
+        assertEq(oracle.inverted(), inverted);
+        assertGe(oracle.price(), proposal.MIN_ORACLE_PRICE());
     }
 
     function _assertPolicy(IPegKeeperV3 keeper, uint256 cap) internal view {

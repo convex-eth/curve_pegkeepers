@@ -12,6 +12,7 @@ import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
 import {DeployPegKeeperV3Factory} from "./DeployPegKeeperV3Factory.s.sol";
+import {DeployPegKeeperV3Oracles} from "./DeployPegKeeperV3Oracles.s.sol";
 
 interface IERC20Allowance {
     function allowance(address owner, address spender) external view returns (uint256);
@@ -23,11 +24,18 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     address internal constant FACTORY_ADMIN = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address internal constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address internal constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
+    address internal constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
+    address internal constant SFRXUSD = 0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6;
     address internal constant USDT_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address internal constant THREE_POOL = 0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7;
     address internal constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
     address internal constant USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F;
     address internal constant SUSDS = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD;
+    address internal constant USDC_USDT_ORACLE_POOL = 0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85;
+    address internal constant FRXUSD_SUSDS_ORACLE_POOL = 0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7;
+    address internal constant SFRXUSD_FRXUSD_ORACLE_POOL =
+        0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978;
     address internal constant DAI_USDS = 0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A;
     address internal constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
     address internal constant EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
@@ -40,7 +48,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
-    uint256 internal constant ALLOCATION = 1_000_000e18;
+    uint256 internal constant ALLOCATION = 2_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
 
     function run() external {
@@ -49,25 +57,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         IPegKeeperV3.RouteStep[] memory expansionPath = _expansionPath();
         IPegKeeperV3.RouteStep[] memory contractionPath = _contractionPath();
 
-        DeployPegKeeperV3Factory factoryDeployer = new DeployPegKeeperV3Factory();
-        DeployPegKeeperV3Factory.Config memory factoryConfig = DeployPegKeeperV3Factory.Config({
-            owner: CANARY_FACTORY_OWNER,
-            controllerFactory: FACTORY,
-            admin: CANARY_ADMIN,
-            emergencyAdmin: EMERGENCY_ADMIN,
-            feeReceiver: FEE_SPLITTER,
-            maxDeployedCrvUsd: ALLOCATION,
-            targetAmmExecutionBufferBps: 0,
-            minDownstreamAttemptGas: 1_500_000,
-            fallbackSettlementGasReserve: 300_000,
-            expansionMaxRouteLossBps: 100
-        });
-        (, address factoryAddress) = factoryDeployer.deploy(factoryConfig);
-        IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(factoryAddress);
-        vm.prank(CANARY_FACTORY_OWNER);
-        IPegKeeperV3 pegKeeper = IPegKeeperV3(
-            deploymentFactory.deployPegKeeper(USDT_POOL, SUSDS, expansionPath, contractionPath)
-        );
+        IPegKeeperV3 pegKeeper = _deployCanary(expansionPath, contractionPath);
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
@@ -127,6 +117,56 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         console2.logBytes32(keccak256(abi.encode(expansionPath)));
         console2.log("contraction path hash");
         console2.logBytes32(keccak256(abi.encode(contractionPath)));
+    }
+
+    function _deployCanaryOracles()
+        internal
+        returns (address usdtOracle, address susdsBackingOracle)
+    {
+        DeployPegKeeperV3Oracles oracleDeployer = new DeployPegKeeperV3Oracles();
+        DeployPegKeeperV3Oracles.Config memory oracleConfig = DeployPegKeeperV3Oracles.Config({
+            usdcUsdtPool: USDC_USDT_ORACLE_POOL,
+            frxUsdSusdsPool: FRXUSD_SUSDS_ORACLE_POOL,
+            sfrxUsdFrxUsdPool: SFRXUSD_FRXUSD_ORACLE_POOL,
+            frxUsd: FRXUSD,
+            sfrxUsd: SFRXUSD,
+            susds: SUSDS,
+            usdc: USDC,
+            usdt: USDT
+        });
+        (,,, usdtOracle, susdsBackingOracle) = oracleDeployer.deploy(oracleConfig);
+    }
+
+    function _deployCanaryFactory() internal returns (IPegKeeperV3Factory deploymentFactory) {
+        DeployPegKeeperV3Factory factoryDeployer = new DeployPegKeeperV3Factory();
+        DeployPegKeeperV3Factory.Config memory factoryConfig = DeployPegKeeperV3Factory.Config({
+            owner: CANARY_FACTORY_OWNER,
+            controllerFactory: FACTORY,
+            admin: CANARY_ADMIN,
+            emergencyAdmin: EMERGENCY_ADMIN,
+            feeReceiver: FEE_SPLITTER,
+            maxDeployedCrvUsd: ALLOCATION,
+            targetAmmExecutionBufferBps: 0,
+            minDownstreamAttemptGas: 1_500_000,
+            fallbackSettlementGasReserve: 300_000,
+            expansionMaxRouteLossBps: 100
+        });
+        (, address factoryAddress) = factoryDeployer.deploy(factoryConfig);
+        deploymentFactory = IPegKeeperV3Factory(factoryAddress);
+    }
+
+    function _deployCanary(
+        IPegKeeperV3.RouteStep[] memory expansionPath,
+        IPegKeeperV3.RouteStep[] memory contractionPath
+    ) internal returns (IPegKeeperV3 pegKeeper) {
+        (address usdtOracle, address susdsBackingOracle) = _deployCanaryOracles();
+        IPegKeeperV3Factory deploymentFactory = _deployCanaryFactory();
+        vm.prank(CANARY_FACTORY_OWNER);
+        pegKeeper = IPegKeeperV3(
+            deploymentFactory.deployPegKeeper(
+                USDT_POOL, SUSDS, usdtOracle, susdsBackingOracle, expansionPath, contractionPath
+            )
+        );
     }
 
     function _expandAsKeeper(IPegKeeperV3 pegKeeper)

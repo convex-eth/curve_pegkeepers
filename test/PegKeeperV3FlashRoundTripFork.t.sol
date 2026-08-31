@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {MockPegKeeperFactory} from "./PegKeeperV3Foundation.t.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
@@ -29,7 +30,7 @@ contract PegKeeperV3FlashRoundTripForkTest is Test {
 
     uint256 internal constant TEMPORARY_USDT = 10_000_000e6;
     uint256 internal constant CAPACITY = 5_000_000e18;
-    uint256 internal constant EXPANSION_STEP = 100_000e18;
+    uint256 internal constant EXPANSION_STEP = 50_000e18;
     uint256 internal constant MAX_CALLS = 50;
 
     address internal governance = makeAddr("governance");
@@ -81,6 +82,9 @@ contract PegKeeperV3FlashRoundTripForkTest is Test {
         vm.stopPrank();
 
         uint256 finalUsdt = IERC20(USDT).balanceOf(actor);
+        uint256 maxBurst = CAPACITY * pegKeeper.max_expansion_burst_bps() / 10_000;
+        assertEq(expanded, maxBurst);
+        assertEq(pegKeeper.available_expansion_velocity(), 0);
         assertGt(expanded, EXPANSION_STEP);
         assertGt(aggregateReward, 20e6);
         assertLt(finalUsdt, TEMPORARY_USDT);
@@ -92,21 +96,10 @@ contract PegKeeperV3FlashRoundTripForkTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         MockPegKeeperFactory pegKeeperFactory =
             new MockPegKeeperFactory(FACTORY, governance, emergencyAdmin, FEE_SPLITTER);
-        bytes memory constructorArgs =
-            abi.encode(address(pegKeeperFactory), USDT_POOL, USDT, USDS, SUSDS, CAPACITY, 1);
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
+            address(pegKeeperFactory), USDT_POOL, USDT, USDS, SUSDS, CAPACITY, 1
+        );
     }
 }

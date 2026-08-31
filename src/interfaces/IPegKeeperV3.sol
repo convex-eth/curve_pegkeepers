@@ -75,6 +75,12 @@ interface IPegKeeperV3 {
         bytes32 indexed contractionPathHash,
         uint256 expansionMaxRouteLossBps
     );
+    event OraclePolicyUpdated(
+        address indexed targetOracle,
+        address indexed yieldOracle,
+        uint256 minTargetPrice,
+        uint256 minYieldPrice
+    );
     event UndeployedBackingDeployed(
         address indexed caller,
         uint256 targetSpent,
@@ -87,6 +93,8 @@ interface IPegKeeperV3 {
     function name() external view returns (string memory);
     function keeper_index() external view returns (uint256);
     function MAX_ROUTE_STEPS() external view returns (uint256);
+    function initialized() external view returns (bool);
+    function preview_module() external view returns (address);
 
     function factory() external view returns (address);
     function controller_factory() external view returns (address);
@@ -95,6 +103,12 @@ interface IPegKeeperV3 {
     function target_asset() external view returns (address);
     function backing_asset() external view returns (address);
     function yield_token() external view returns (address);
+    function target_oracle() external view returns (address);
+    function yield_oracle() external view returns (address);
+    function min_target_oracle_price() external view returns (uint256);
+    function min_yield_oracle_price() external view returns (uint256);
+    function max_expansion_burst_bps() external view returns (uint256);
+    function expansion_refill_period() external view returns (uint256);
     function fee_receiver() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
@@ -121,6 +135,20 @@ interface IPegKeeperV3 {
     function undeployed_backing() external view returns (uint256);
     function accounted_yield_token_units() external view returns (uint256);
     function last_expansion_at() external view returns (uint256);
+    function expansion_pressure() external view returns (uint256);
+    function last_expansion_pressure_update() external view returns (uint256);
+    function available_expansion_velocity() external view returns (uint256);
+
+    function initialize(
+        address targetAmm,
+        address targetAsset,
+        address backingAsset,
+        address yieldToken,
+        uint256 maxDeployedCrvUsd,
+        uint256 keeperIndex,
+        address targetOracle,
+        address yieldOracle
+    ) external;
 
     function expansion_paused() external view returns (bool);
     function backing_deployment_paused() external view returns (bool);
@@ -131,6 +159,12 @@ interface IPegKeeperV3 {
 
     function set_direction_paused(uint256 direction, bool paused) external;
     function set_target_amm(address newTargetAmm, uint256 executionBufferBps) external;
+    function set_oracles(
+        address targetOracle,
+        address yieldOracle,
+        uint256 minTargetPrice,
+        uint256 minYieldPrice
+    ) external;
     function set_expansion_config(
         uint256 targetAmmExecutionBufferBps,
         uint256 minDownstreamAttemptGas,

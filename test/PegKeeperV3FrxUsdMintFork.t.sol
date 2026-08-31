@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {IFrxUsdMinter} from "../src/interfaces/IFrxUsdMinter.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 
 interface IForkToken {
     function balanceOf(address account) external view returns (uint256);
@@ -84,7 +85,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
     uint256 internal constant FORK_BLOCK = 25_857_270;
     uint256 internal constant CURVE_SWAP = 0;
     uint256 internal constant FRXUSD_MINT = 4;
-    uint256 internal constant MAX_DEPLOYED = 1_000_000e18;
+    uint256 internal constant MAX_DEPLOYED = 2_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
 
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -115,6 +116,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
         pegKeeper = _deploy();
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
         deal(CRVUSD, address(pegKeeper), EXPANSION_AMOUNT);
+        assertEq(pegKeeper.available_expansion_velocity(), EXPANSION_AMOUNT);
         _installPaths();
         vm.startPrank(governance);
         pegKeeper.set_expansion_config(0, 1_500_000, 300_000);
@@ -207,20 +209,8 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
     }
 
     function _deploy() internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
             address(factory), address(targetPool), USDC, FRXUSD, SFRXUSD, MAX_DEPLOYED, 1
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
     }
 }

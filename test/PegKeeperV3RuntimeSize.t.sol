@@ -3,48 +3,85 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {
-    MockFactory,
-    MockToken,
-    MockTwoCoinPool,
-    MockYieldToken
-} from "./PegKeeperV3Foundation.t.sol";
+import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3PreviewModule} from "../src/PegKeeperV3PreviewModule.sol";
 
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_INITCODE_SIZE = 24_370;
-    uint256 internal constant RELEASE_RUNTIME_SIZE = 22_862;
+    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 23_271;
+    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 23_117;
+    uint256 internal constant RELEASE_PREVIEW_RUNTIME_SIZE = 8_201;
+    uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
+    uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 
-    function test_runtimeAndInitcodeFitProtocolLimits() public {
-        MockToken crvUsd = new MockToken(18);
-        MockToken targetAsset = new MockToken(6);
-        MockToken backingAsset = new MockToken(18);
-        MockYieldToken yieldToken = new MockYieldToken(address(backingAsset));
-        MockFactory factory =
-            new MockFactory(address(crvUsd), address(0xA11CE), address(0xBEEF), address(0xFEE));
-        MockTwoCoinPool targetAmm = new MockTwoCoinPool(address(targetAsset), address(crvUsd));
+    function test_implementationPreviewModuleAndMinimalProxyFitProtocolLimits() public {
+        PegKeeperV3PreviewModule previewModule = new PegKeeperV3PreviewModule();
+        assertEq(
+            address(previewModule).code.length,
+            RELEASE_PREVIEW_RUNTIME_SIZE,
+            "preview runtime drift"
+        );
+        assertLe(
+            address(previewModule).code.length,
+            EIP_170_RUNTIME_LIMIT,
+            "preview module exceeds EIP-170"
+        );
 
         bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
-            address(factory),
-            address(targetAmm),
-            address(targetAsset),
-            address(backingAsset),
-            address(yieldToken),
-            25_000_000e18,
-            1
+        bytes memory implementationInitCode =
+            bytes.concat(creationCode, abi.encode(address(previewModule)));
+        assertEq(
+            implementationInitCode.length,
+            RELEASE_IMPLEMENTATION_INITCODE_SIZE,
+            "implementation initcode drift"
         );
-        bytes memory initCode = abi.encodePacked(creationCode, constructorArgs);
-        assertEq(initCode.length, RELEASE_INITCODE_SIZE, "PegKeeperV3 initcode drift");
-        assertLe(initCode.length, EIP_3860_INITCODE_LIMIT, "PegKeeperV3 exceeds EIP-3860");
+        assertLe(
+            implementationInitCode.length,
+            EIP_3860_INITCODE_LIMIT,
+            "implementation exceeds EIP-3860"
+        );
 
-        address deployed;
+        address implementation;
         assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
+            implementation := create(
+                0,
+                add(implementationInitCode, 0x20),
+                mload(implementationInitCode)
+            )
         }
-        assertTrue(deployed != address(0), "PegKeeperV3 deployment failed");
-        assertEq(deployed.code.length, RELEASE_RUNTIME_SIZE, "PegKeeperV3 runtime drift");
-        assertLe(deployed.code.length, EIP_170_RUNTIME_LIMIT, "PegKeeperV3 exceeds EIP-170");
+        assertTrue(implementation != address(0), "implementation deployment failed");
+        assertEq(
+            implementation.code.length,
+            RELEASE_IMPLEMENTATION_RUNTIME_SIZE,
+            "implementation runtime drift"
+        );
+        assertLe(
+            implementation.code.length, EIP_170_RUNTIME_LIMIT, "implementation exceeds EIP-170"
+        );
+        assertTrue(IPegKeeperV3(implementation).initialized(), "implementation is not locked");
+        assertEq(IPegKeeperV3(implementation).preview_module(), address(previewModule));
+
+        bytes memory proxyInitCode = abi.encodePacked(
+            hex"3d602d80600a3d3981f3",
+            hex"363d3d373d3d3d363d73",
+            bytes20(implementation),
+            hex"5af43d82803e903d91602b57fd5bf3"
+        );
+        assertEq(proxyInitCode.length, MINIMAL_PROXY_INITCODE_SIZE);
+        address proxy;
+        assembly ("memory-safe") {
+            proxy := create(0, add(proxyInitCode, 0x20), mload(proxyInitCode))
+        }
+        assertTrue(proxy != address(0), "minimal proxy deployment failed");
+        assertEq(proxy.code.length, MINIMAL_PROXY_RUNTIME_SIZE);
+        assertEq(
+            proxy.code,
+            abi.encodePacked(
+                hex"363d3d373d3d3d363d73",
+                bytes20(implementation),
+                hex"5af43d82803e903d91602b57fd5bf3"
+            )
+        );
     }
 }

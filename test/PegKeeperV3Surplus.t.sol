@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
 import {
     ExpansionFactory,
     ExpansionPool,
@@ -127,9 +128,11 @@ contract PegKeeperV3SurplusTest is Test {
 
     function test_claimSurplusRespectsLocalExposureRemainder() public {
         uint256 localRemainder = 0.15e18;
-        IPegKeeperV3 limitedPegKeeper = _deploy(EXPANSION_AMOUNT + localRemainder);
+        IPegKeeperV3 limitedPegKeeper = _deploy(MAX_DEPLOYED);
         factory.setDebtCeiling(address(limitedPegKeeper), MAX_DEPLOYED);
         _createSurplus(limitedPegKeeper);
+        vm.warp(limitedPegKeeper.last_expansion_pressure_update() + 5 minutes);
+        _setMaxDeployed(limitedPegKeeper, EXPANSION_AMOUNT + localRemainder);
         crvUsd.mint(address(limitedPegKeeper), 100e18);
 
         vm.prank(caller);
@@ -197,9 +200,28 @@ contract PegKeeperV3SurplusTest is Test {
         vm.stopPrank();
     }
 
+    function _setMaxDeployed(IPegKeeperV3 targetPegKeeper, uint256 maxDeployed) internal {
+        uint256 entryMinProfitPpm = targetPegKeeper.entry_min_profit_ppm();
+        uint256 normalExitMinProfitPpm = targetPegKeeper.normal_exit_min_profit_ppm();
+        uint256 earlyExitMinProfitPpm = targetPegKeeper.early_exit_min_profit_ppm();
+        uint256 keeperProfitShareBps = targetPegKeeper.keeper_profit_share_bps();
+        uint256 minDeploymentTime = targetPegKeeper.min_deployment_time();
+        uint256 minExpansionAmount = targetPegKeeper.min_expansion_amount();
+
+        vm.prank(governance);
+        targetPegKeeper.set_policy(
+            entryMinProfitPpm,
+            normalExitMinProfitPpm,
+            earlyExitMinProfitPpm,
+            keeperProfitShareBps,
+            minDeploymentTime,
+            minExpansionAmount,
+            maxDeployed
+        );
+    }
+
     function _deploy(uint256 maxDeployed) internal returns (IPegKeeperV3 deployedPegKeeper) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
-        bytes memory constructorArgs = abi.encode(
+        deployedPegKeeper = PegKeeperV3TestDeployer.deploy(
             address(factory),
             address(pool),
             address(targetAsset),
@@ -208,17 +230,5 @@ contract PegKeeperV3SurplusTest is Test {
             maxDeployed,
             1
         );
-        bytes memory initCode = bytes.concat(creationCode, constructorArgs);
-        address deployed;
-
-        assembly ("memory-safe") {
-            deployed := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(deployed) {
-                let size := returndatasize()
-                returndatacopy(0, 0, size)
-                revert(0, size)
-            }
-        }
-        deployedPegKeeper = IPegKeeperV3(deployed);
     }
 }
