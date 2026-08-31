@@ -20,13 +20,11 @@ contract ChainlinkStablecoinOracleForkTest is Test {
         IChainlinkStablecoinOracle usdsOracle =
             IChainlinkStablecoinOracle(deployment.usdsChainlinkOracle);
 
-        assertEq(frxUsdOracle.registry(), deployer.CHAINLINK_FEED_REGISTRY());
-        assertEq(frxUsdOracle.base(), deployer.FRXUSD());
-        assertEq(frxUsdOracle.feed(), deployer.FRXUSD_USD_FEED());
+        assertEq(frxUsdOracle.feed(), deployer.FRXUSD_USD_PROXY());
+        assertEq(frxUsdOracle.feed_decimals(), 8);
         assertEq(frxUsdOracle.max_delay(), deployer.RECOMMENDED_CHAINLINK_MAX_DELAY());
-        assertEq(usdsOracle.registry(), deployer.CHAINLINK_FEED_REGISTRY());
-        assertEq(usdsOracle.base(), deployer.USDS());
-        assertEq(usdsOracle.feed(), deployer.USDS_USD_FEED());
+        assertEq(usdsOracle.feed(), deployer.USDS_USD_PROXY());
+        assertEq(usdsOracle.feed_decimals(), 8);
         assertEq(usdsOracle.max_delay(), deployer.RECOMMENDED_CHAINLINK_MAX_DELAY());
         assertGt(frxUsdOracle.price(), 0);
         assertGt(usdsOracle.price(), 0);

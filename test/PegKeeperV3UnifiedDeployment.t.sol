@@ -9,7 +9,7 @@ import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockCurveOraclePool} from "./CurveStablecoinOracle.t.sol";
-import {MockChainlinkFeedRegistry} from "./ChainlinkStablecoinOracle.t.sol";
+import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
 import {MockFactory, MockToken} from "./PegKeeperV3Foundation.t.sol";
 
 contract PegKeeperV3UnifiedDeploymentTest is Test {
@@ -29,9 +29,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         MockCurveOraclePool frxUsdSusdsPool = new MockCurveOraclePool(frxUsd, susds);
         MockCurveOraclePool sfrxUsdFrxUsdPool = new MockCurveOraclePool(sfrxUsd, frxUsd);
         MockCurveOraclePool usdcUsdtPool = new MockCurveOraclePool(usdc, usdt);
-        MockChainlinkFeedRegistry chainlinkRegistry = new MockChainlinkFeedRegistry();
+        MockChainlinkAggregator chainlinkAggregator = new MockChainlinkAggregator();
+        MockChainlinkProxy chainlinkProxy = new MockChainlinkProxy(chainlinkAggregator);
         vm.warp(10_000);
-        chainlinkRegistry.setRound(7, 99_990_000, block.timestamp, 7);
+        chainlinkAggregator.setRound(7, 99_990_000, block.timestamp, 7);
 
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Config memory config = DeployPegKeeperV3.Config({
@@ -53,12 +54,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             susds: susds,
             usdc: usdc,
             usdt: usdt,
-            chainlinkRegistry: address(chainlinkRegistry),
-            chainlinkQuote: address(840),
-            frxUsdExpectedFeed: address(chainlinkRegistry),
+            frxUsdProxy: address(chainlinkProxy),
             frxUsdMaxDelay: 26 hours,
             usds: usds,
-            usdsExpectedFeed: address(chainlinkRegistry),
+            usdsProxy: address(chainlinkProxy),
             usdsMaxDelay: 26 hours
         });
 
@@ -119,20 +118,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             false
         );
         _assertChainlinkOracle(
-            deployment.frxUsdChainlinkOracle,
-            config.chainlinkRegistry,
-            config.frxUsd,
-            config.chainlinkQuote,
-            config.frxUsdExpectedFeed,
-            config.frxUsdMaxDelay
+            deployment.frxUsdChainlinkOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
         _assertChainlinkOracle(
-            deployment.usdsChainlinkOracle,
-            config.chainlinkRegistry,
-            config.usds,
-            config.chainlinkQuote,
-            config.usdsExpectedFeed,
-            config.usdsMaxDelay
+            deployment.usdsChainlinkOracle, config.usdsProxy, config.usdsMaxDelay
         );
 
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
@@ -171,12 +160,17 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.usdcUsdtPool, deployer.USDC_USDT_ORACLE_POOL());
         assertEq(config.frxUsdSusdsPool, deployer.FRXUSD_SUSDS_ORACLE_POOL());
         assertEq(config.sfrxUsdFrxUsdPool, deployer.SFRXUSD_FRXUSD_ORACLE_POOL());
-        assertEq(config.chainlinkRegistry, deployer.CHAINLINK_FEED_REGISTRY());
-        assertEq(config.chainlinkQuote, deployer.USD());
-        assertEq(config.frxUsdExpectedFeed, deployer.FRXUSD_USD_FEED());
+        assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.frxUsdMaxDelay, 26 hours);
-        assertEq(config.usdsExpectedFeed, deployer.USDS_USD_FEED());
+        assertEq(config.usdsProxy, deployer.USDS_USD_PROXY());
         assertEq(config.usdsMaxDelay, 26 hours);
+    }
+
+    function test_mainnetConfigurationUsesCanonicalChainlinkProxyFeeds() public {
+        DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
+
+        assertEq(deployer.FRXUSD_USD_PROXY(), 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83);
+        assertEq(deployer.USDS_USD_PROXY(), 0xfF30586cD0F29eD462364C7e81375FC0C71219b1);
     }
 
     function _assertCurveOracle(
@@ -195,19 +189,9 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(oracle.price(), 1e18);
     }
 
-    function _assertChainlinkOracle(
-        address adapter,
-        address registry,
-        address base,
-        address quote,
-        address feed,
-        uint256 maxDelay
-    ) internal view {
+    function _assertChainlinkOracle(address adapter, address feed, uint256 maxDelay) internal view {
         IChainlinkStablecoinOracle oracle = IChainlinkStablecoinOracle(adapter);
         assertGt(adapter.code.length, 0);
-        assertEq(oracle.registry(), registry);
-        assertEq(oracle.base(), base);
-        assertEq(oracle.quote(), quote);
         assertEq(oracle.feed(), feed);
         assertEq(oracle.max_delay(), maxDelay);
         assertGt(oracle.price(), 0);

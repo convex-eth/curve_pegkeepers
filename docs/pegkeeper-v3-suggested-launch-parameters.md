@@ -83,18 +83,16 @@ The frxUSD/sUSDS pool applies its sUSDS rate provider. Its EMA is therefore an u
 
 ### Alternative Chainlink sources — not selected
 
-The repository also contains separate registry-bound Chainlink adapters for frxUSD/USD and USDS/USD. They are alternatives for the frxUSD and USDS checks above, not additional launch requirements. The current proposal remains Curve-only until governance selects one source family and updates the exact adapter addresses.
+The repository also contains separate direct-proxy Chainlink adapters for frxUSD/USD and USDS/USD. They are alternatives for the frxUSD and USDS checks above, not additional launch requirements. The current proposal remains Curve-only until governance selects one source family and updates the exact adapter addresses.
 
 If selected, the frxUSD/USD adapter can serve both the frxUSD target check and the frxUSD-valued downstream check after `sfrxUSD.convertToAssets()`. The USDS/USD adapter can replace the Curve sUSDS/frxUSD downstream check after `sUSDS.convertToAssets()`. This decision does not by itself replace the separately configured USDC and USDT target checks.
 
-| Item | Address |
-|---|---|
-| Ethereum Feed Registry | `0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf` |
-| USD denomination | `0x0000000000000000000000000000000000000348` |
-| frxUSD/USD feed resolved by registry | `0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D` |
-| USDS/USD feed resolved by registry | `0x592700e4FcDd674dC54d2681DED3B63f54F63f9A` |
+| Pair | Canonical ENS | Canonical proxy | Deviation | Heartbeat |
+|---|---|---|---:|---:|
+| frxUSD/USD | `frxusd-usd.data.eth` | `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83` | 0.5% | 24 hours |
+| USDS/USD | `usds-usd.data.eth` | `0xfF30586cD0F29eD462364C7e81375FC0C71219b1` | 0.3% | 24 hours |
 
-Both feeds report 8 decimals and normalize to `1e18`. Direct contract calls to these feed proxies currently revert `No access`; the adapter therefore reads through the authorized Feed Registry and fails closed if the registry later resolves a different feed. The unified deployer currently uses a provisional `26 hours` maximum delay for both adapters, based on recent roughly daily registry updates plus limited grace. This value is not approved policy: re-confirm both feed mappings, descriptions, decimals, recent update intervals, contract-read access, and the independent freshness limits before broadcast.
+Both canonical proxies report 8 decimals and normalize to `1e18`. Fork tests confirm direct `latestRoundData()` reads through both proxy addresses. The immutable adapter address therefore remains stable when Chainlink rotates a proxy's underlying aggregator. The unified deployer currently uses a provisional `26 hours` maximum delay for both adapters: the listed 24-hour heartbeat plus two hours of grace. Heartbeat metadata and the adapter's rejection threshold are distinct; governance must still approve or replace each maximum delay before broadcast.
 
 Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
 
