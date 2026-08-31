@@ -197,9 +197,9 @@ test/
 ├── ChainlinkStablecoinOracle.t.sol
 ├── ChainlinkStablecoinOracleFork.t.sol
 ├── CurveStablecoinOracle.t.sol
-├── PegKeeperV3ChainlinkOracleDeployment.t.sol
-├── PegKeeperV3OracleDeployment.t.sol
+├── PegKeeperV3ProposalDeploymentJson.t.sol
 ├── PegKeeperV3RuntimeSize.t.sol
+├── PegKeeperV3UnifiedDeployment.t.sol
 └── PegKeeperV3*.t.sol
 ```
 

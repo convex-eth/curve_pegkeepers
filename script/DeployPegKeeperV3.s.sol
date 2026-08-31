@@ -409,6 +409,12 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Minimum downstream attempt gas", config.minDownstreamAttemptGas);
         console2.log("Fallback settlement gas reserve", config.fallbackSettlementGasReserve);
         console2.log("Expansion max route loss (bps)", config.expansionMaxRouteLossBps);
+        console2.log("frxUSD", config.frxUsd);
+        console2.log("sfrxUSD", config.sfrxUsd);
+        console2.log("sUSDS", config.susds);
+        console2.log("USDC", config.usdc);
+        console2.log("USDT", config.usdt);
+        console2.log("USDS", config.usds);
         console2.log("USDC/USDT Curve oracle pool", config.usdcUsdtPool);
         console2.log("frxUSD/sUSDS Curve oracle pool", config.frxUsdSusdsPool);
         console2.log("sfrxUSD/frxUSD Curve oracle pool", config.sfrxUsdFrxUsdPool);
