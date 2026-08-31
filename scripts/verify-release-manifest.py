@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify committed PegKeeperV3 and immutable deployment-factory release evidence."""
+"""Fail-closed verification for the undeployed PegKeeperV3 proxy-era release package."""
 
 from __future__ import annotations
 
@@ -7,23 +7,43 @@ import hashlib
 import json
 import subprocess
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
-ARTIFACT_PATH = ROOT / "out/PegKeeperV3.vy/PegKeeperV3.json"
-INTERFACE_ARTIFACT_PATH = ROOT / "out/IPegKeeperV3.sol/IPegKeeperV3.json"
-SOURCE_PATH = ROOT / "src/vyper/PegKeeperV3.vy"
-FACTORY_ARTIFACT_PATH = ROOT / "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json"
-FACTORY_INTERFACE_ARTIFACT_PATH = ROOT / "out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json"
-FACTORY_SOURCE_PATH = ROOT / "src/vyper/PegKeeperV3Factory.vy"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
-DEPLOYED_RUNTIME_BYTES = 22_862
-FACTORY_DEPLOYED_RUNTIME_BYTES = 3_778
-BLUEPRINT_PREAMBLE = bytes.fromhex("fe7100")
-TESTS_PASSED = 207
+EXPECTED_TESTS = 243
+
+ARTIFACTS = {
+    "implementation": (
+        ROOT / "src/vyper/PegKeeperV3.vy",
+        ROOT / "out/PegKeeperV3.vy/PegKeeperV3.json",
+        ROOT / "out/IPegKeeperV3.sol/IPegKeeperV3.json",
+    ),
+    "factory": (
+        ROOT / "src/vyper/PegKeeperV3Factory.vy",
+        ROOT / "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
+        ROOT / "out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json",
+    ),
+    "preview": (
+        ROOT / "src/PegKeeperV3PreviewModule.sol",
+        ROOT / "out/PegKeeperV3PreviewModule.sol/PegKeeperV3PreviewModule.json",
+        None,
+    ),
+    "curve": (
+        ROOT / "src/vyper/CurveStablecoinOracle.vy",
+        ROOT / "out/CurveStablecoinOracle.vy/CurveStablecoinOracle.json",
+        ROOT / "out/ICurveStablecoinOracle.sol/ICurveStablecoinOracle.json",
+    ),
+    "chainlink": (
+        ROOT / "src/vyper/ChainlinkStablecoinOracle.vy",
+        ROOT / "out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json",
+        ROOT / "out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json",
+    ),
+}
 
 
 def fail(label: str, actual: object, expected: object) -> None:
@@ -32,7 +52,7 @@ def fail(label: str, actual: object, expected: object) -> None:
 
 
 def bytecode(artifact: dict[str, Any], key: str) -> bytes:
-    value = artifact[key]["object"]  # type: ignore[index]
+    value = artifact[key]["object"]
     if value.startswith("0x"):
         value = value[2:]
     return bytes.fromhex(value)
@@ -56,22 +76,6 @@ def canonical_type(parameter: dict[str, Any]) -> str:
     suffix = solidity_type[5:]
     components = parameter.get("components", [])
     return "(" + ",".join(canonical_type(component) for component in components) + ")" + suffix
-
-
-def static_abi_words(parameter: dict[str, Any]) -> int:
-    solidity_type = str(parameter["type"])
-    if solidity_type == "tuple":
-        return sum(static_abi_words(component) for component in parameter.get("components", []))
-    if solidity_type.startswith("tuple") or solidity_type in ("bytes", "string") or "[" in solidity_type:
-        raise SystemExit(f"unsupported dynamic constructor parameter: {solidity_type}")
-    return 1
-
-
-def constructor_args_bytes(abi: list[dict[str, Any]]) -> int:
-    constructors = [entry for entry in abi if entry.get("type") == "constructor"]
-    if len(constructors) != 1:
-        raise SystemExit(f"expected one constructor ABI entry, got {len(constructors)}")
-    return 32 * sum(static_abi_words(parameter) for parameter in constructors[0].get("inputs", []))
 
 
 def function_abi(abi: list[dict[str, Any]]) -> dict[str, tuple[object, ...]]:
@@ -106,273 +110,415 @@ def event_abi(abi: list[dict[str, Any]]) -> dict[str, tuple[object, ...]]:
     return result
 
 
-def main() -> None:
-    manifest = json.loads(MANIFEST_PATH.read_text())
-    artifact = json.loads(ARTIFACT_PATH.read_text())
-    interface_artifact = json.loads(INTERFACE_ARTIFACT_PATH.read_text())
-    factory_artifact = json.loads(FACTORY_ARTIFACT_PATH.read_text())
-    factory_interface_artifact = json.loads(FACTORY_INTERFACE_ARTIFACT_PATH.read_text())
-    source = SOURCE_PATH.read_bytes()
-    factory_source = FACTORY_SOURCE_PATH.read_bytes()
-    creation = bytecode(artifact, "bytecode")
-    runtime = bytecode(artifact, "deployedBytecode")
-    factory_creation = bytecode(factory_artifact, "bytecode")
-    factory_runtime = bytecode(factory_artifact, "deployedBytecode")
-    blueprint_runtime = BLUEPRINT_PREAMBLE + creation
-    release_artifact = manifest["artifact"]
-    release_factory = manifest["deploymentFactory"]
-    release_factory_artifact = release_factory["artifact"]
-    release_blueprint = release_factory["blueprint"]
+def verify_source_commit(source_commit: str, path: Path) -> None:
+    relative = str(path.relative_to(ROOT))
+    committed = subprocess.run(
+        ["git", "show", f"{source_commit}:{relative}"],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+    ).stdout
+    fail(f"production source commit {relative}", committed, path.read_bytes())
 
-    fail("release status", manifest["status"], "release_candidate_not_deployed")
-    fail("source path", manifest["source"]["path"], str(SOURCE_PATH.relative_to(ROOT)))
-    fail("artifact path", release_artifact["path"], str(ARTIFACT_PATH.relative_to(ROOT)))
-    fail("source sha256", hashlib.sha256(source).hexdigest(), manifest["source"]["sha256"])
-    fail("compiler creation size", len(creation), release_artifact["compilerCreationBytes"])
-    fail(
-        "compiler creation keccak",
-        keccak256(creation),
-        release_artifact["compilerCreationKeccak256"],
-    )
-    constructor_size = constructor_args_bytes(artifact["abi"])
-    fail("constructor argument size", constructor_size, release_artifact["constructorArgsBytes"])
-    full_initcode_bytes = len(creation) + constructor_size
-    fail("full initcode size", full_initcode_bytes, release_artifact["fullInitCodeBytes"])
-    fail("initcode limit", release_artifact["eip3860LimitBytes"], EIP_3860_LIMIT)
-    fail(
-        "full initcode margin",
-        EIP_3860_LIMIT - full_initcode_bytes,
-        release_artifact["fullInitCodeMarginBytes"],
-    )
-    fail("runtime template size", len(runtime), release_artifact["runtimeTemplateBytes"])
-    fail(
-        "runtime template keccak",
-        keccak256(runtime),
-        release_artifact["runtimeTemplateKeccak256"],
-    )
-    fail("runtime limit", release_artifact["eip170LimitBytes"], EIP_170_LIMIT)
-    fail("deployed runtime size", DEPLOYED_RUNTIME_BYTES, release_artifact["deployedRuntimeBytes"])
-    fail(
-        "deployed runtime margin",
-        EIP_170_LIMIT - DEPLOYED_RUNTIME_BYTES,
-        release_artifact["deployedRuntimeMarginBytes"],
-    )
-    if DEPLOYED_RUNTIME_BYTES > EIP_170_LIMIT:
-        raise SystemExit(
-            f"deployed runtime exceeds EIP-170: {DEPLOYED_RUNTIME_BYTES} > {EIP_170_LIMIT}"
-        )
 
+def artifact_counts(artifact: dict[str, Any]) -> tuple[int, int]:
     functions = sum(entry.get("type") == "function" for entry in artifact["abi"])
     events = sum(entry.get("type") == "event" for entry in artifact["abi"])
-    fail("ABI function count", functions, release_artifact["abiFunctions"])
-    fail("ABI event count", events, release_artifact["abiEvents"])
-    fail("function ABI parity", function_abi(artifact["abi"]), function_abi(interface_artifact["abi"]))
-    fail("event ABI parity", event_abi(artifact["abi"]), event_abi(interface_artifact["abi"]))
+    return functions, events
 
-    fail(
-        "factory source sha256",
-        hashlib.sha256(factory_source).hexdigest(),
-        release_factory["source"]["sha256"],
+
+def verify_artifact(
+    label: str,
+    section: dict[str, Any],
+    source_path: Path,
+    artifact_path: Path,
+    interface_path: Path | None,
+    creation_size_key: str,
+    creation_hash_key: str,
+    runtime_size_key: str,
+    runtime_hash_key: str,
+) -> tuple[dict[str, Any], bytes, bytes]:
+    artifact = json.loads(artifact_path.read_text())
+    creation = bytecode(artifact, "bytecode")
+    runtime = bytecode(artifact, "deployedBytecode")
+    source = section["source"]
+    release_artifact = section["artifact"]
+
+    fail(f"{label} source path", source["path"], str(source_path.relative_to(ROOT)))
+    fail(f"{label} source sha256", hashlib.sha256(source_path.read_bytes()).hexdigest(), source["sha256"])
+    fail(f"{label} artifact path", release_artifact["path"], str(artifact_path.relative_to(ROOT)))
+    fail(f"{label} creation bytes", len(creation), release_artifact[creation_size_key])
+    fail(f"{label} creation hash", keccak256(creation), release_artifact[creation_hash_key])
+    fail(f"{label} runtime bytes", len(runtime), release_artifact[runtime_size_key])
+    fail(f"{label} runtime hash", keccak256(runtime), release_artifact[runtime_hash_key])
+
+    functions, events = artifact_counts(artifact)
+    if "abiFunctions" in release_artifact:
+        fail(f"{label} ABI functions", functions, release_artifact["abiFunctions"])
+    if "abiEvents" in release_artifact:
+        fail(f"{label} ABI events", events, release_artifact["abiEvents"])
+    if interface_path is not None:
+        interface = json.loads(interface_path.read_text())
+        fail(f"{label} function ABI parity", function_abi(artifact["abi"]), function_abi(interface["abi"]))
+        fail(f"{label} event ABI parity", event_abi(artifact["abi"]), event_abi(interface["abi"]))
+    return artifact, creation, runtime
+
+
+def listed_test_count() -> int:
+    result = subprocess.run(
+        ["forge", "test", "--list", "--json"],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
-    fail(
-        "factory source path",
-        release_factory["source"]["path"],
-        str(FACTORY_SOURCE_PATH.relative_to(ROOT)),
-    )
-    fail(
-        "factory artifact path",
-        release_factory_artifact["path"],
-        str(FACTORY_ARTIFACT_PATH.relative_to(ROOT)),
-    )
-    fail(
-        "factory compiler creation size",
-        len(factory_creation),
-        release_factory_artifact["compilerCreationBytes"],
-    )
-    fail(
-        "factory compiler creation keccak",
-        keccak256(factory_creation),
-        release_factory_artifact["compilerCreationKeccak256"],
-    )
-    fail(
-        "factory constructor argument size",
-        constructor_args_bytes(factory_artifact["abi"]),
-        release_factory_artifact["constructorArgsBytes"],
-    )
-    factory_full_initcode_bytes = len(factory_creation) + constructor_args_bytes(factory_artifact["abi"])
-    fail(
-        "factory full initcode size",
-        factory_full_initcode_bytes,
-        release_factory_artifact["fullInitCodeBytes"],
-    )
-    fail(
-        "factory initcode limit",
-        release_factory_artifact["eip3860LimitBytes"],
-        EIP_3860_LIMIT,
-    )
-    fail(
-        "factory full initcode margin",
-        EIP_3860_LIMIT - factory_full_initcode_bytes,
-        release_factory_artifact["fullInitCodeMarginBytes"],
-    )
-    fail(
-        "factory runtime template size",
-        len(factory_runtime),
-        release_factory_artifact["runtimeTemplateBytes"],
-    )
-    fail(
-        "factory runtime template keccak",
-        keccak256(factory_runtime),
-        release_factory_artifact["runtimeTemplateKeccak256"],
-    )
-    fail(
-        "factory runtime limit",
-        release_factory_artifact["eip170LimitBytes"],
-        EIP_170_LIMIT,
-    )
-    fail(
-        "factory deployed runtime size",
-        FACTORY_DEPLOYED_RUNTIME_BYTES,
-        release_factory_artifact["deployedRuntimeBytes"],
-    )
-    fail(
-        "factory deployed runtime margin",
-        EIP_170_LIMIT - FACTORY_DEPLOYED_RUNTIME_BYTES,
-        release_factory_artifact["deployedRuntimeMarginBytes"],
-    )
-    factory_functions = sum(entry.get("type") == "function" for entry in factory_artifact["abi"])
-    factory_events = sum(entry.get("type") == "event" for entry in factory_artifact["abi"])
-    fail("factory ABI function count", factory_functions, release_factory_artifact["abiFunctions"])
-    fail("factory ABI event count", factory_events, release_factory_artifact["abiEvents"])
-    fail(
-        "factory function ABI parity",
-        function_abi(factory_artifact["abi"]),
-        function_abi(factory_interface_artifact["abi"]),
-    )
-    fail(
-        "factory event ABI parity",
-        event_abi(factory_artifact["abi"]),
-        event_abi(factory_interface_artifact["abi"]),
+    suites = json.loads(result.stdout)
+    return sum(
+        len(tests)
+        for contracts in suites.values()
+        if isinstance(contracts, dict)
+        for tests in contracts.values()
+        if isinstance(tests, list)
     )
 
-    fail("blueprint format", release_blueprint["format"], "EIP-5202 version 0")
-    fail("blueprint preamble", release_blueprint["preamble"], "0xfe7100")
-    fail("blueprint runtime size", len(blueprint_runtime), release_blueprint["runtimeBytes"])
-    fail(
-        "blueprint runtime keccak",
-        keccak256(blueprint_runtime),
-        release_blueprint["runtimeKeccak256"],
-    )
-    fail("blueprint runtime limit", release_blueprint["eip170LimitBytes"], EIP_170_LIMIT)
-    fail(
-        "blueprint runtime margin",
-        EIP_170_LIMIT - len(blueprint_runtime),
-        release_blueprint["runtimeMarginBytes"],
-    )
-    if factory_full_initcode_bytes > EIP_3860_LIMIT:
-        raise SystemExit("factory initcode exceeds EIP-3860")
-    if FACTORY_DEPLOYED_RUNTIME_BYTES > EIP_170_LIMIT:
-        raise SystemExit("factory runtime exceeds EIP-170")
-    if len(blueprint_runtime) > EIP_170_LIMIT:
-        raise SystemExit("blueprint runtime exceeds EIP-170")
 
-    config = tomllib.loads((ROOT / "foundry.toml").read_text())
-    fail("Solidity version", config["profile"]["default"]["solc_version"], manifest["verification"]["solidityVersion"])
-    fail("EVM version", config["profile"]["default"]["evm_version"], manifest["compiler"]["evmVersion"])
-    fail("Vyper optimizer", config["vyper"]["optimize"], manifest["compiler"]["optimizer"])
-    fail("Vyper path", config["vyper"]["path"], ".venv/bin/vyper")
-    vyper_version = subprocess.run(
-        [str(ROOT / config["vyper"]["path"]), "--version"],
+def main() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    fail("release status", manifest["status"], "release_candidate_not_deployed")
+    fail("repository", manifest["repository"], "git@github.com:convex-eth/curve_pegkeepers.git")
+    remote = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
         check=True,
         cwd=ROOT,
         capture_output=True,
         text=True,
     ).stdout.strip()
-    fail("Vyper version", vyper_version, manifest["compiler"]["version"])
+    fail("origin remote", remote, manifest["repository"])
+    source_commit = manifest["productionSourceCommit"]
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", source_commit, "HEAD"],
+        check=True,
+        cwd=ROOT,
+    )
+    expected_evidence_drift = [
+        "deployments/mainnet/PegKeeperV3-release.json",
+        "docs/pegkeeper-v3-release-checklist.md",
+        "scripts/verify-release-manifest.py",
+    ]
+    actual_drift = subprocess.run(
+        ["git", "diff", "--name-only", source_commit, "--"],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    fail("tracked drift from production source commit", actual_drift, expected_evidence_drift)
+    generated_at = datetime.fromisoformat(manifest["generatedAtUtc"].replace("Z", "+00:00"))
+    source_commit_time = datetime.fromisoformat(
+        subprocess.run(
+            ["git", "show", "-s", "--format=%cI", source_commit],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+    if generated_at < source_commit_time:
+        raise SystemExit(
+            f"manifest generated before source commit: {generated_at.isoformat()} < {source_commit_time.isoformat()}"
+        )
+
+    implementation, impl_creation, impl_runtime = verify_artifact(
+        "implementation",
+        manifest["implementation"],
+        ARTIFACTS["implementation"][0],
+        ARTIFACTS["implementation"][1],
+        ARTIFACTS["implementation"][2],
+        "compilerCreationBytes",
+        "compilerCreationKeccak256",
+        "semanticCoreRuntimeBytes",
+        "semanticCoreRuntimeKeccak256",
+    )
+    preview, preview_creation, preview_runtime = verify_artifact(
+        "preview",
+        manifest["previewModule"],
+        ARTIFACTS["preview"][0],
+        ARTIFACTS["preview"][1],
+        ARTIFACTS["preview"][2],
+        "creationBytes",
+        "creationKeccak256",
+        "runtimeBytes",
+        "runtimeKeccak256",
+    )
+    factory, factory_creation, factory_runtime = verify_artifact(
+        "factory",
+        manifest["deploymentFactory"],
+        ARTIFACTS["factory"][0],
+        ARTIFACTS["factory"][1],
+        ARTIFACTS["factory"][2],
+        "compilerCreationBytes",
+        "compilerCreationKeccak256",
+        "runtimeTemplateBytes",
+        "runtimeTemplateKeccak256",
+    )
+    curve, _, curve_runtime = verify_artifact(
+        "Curve oracle",
+        manifest["oraclePolicy"]["curve"],
+        ARTIFACTS["curve"][0],
+        ARTIFACTS["curve"][1],
+        ARTIFACTS["curve"][2],
+        "compilerCreationBytes",
+        "compilerCreationKeccak256",
+        "runtimeTemplateBytes",
+        "runtimeTemplateKeccak256",
+    )
+    chainlink, _, chainlink_runtime = verify_artifact(
+        "Chainlink oracle",
+        manifest["oraclePolicy"]["chainlink"],
+        ARTIFACTS["chainlink"][0],
+        ARTIFACTS["chainlink"][1],
+        ARTIFACTS["chainlink"][2],
+        "compilerCreationBytes",
+        "compilerCreationKeccak256",
+        "runtimeTemplateBytes",
+        "runtimeTemplateKeccak256",
+    )
+
+    for key in ("implementation", "factory", "preview", "curve", "chainlink"):
+        verify_source_commit(source_commit, ARTIFACTS[key][0])
+    for script in (
+        ROOT / "script/DeployPegKeeperV3Oracles.s.sol",
+        ROOT / "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
+        ROOT / "script/DeployPegKeeperV3Factory.s.sol",
+        ROOT / "script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol",
+    ):
+        verify_source_commit(source_commit, script)
+
+    impl_release = manifest["implementation"]["artifact"]
+    fail("implementation constructor args", impl_release["constructorArgsBytes"], 32)
+    fail("implementation initcode", len(impl_creation) + 32, impl_release["fullInitCodeBytes"])
+    fail("implementation initcode limit", impl_release["eip3860LimitBytes"], EIP_3860_LIMIT)
+    fail("implementation initcode margin", EIP_3860_LIMIT - len(impl_creation) - 32, impl_release["fullInitCodeMarginBytes"])
+    fail("implementation deployed runtime", len(impl_runtime) + 32, impl_release["deployedRuntimeBytes"])
+    fail("implementation runtime limit", impl_release["eip170LimitBytes"], EIP_170_LIMIT)
+    fail("implementation runtime margin", EIP_170_LIMIT - len(impl_runtime) - 32, impl_release["deployedRuntimeMarginBytes"])
+    fail(
+        "implementation operational initialization lock",
+        manifest["implementation"]["lockedAgainstOperationalInitialization"],
+        True,
+    )
+    if len(impl_runtime) + 32 > EIP_170_LIMIT:
+        raise SystemExit("implementation exceeds EIP-170")
+
+    preview_release = manifest["previewModule"]["artifact"]
+    fail("preview runtime limit", preview_release["eip170LimitBytes"], EIP_170_LIMIT)
+    fail("preview runtime margin", EIP_170_LIMIT - len(preview_runtime), preview_release["runtimeMarginBytes"])
+    fail("preview stateless", manifest["previewModule"]["stateless"], True)
+    fail("preview keeper binding", manifest["previewModule"]["keeperIdentityBound"], True)
+
+    factory_release = manifest["deploymentFactory"]["artifact"]
+    fail("factory constructor args", factory_release["constructorArgsBytes"], 352)
+    fail("factory initcode", len(factory_creation) + 352, factory_release["fullInitCodeBytes"])
+    fail("factory initcode limit", factory_release["eip3860LimitBytes"], EIP_3860_LIMIT)
+    fail("factory initcode margin", EIP_3860_LIMIT - len(factory_creation) - 352, factory_release["fullInitCodeMarginBytes"])
+    fail("factory deployed runtime", len(factory_runtime) + 64, factory_release["deployedRuntimeBytes"])
+    fail("factory runtime limit", factory_release["eip170LimitBytes"], EIP_170_LIMIT)
+    fail("factory runtime margin", EIP_170_LIMIT - len(factory_runtime) - 64, factory_release["deployedRuntimeMarginBytes"])
+    fail("factory immutable implementation", manifest["deploymentFactory"]["implementationImmutableAfterConstruction"], True)
+    fail("factory implementation setter", manifest["deploymentFactory"]["implementationSetterPresent"], False)
+    if len(factory_runtime) + 64 > EIP_170_LIMIT:
+        raise SystemExit("factory exceeds EIP-170")
+
+    expected_error_selectors = {
+        "NotOwner()": "0x30cd7471",
+        "NotPendingOwner()": "0x1853971c",
+        "InvalidOwner()": "0x49e27cff",
+        "InvalidImplementation()": "0x68155f9a",
+        "InvalidDefaults()": "0xa7f2ca4b",
+        "InvalidTargetAmm()": "0xf871d4c8",
+        "DeploymentFailed()": "0x30116425",
+    }
+    fail(
+        "legacy factory errors",
+        sorted(manifest["deploymentFactory"]["legacyCustomErrors"]),
+        sorted(expected_error_selectors),
+    )
+    factory_source = ARTIFACTS["factory"][0].read_text()
+    for signature, selector in expected_error_selectors.items():
+        if f'method_id("{signature}")' not in factory_source:
+            raise SystemExit(f"factory error missing from source: {signature}")
+        actual_selector = subprocess.run(
+            ["cast", "sig", signature],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        fail(f"factory error selector {signature}", actual_selector, selector)
+
+    proxy = manifest["minimalProxy"]
+    fail("proxy standard", proxy["standard"], "EIP-1167")
+    fail("proxy initcode bytes", proxy["initCodeBytes"], 55)
+    fail("proxy runtime bytes", proxy["runtimeBytes"], 45)
+    fail("proxy runtime margin", EIP_170_LIMIT - 45, proxy["runtimeMarginBytes"])
+    fail("proxy creates", proxy["createsPerKeeper"], 1)
+    for flag in ("proxyAdminPresent", "upgradeSlotPresent", "implementationSetterPresent"):
+        fail(flag, proxy[flag], False)
+    fail("proxy atomic initialization", proxy["atomicFactoryInitialization"], True)
+
+    if "blueprint" in manifest or "blueprint" in manifest["deploymentFactory"]:
+        raise SystemExit("obsolete blueprint evidence present")
+
+    oracle = manifest["oraclePolicy"]
+    fail("oracle selection", oracle["selectionStatus"], "unresolved_curve_or_chainlink")
+    fail("oracle selection blocker", oracle["releaseBlockedUntilSelection"], True)
+    fail("oracle precision", oracle["commonPriceDecimals"], 18)
+    fail("oracle par cap", oracle["favorablePriceCap"], "1000000000000000000")
+    fail("oracle floor", oracle["minimumLaunchPrice"], "999700000000000000")
+    fail("Curve adapter count", len(oracle["curve"]["adapters"]), 5)
+    fail("Chainlink adapter count", len(oracle["chainlink"]["adapters"]), 2)
+    fail("Curve deployment script", oracle["curve"]["deploymentScript"], "script/DeployPegKeeperV3Oracles.s.sol")
+    fail(
+        "Curve adapter mappings",
+        [
+            {
+                "role": adapter["role"],
+                "pool": adapter["pool"].lower(),
+                "asset": adapter["asset"].lower(),
+                "referenceAsset": adapter["referenceAsset"].lower(),
+                "inverted": adapter["inverted"],
+            }
+            for adapter in oracle["curve"]["adapters"]
+        ],
+        [
+            {"role": "frxUSD target", "pool": "0x81a2612f6dea269a6dd1f6deab45c5424ee2c4b7", "asset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "referenceAsset": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", "inverted": True},
+            {"role": "sfrxUSD downstream", "pool": "0xf292eb6c5dcb693eaaf392d0562a01c3710e5978", "asset": "0xcf62f905562626cfcdd2261162a51fd02fc9c5b6", "referenceAsset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "inverted": True},
+            {"role": "USDC target", "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85", "asset": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "referenceAsset": "0xdac17f958d2ee523a2206206994597c13d831ec7", "inverted": True},
+            {"role": "USDT target", "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85", "asset": "0xdac17f958d2ee523a2206206994597c13d831ec7", "referenceAsset": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "inverted": False},
+            {"role": "sUSDS downstream", "pool": "0x81a2612f6dea269a6dd1f6deab45c5424ee2c4b7", "asset": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", "referenceAsset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "inverted": False},
+        ],
+    )
+    fail(
+        "Chainlink deployment script",
+        oracle["chainlink"]["deploymentScript"],
+        "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
+    )
+    fail("Chainlink registry", oracle["chainlink"]["registry"].lower(), "0x47fb2585d2c56fe188d0e6ec628a38b74fceeedf")
+    fail("Chainlink quote", oracle["chainlink"]["quote"].lower(), "0x0000000000000000000000000000000000000348")
+    fail("Chainlink rotation", oracle["chainlink"]["feedRotationFailsClosed"], True)
+    fail("Chainlink direct reads", oracle["chainlink"]["directFeedContractReadsSupported"], False)
+    for adapter in oracle["chainlink"]["adapters"]:
+        fail(f"{adapter['role']} maxDelay unresolved", adapter["maxDelay"], None)
+        fail(f"{adapter['role']} decimals", adapter["feedDecimals"], 8)
+    fail(
+        "Chainlink adapter mappings",
+        [
+            (adapter["role"], adapter["base"].lower(), adapter["expectedFeed"].lower())
+            for adapter in oracle["chainlink"]["adapters"]
+        ],
+        [
+            ("frxUSD/USD", "0xcacd6fd266af91b8aed52accc382b4e165586e29", "0x62a897c3e81d809c7444bb63d7d51e1f2ebb6c3d"),
+            ("USDS/USD", "0xdc035d45d973e3ec169d2276ddab16f1e407384f", "0x592700e4fcdd674dc54d2681ded3b63f54f63f9a"),
+        ],
+    )
+    if len(curve_runtime) > EIP_170_LIMIT or len(chainlink_runtime) > EIP_170_LIMIT:
+        raise SystemExit("oracle runtime exceeds EIP-170")
+
+    launch = manifest["launchConfiguration"]
+    fail("semantic order", launch["semanticCreateOrder"], ["frxUSD -> sfrxUSD", "USDC -> sUSDS", "USDT -> sUSDS"])
+    fail("keeper indices", [keeper["index"] for keeper in launch["keepers"]], [1, 2, 3])
+    fail(
+        "keeper capacities",
+        [keeper["maxDeployedCrvUsd"] for keeper in launch["keepers"]],
+        ["2500000000000000000000000", "2500000000000000000000000", "5000000000000000000000000"],
+    )
+    fail("keepers paused", launch["allKeepersStartPaused"], True)
+    fail("velocity burst", launch["velocity"]["maxBurstBpsOfMaxDeployed"], 500)
+    fail("velocity refill", launch["velocity"]["fullRefillSeconds"], 300)
+    fail("velocity shared", launch["velocity"]["sharedAcrossExposureIncreasingPaths"], True)
+    fail("velocity contraction refund", launch["velocity"]["contractionRefundsPressure"], False)
+    fail(
+        "monetary policies",
+        [address.lower() for address in launch["monetaryPolicies"]],
+        [
+            "0x07491d124ddb3ef59a8938fcb3ee50f9fa0b9251",
+            "0xc684432fd6322c6d58b6bc5d28b18569aa0ad0a1",
+        ],
+    )
+
+    config = tomllib.loads((ROOT / "foundry.toml").read_text())
+    toolchain = manifest["toolchain"]
+    fail("Solidity version", config["profile"]["default"]["solc_version"], toolchain["solidityVersion"])
+    fail("EVM version", config["profile"]["default"]["evm_version"], toolchain["evmVersion"])
+    fail("Vyper path", config["vyper"]["path"], toolchain["vyperPath"])
+    fail("Vyper optimizer", config["vyper"]["optimize"], toolchain["vyperOptimizer"])
+    vyper_version = subprocess.run(
+        [str(ROOT / toolchain["vyperPath"]), "--version"],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    fail("Vyper version", vyper_version, toolchain["vyperVersion"])
+    forge_version = subprocess.run(
+        ["forge", "--version"], check=True, cwd=ROOT, capture_output=True, text=True
+    ).stdout.splitlines()[0]
+    fail("Forge version", forge_version, f"forge Version: {toolchain['forgeVersion']}")
 
     verification = manifest["verification"]
-    fail("tests passed", verification["testsPassed"], TESTS_PASSED)
-    fail("tests failed", verification["testsFailed"], 0)
-    fail("tests skipped", verification["testsSkipped"], 0)
-    for label in ("deploymentTest", "runtimeSizeTest", "abiParity", "releaseGates"):
+    fail("listed tests", listed_test_count(), EXPECTED_TESTS)
+    fail("manifest tests", verification["testsPassed"], EXPECTED_TESTS)
+    fail("manifest failures", verification["testsFailed"], 0)
+    fail("manifest skipped", verification["testsSkipped"], 0)
+    for label in (
+        "keeperAbiParity",
+        "factoryAbiParity",
+        "chainlinkAbiParity",
+        "runtimeSizeTest",
+        "factoryDeploymentTest",
+        "curveOracleTests",
+        "chainlinkOracleTests",
+        "proposalTests",
+        "releaseCanary",
+        "independentFactoryReview",
+        "independentChainlinkReview",
+    ):
         fail(label, verification[label], "pass")
 
-    candidate_constructor = manifest["candidateConstructor"]
-    candidate_defaults = release_factory["candidateDefaults"]
-    fail("candidate factory owner pending", candidate_defaults["owner"], None)
-    fail("candidate deployment factory pending", candidate_constructor["pegKeeperFactory"], None)
-    fail(
-        "candidate constructor keys",
-        set(candidate_constructor),
-        {
-            "pegKeeperFactory",
-            "targetAmm",
-            "targetAsset",
-            "backingAsset",
-            "yieldToken",
-            "maxDeployedCrvUsd",
-            "operatorConfirmationRequired",
-            "keeperIndex",
-        },
-    )
-    fail(
-        "candidate max deployed crvUSD",
-        candidate_defaults["maxDeployedCrvUsd"],
-        candidate_constructor["maxDeployedCrvUsd"],
-    )
-    zero_address = "0x0000000000000000000000000000000000000000"
-    for label in ("controllerFactory", "admin", "emergencyAdmin", "feeReceiver"):
-        if candidate_defaults[label] in (None, zero_address):
-            raise SystemExit(f"candidate {label} must be a nonzero address")
-    if candidate_defaults["admin"] == candidate_defaults["emergencyAdmin"]:
-        raise SystemExit("candidate admin and emergency admin must differ")
-    fail("candidate keeper index", candidate_constructor["keeperIndex"], 1)
-    fail("candidate constructor confirmation", candidate_constructor["operatorConfirmationRequired"], True)
-    fail("candidate confirmation", candidate_defaults["operatorConfirmationRequired"], True)
+    canary = manifest["latestMainnetCanary"]
+    fail("canary block", canary["block"], 25_868_730)
+    fail("canary script", canary["script"], "script/PegKeeperV3ReleaseCanary.s.sol")
+    fail("canary result", canary["result"], "pass")
+    fail("canary broadcast", canary["broadcast"], False)
+    fail("canary crvUSD sold", canary["simulatedCrvUsdSold"], "100000000000000000000000")
+    fail("canary sUSDS received", canary["simulatedSusdsReceived"], "90271961105869561167682")
+    fail("canary contraction sUSDS", canary["simulatedContractionQuoteSusds"], "9027196110586956116768")
+    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9994438638831380475760")
+    fail("canary expansion hash", canary["expansionPathHash"], "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f")
+    fail("canary contraction hash", canary["contractionPathHash"], "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986")
 
-    source_commit = manifest["productionSourceCommit"]
-    committed_source = subprocess.run(
-        ["git", "show", f"{source_commit}:src/vyper/PegKeeperV3.vy"],
-        check=True,
-        cwd=ROOT,
-        capture_output=True,
-    ).stdout
-    fail("production source commit", committed_source, source)
-    committed_factory_source = subprocess.run(
-        ["git", "show", f"{source_commit}:src/vyper/PegKeeperV3Factory.vy"],
-        check=True,
-        cwd=ROOT,
-        capture_output=True,
-    ).stdout
-    fail("production factory source commit", committed_factory_source, factory_source)
+    operator = manifest["operatorInputs"]
+    fail("factory owner unresolved", operator["factoryOwner"], None)
+    fail("oracle family unresolved", operator["selectedOracleFamily"], None)
+    fail("frxUSD Chainlink delay unresolved", operator["chainlinkFrxUsdMaxDelay"], None)
+    fail("USDS Chainlink delay unresolved", operator["chainlinkUsdsMaxDelay"], None)
+    fail("factory defaults unapproved", operator["factoryDefaultsApproved"], False)
+    fail("operator confirmation", operator["operatorConfirmationRequired"], True)
 
     deployment = manifest["deployment"]
-    fail("undeployed address", deployment["address"], None)
-    fail("undeployed transaction", deployment["transactionHash"], None)
-    fail("undeployed initcode hash", deployment["fullInitCodeKeccak256"], None)
-    fail("undeployed code hash", deployment["deployedCodeKeccak256"], None)
-    fail("undeployed factory debt ceiling", deployment["factoryDebtCeiling"], None)
-    fail("deployment verification", deployment["verified"], False)
-    fail("activation status", deployment["activated"], False)
-
-    factory_deployment = release_factory["deployment"]
-    fail("undeployed blueprint address", factory_deployment["blueprintAddress"], None)
-    fail("undeployed factory address", factory_deployment["factoryAddress"], None)
-    fail("undeployed factory transaction", factory_deployment["transactionHash"], None)
-    fail("factory deployment verification", factory_deployment["verified"], False)
-
-    latest_canary = manifest["latestMainnetCanary"]
-    fail("canary script", latest_canary["script"], "script/PegKeeperV3ReleaseCanary.s.sol")
-    fail("canary result", latest_canary["result"], "pass")
-    fail("canary broadcast", latest_canary["broadcast"], False)
+    for label in ("previewModuleAddress", "implementationAddress", "factoryAddress"):
+        fail(f"undeployed {label}", deployment[label], None)
+    for label in ("oracleAddresses", "keeperAddresses", "transactionHashes"):
+        fail(f"undeployed {label}", deployment[label], [])
+    for label in ("verified", "registered", "activated"):
+        fail(f"undeployed {label}", deployment[label], False)
 
     print(
-        "PegKeeperV3 release manifest verified: "
-        f"runtime={DEPLOYED_RUNTIME_BYTES} margin={EIP_170_LIMIT - DEPLOYED_RUNTIME_BYTES} "
-        f"initcode={full_initcode_bytes} "
-        f"functions={functions} events={events} "
-        f"factory_runtime={FACTORY_DEPLOYED_RUNTIME_BYTES} "
-        f"blueprint_runtime={len(blueprint_runtime)}"
+        "PegKeeperV3 proxy-era release manifest verified: "
+        f"source={source_commit} tests={EXPECTED_TESTS} "
+        f"implementation_runtime={len(impl_runtime) + 32} "
+        f"factory_runtime={len(factory_runtime) + 64} "
+        f"preview_runtime={len(preview_runtime)} oracle_selection=unresolved"
     )
 
 

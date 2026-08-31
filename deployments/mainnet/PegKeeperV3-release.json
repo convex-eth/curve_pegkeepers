@@ -1,176 +1,249 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-30T15:27:11Z",
+  "generatedAtUtc": "2026-08-31T04:54:06Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "f6add44f9cfff3a2062a83946121443a44bc582a",
-  "compiler": {
-    "language": "Vyper",
-    "version": "0.3.10+commit.9136169",
-    "optimizer": "codesize",
-    "evmVersion": "shanghai"
+  "productionSourceCommit": "3fdbf9fdc26068c7a4d00d9bc047fb72a9136b7e",
+  "toolchain": {
+    "vyperVersion": "0.3.10+commit.9136169",
+    "vyperPath": ".venv/bin/vyper",
+    "vyperOptimizer": "codesize",
+    "solidityVersion": "0.8.35",
+    "evmVersion": "shanghai",
+    "forgeVersion": "1.7.1"
   },
-  "source": {
-    "path": "src/vyper/PegKeeperV3.vy",
-    "sha256": "bb47a57c13b46465acd82f013789a9f9d6c480fdbd3d15f61eb9b420777a94b5"
+  "implementation": {
+    "source": {
+      "path": "src/vyper/PegKeeperV3.vy",
+      "sha256": "e2dc7447ded98f7c4968552f317001c14fad8950e7b294fec13bba743762b2c2"
+    },
+    "artifact": {
+      "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
+      "compilerCreationBytes": 23283,
+      "compilerCreationKeccak256": "0x675ed564857a66c77913fb8b27ec0c192062fb1cfe8d431d1ffa0b033a4c7cbe",
+      "semanticCoreRuntimeBytes": 23129,
+      "semanticCoreRuntimeKeccak256": "0x2501e99f9b32ed5319c9e4d28890a199bbd3367689027341f955c5dffc35aeba",
+      "constructorArgsBytes": 32,
+      "fullInitCodeBytes": 23315,
+      "eip3860LimitBytes": 49152,
+      "fullInitCodeMarginBytes": 25837,
+      "deployedRuntimeBytes": 23161,
+      "eip170LimitBytes": 24576,
+      "deployedRuntimeMarginBytes": 1415,
+      "abiFunctions": 76,
+      "abiEvents": 12
+    },
+    "lockedAgainstOperationalInitialization": true
   },
-  "artifact": {
-    "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-    "compilerCreationBytes": 24146,
-    "compilerCreationKeccak256": "0xd41f30e45093b67bf2bf1d925c922be0390c20e07d8a0187045db387b8a64fcf",
-    "constructorArgsBytes": 224,
-    "fullInitCodeBytes": 24370,
-    "eip3860LimitBytes": 49152,
-    "fullInitCodeMarginBytes": 24782,
-    "runtimeTemplateBytes": 22606,
-    "runtimeTemplateKeccak256": "0x6e67f48ac8aee844760957e36fdd546a9a1aeedef80e9318a97fb2e493f6380a",
-    "deployedRuntimeBytes": 22862,
-    "eip170LimitBytes": 24576,
-    "deployedRuntimeMarginBytes": 1714,
-    "abiFunctions": 63,
-    "abiEvents": 11
+  "previewModule": {
+    "source": {
+      "path": "src/PegKeeperV3PreviewModule.sol",
+      "sha256": "37c7ab356f36ffb5e8d9511c3108e22e9a759dd6d7fb353961761f4f80375a30"
+    },
+    "artifact": {
+      "path": "out/PegKeeperV3PreviewModule.sol/PegKeeperV3PreviewModule.json",
+      "creationBytes": 8229,
+      "creationKeccak256": "0x8dbad6d7cd7c00352a53e057e43e0be446bd330a8d37bc665dcb65b1f2e09f8b",
+      "runtimeBytes": 8201,
+      "runtimeKeccak256": "0xb130d1b224b3d8e374f283de9b209f3b85cca034d8eecad1b5ea708811058807",
+      "eip170LimitBytes": 24576,
+      "runtimeMarginBytes": 16375
+    },
+    "stateless": true,
+    "keeperIdentityBound": true
   },
   "deploymentFactory": {
     "source": {
       "path": "src/vyper/PegKeeperV3Factory.vy",
-      "sha256": "4fa5b31f91fae0e59a586fe1c3b565e969ec36233d5011561dc69c2b751b28d1"
+      "sha256": "ef605684752536ba479f76dd9ccdf508d1d8bc9c119f2ffc4bc94b6608fd21a7"
     },
     "artifact": {
       "path": "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
-      "compilerCreationBytes": 4706,
-      "compilerCreationKeccak256": "0x301fa95841bab0d299dd4e60e8f8d7a9af76848c63c8e7a0aa206df3cdb086c9",
+      "compilerCreationBytes": 5024,
+      "compilerCreationKeccak256": "0x33357d46a4694778386d397eef30f1af6d202d08ab9b48d04538488d5f93a535",
+      "runtimeTemplateBytes": 3848,
+      "runtimeTemplateKeccak256": "0x9ef8e2c0545e1621ee2865ceb80282dcf8c77a2a178d1a9f621aeabadd6e155c",
       "constructorArgsBytes": 352,
-      "fullInitCodeBytes": 5058,
+      "fullInitCodeBytes": 5376,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 44094,
-      "runtimeTemplateBytes": 3746,
-      "runtimeTemplateKeccak256": "0x711f5e39bee731e343d594d9583877cb878ba360f5e697a94f441e04d290f4ac",
-      "deployedRuntimeBytes": 3778,
+      "fullInitCodeMarginBytes": 43776,
+      "deployedRuntimeBytes": 3912,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 20798,
-      "abiFunctions": 17,
-      "abiEvents": 5
+      "deployedRuntimeMarginBytes": 20664,
+      "abiFunctions": 16,
+      "abiEvents": 4
     },
-    "blueprint": {
-      "format": "EIP-5202 version 0",
-      "preamble": "0xfe7100",
-      "runtimeBytes": 24149,
-      "runtimeKeccak256": "0x32d6f187df94fa04ddae92a9dfb3aef0dd931d3f3f2b1decaa404d894894b12e",
-      "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 427
+    "implementationImmutableAfterConstruction": true,
+    "implementationSetterPresent": false,
+    "legacyCustomErrors": [
+      "NotOwner()",
+      "NotPendingOwner()",
+      "InvalidOwner()",
+      "InvalidImplementation()",
+      "InvalidDefaults()",
+      "InvalidTargetAmm()",
+      "DeploymentFailed()"
+    ]
+  },
+  "minimalProxy": {
+    "standard": "EIP-1167",
+    "initCodeBytes": 55,
+    "runtimeBytes": 45,
+    "eip170LimitBytes": 24576,
+    "runtimeMarginBytes": 24531,
+    "createsPerKeeper": 1,
+    "atomicFactoryInitialization": true,
+    "proxyAdminPresent": false,
+    "upgradeSlotPresent": false,
+    "implementationSetterPresent": false
+  },
+  "oraclePolicy": {
+    "selectionStatus": "unresolved_curve_or_chainlink",
+    "releaseBlockedUntilSelection": true,
+    "commonPriceDecimals": 18,
+    "favorablePriceCap": "1000000000000000000",
+    "minimumLaunchPrice": "999700000000000000",
+    "curve": {
+      "source": {
+        "path": "src/vyper/CurveStablecoinOracle.vy",
+        "sha256": "f0f0e1faae6e9072532bdbedff94b0625dd77ac559d918acaa56da4e671a741b"
+      },
+      "artifact": {
+        "path": "out/CurveStablecoinOracle.vy/CurveStablecoinOracle.json",
+        "compilerCreationBytes": 805,
+        "compilerCreationKeccak256": "0x7b3ffd51dafbcac2f9e05b92ac7a8ff0e0e383bd51d59455b40cd34fd2267aad",
+        "runtimeTemplateBytes": 329,
+        "runtimeTemplateKeccak256": "0xfb1bf536fa996ce08fe9176ab628f2d33de000f9736291d93954a34a7ebe3ca6",
+        "abiFunctions": 5
+      },
+      "deploymentScript": "script/DeployPegKeeperV3Oracles.s.sol",
+      "adapters": [
+        {
+          "role": "frxUSD target",
+          "pool": "0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7",
+          "asset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
+          "referenceAsset": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+          "inverted": true
+        },
+        {
+          "role": "sfrxUSD downstream",
+          "pool": "0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978",
+          "asset": "0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6",
+          "referenceAsset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
+          "inverted": true
+        },
+        {
+          "role": "USDC target",
+          "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
+          "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "referenceAsset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+          "inverted": true
+        },
+        {
+          "role": "USDT target",
+          "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
+          "asset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+          "referenceAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "inverted": false
+        },
+        {
+          "role": "sUSDS downstream",
+          "pool": "0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7",
+          "asset": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
+          "referenceAsset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
+          "inverted": false
+        }
+      ]
     },
-    "candidateDefaults": {
-      "owner": null,
-      "controllerFactory": "0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC",
-      "admin": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
-      "emergencyAdmin": "0x467947EE34aF926cF1DCac093870f613C96B1E0c",
-      "feeReceiver": "0x2dFd89449faff8a532790667baB21cF733C064f2",
-      "maxDeployedCrvUsd": null,
-      "targetAmmExecutionBufferBps": null,
-      "minDownstreamAttemptGas": null,
-      "fallbackSettlementGasReserve": null,
-      "expansionMaxRouteLossBps": null,
-      "operatorConfirmationRequired": true
-    },
-    "deployment": {
-      "blueprintAddress": null,
-      "factoryAddress": null,
-      "transactionHash": null,
-      "verified": false
+    "chainlink": {
+      "source": {
+        "path": "src/vyper/ChainlinkStablecoinOracle.vy",
+        "sha256": "2dc71478cc7f617b1d1481eba00be7ca25c50968479fa3651e7c8710ae4ccdbc"
+      },
+      "artifact": {
+        "path": "out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json",
+        "compilerCreationBytes": 1089,
+        "compilerCreationKeccak256": "0x7e8351cefe9fed9d46a61cbfde004bf8b9cb776d47107a93f7bf321d942b5004",
+        "runtimeTemplateBytes": 647,
+        "runtimeTemplateKeccak256": "0x483af8563d48ebbfb2b139a5b17d599246cf9f64ea85129ad00366d89ffd740d",
+        "abiFunctions": 7
+      },
+      "deploymentScript": "script/DeployPegKeeperV3ChainlinkOracles.s.sol",
+      "registry": "0x47Fb2585D2C56Fe188D0E6ec628a38b74fCeeeDf",
+      "quote": "0x0000000000000000000000000000000000000348",
+      "adapters": [
+        {
+          "role": "frxUSD/USD",
+          "base": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
+          "expectedFeed": "0x62a897c3e81d809c7444BB63D7D51E1F2EbB6C3D",
+          "feedDecimals": 8,
+          "maxDelay": null
+        },
+        {
+          "role": "USDS/USD",
+          "base": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
+          "expectedFeed": "0x592700e4FcDd674dC54d2681DED3B63f54F63f9A",
+          "feedDecimals": 8,
+          "maxDelay": null
+        }
+      ],
+      "directFeedContractReadsSupported": false,
+      "feedRotationFailsClosed": true
     }
   },
+  "launchConfiguration": {
+    "semanticCreateOrder": [
+      "frxUSD -> sfrxUSD",
+      "USDC -> sUSDS",
+      "USDT -> sUSDS"
+    ],
+    "keepers": [
+      {
+        "index": 1,
+        "name": "Pegkeeper 1",
+        "route": "frxUSD -> sfrxUSD",
+        "maxDeployedCrvUsd": "2500000000000000000000000"
+      },
+      {
+        "index": 2,
+        "name": "Pegkeeper 2",
+        "route": "USDC -> sUSDS",
+        "maxDeployedCrvUsd": "2500000000000000000000000"
+      },
+      {
+        "index": 3,
+        "name": "Pegkeeper 3",
+        "route": "USDT -> sUSDS",
+        "maxDeployedCrvUsd": "5000000000000000000000000"
+      }
+    ],
+    "allKeepersStartPaused": true,
+    "velocity": {
+      "maxBurstBpsOfMaxDeployed": 500,
+      "fullRefillSeconds": 300,
+      "sharedAcrossExposureIncreasingPaths": true,
+      "contractionRefundsPressure": false
+    },
+    "monetaryPolicies": [
+      "0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251",
+      "0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1"
+    ]
+  },
   "verification": {
-    "forgeVersion": "1.7.1",
-    "solidityVersion": "0.8.30",
-    "testsPassed": 207,
+    "testsPassed": 243,
     "testsFailed": 0,
     "testsSkipped": 0,
-    "deploymentTest": "pass",
+    "keeperAbiParity": "pass",
+    "factoryAbiParity": "pass",
+    "chainlinkAbiParity": "pass",
     "runtimeSizeTest": "pass",
-    "abiParity": "pass",
-    "releaseGates": "pass"
-  },
-  "candidateConstructor": {
-    "pegKeeperFactory": null,
-    "targetAmm": "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4",
-    "targetAsset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-    "backingAsset": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-    "yieldToken": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-    "maxDeployedCrvUsd": null,
-    "operatorConfirmationRequired": true,
-    "keeperIndex": 1
-  },
-  "candidatePaths": {
-    "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
-    "expansionSteps": [
-      {
-        "kind": "CURVE_SWAP",
-        "venue": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        "tokenIn": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        "tokenOut": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "poolIndexIn": 2,
-        "poolIndexOut": 0,
-        "canaryExecutionBufferBps": 5
-      },
-      {
-        "kind": "DAI_USDS_CONVERTER",
-        "venue": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
-        "tokenIn": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "tokenOut": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-        "poolIndexIn": 0,
-        "poolIndexOut": 0,
-        "canaryExecutionBufferBps": 0
-      },
-      {
-        "kind": "ERC4626_DEPOSIT",
-        "venue": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-        "tokenIn": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-        "tokenOut": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-        "poolIndexIn": 0,
-        "poolIndexOut": 0,
-        "canaryExecutionBufferBps": 5
-      }
-    ],
-    "contractionPathHash": "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986",
-    "contractionSteps": [
-      {
-        "kind": "ERC4626_REDEEM",
-        "venue": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-        "tokenIn": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-        "tokenOut": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-        "poolIndexIn": 0,
-        "poolIndexOut": 0,
-        "canaryExecutionBufferBps": 5
-      },
-      {
-        "kind": "DAI_USDS_CONVERTER",
-        "venue": "0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A",
-        "tokenIn": "0xdC035D45d973E3EC169d2276DDab16f1e407384F",
-        "tokenOut": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "poolIndexIn": 0,
-        "poolIndexOut": 0,
-        "canaryExecutionBufferBps": 0
-      },
-      {
-        "kind": "CURVE_SWAP",
-        "venue": "0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7",
-        "tokenIn": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "tokenOut": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        "poolIndexIn": 0,
-        "poolIndexOut": 2,
-        "canaryExecutionBufferBps": 5
-      },
-      {
-        "kind": "CURVE_SWAP",
-        "venue": "0x390f3595bCa2Df7d23783dFd126427CCeb997BF4",
-        "tokenIn": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        "tokenOut": "0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E",
-        "poolIndexIn": 0,
-        "poolIndexOut": 1,
-        "canaryExecutionBufferBps": 5
-      }
-    ],
-    "canaryExpansionMaxRouteLossBps": 100,
-    "productionCalibrationRequired": true
+    "factoryDeploymentTest": "pass",
+    "curveOracleTests": "pass",
+    "chainlinkOracleTests": "pass",
+    "proposalTests": "pass",
+    "releaseCanary": "pass",
+    "independentFactoryReview": "pass",
+    "independentChainlinkReview": "pass",
+    "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit"
   },
   "latestMainnetCanary": {
     "block": 25868730,
@@ -180,26 +253,34 @@
     "simulatedSusdsReceived": "90271961105869561167682",
     "simulatedContractionQuoteSusds": "9027196110586956116768",
     "simulatedContractionQuoteCrvUsd": "9994438638831380475760",
-    "targetAmmExecutionBufferBps": 0,
-    "minDownstreamAttemptGas": 1500000,
-    "fallbackSettlementGasReserve": 300000,
+    "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
+    "contractionPathHash": "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986",
     "broadcast": false
   },
+  "operatorInputs": {
+    "factoryOwner": null,
+    "factoryDefaultsApproved": false,
+    "selectedOracleFamily": null,
+    "chainlinkFrxUsdMaxDelay": null,
+    "chainlinkUsdsMaxDelay": null,
+    "operatorConfirmationRequired": true
+  },
   "deployment": {
-    "address": null,
-    "transactionHash": null,
-    "fullInitCodeKeccak256": null,
-    "deployedCodeKeccak256": null,
-    "factoryDebtCeiling": null,
+    "previewModuleAddress": null,
+    "implementationAddress": null,
+    "factoryAddress": null,
+    "oracleAddresses": [],
+    "keeperAddresses": [],
+    "transactionHashes": [],
     "verified": false,
+    "registered": false,
     "activated": false
   },
   "activationBlockers": [
-    "Governance must confirm the deployment-factory owner, PegKeeper admin, emergency admin, and fee receiver.",
-    "Governance must select maxDeployedCrvUsd and the ControllerFactory debt ceiling.",
-    "Target-AMM and per-step buffers, route-loss tolerance, and gas reserve values require production calibration and approval.",
-    "The exact EIP-5202 implementation blueprint hash must be confirmed before factory deployment or implementation update.",
-    "A fresh current-block canary must pass immediately before broadcast and again before activation.",
-    "Blueprint, factory, PegKeeper deployment, and activation transactions require explicit operator approval; this release package does not broadcast them."
+    "Governance must choose Curve EMA or Chainlink Feed Registry adapters for the frxUSD and USDS checks and record one coherent selection.",
+    "If Chainlink is selected, governance must approve independent frxUSD and USDS maxDelay values.",
+    "Governance must confirm the deployment-factory owner and all shared defaults.",
+    "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
+    "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."
   ]
 }
