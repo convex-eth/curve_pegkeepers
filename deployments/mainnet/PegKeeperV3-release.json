@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-08-31T10:38:34Z",
+  "generatedAtUtc": "2026-09-01T00:15:23Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "b45211758a97d3806bdadba14f4ec2631cd25568",
+  "productionSourceCommit": "b05af5944bb332b04bb765b4d64f925f90ba3a10",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -99,8 +99,8 @@
     "implementationSetterPresent": false
   },
   "oraclePolicy": {
-    "selectionStatus": "unresolved_curve_or_chainlink",
-    "releaseBlockedUntilSelection": true,
+    "selectionStatus": "selected_chainlink_for_frxusd_usds",
+    "releaseBlockedUntilSelection": false,
     "commonPriceDecimals": 18,
     "favorablePriceCap": "1000000000000000000",
     "minimumLaunchPrice": "999700000000000000",
@@ -120,20 +120,6 @@
       "deploymentScript": "script/DeployPegKeeperV3.s.sol",
       "adapters": [
         {
-          "role": "frxUSD target",
-          "pool": "0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7",
-          "asset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
-          "referenceAsset": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-          "inverted": true
-        },
-        {
-          "role": "sfrxUSD downstream",
-          "pool": "0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978",
-          "asset": "0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6",
-          "referenceAsset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
-          "inverted": true
-        },
-        {
           "role": "USDC target",
           "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
           "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
@@ -145,13 +131,6 @@
           "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
           "asset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
           "referenceAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-          "inverted": false
-        },
-        {
-          "role": "sUSDS downstream",
-          "pool": "0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7",
-          "asset": "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD",
-          "referenceAsset": "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29",
           "inverted": false
         }
       ]
@@ -196,7 +175,24 @@
       "directProxyReadsSupported": true,
       "underlyingAggregatorRotationSupported": true,
       "maxDelayStatus": "provisional_reconfirm_before_broadcast"
-    }
+    },
+    "proposalBindings": [
+      {
+        "keeper": "frxUSD -> sfrxUSD",
+        "targetOracle": "frxUSD/USD Chainlink",
+        "downstreamOracle": "frxUSD/USD Chainlink"
+      },
+      {
+        "keeper": "USDC -> sUSDS",
+        "targetOracle": "USDC/USDT Curve EMA",
+        "downstreamOracle": "USDS/USD Chainlink"
+      },
+      {
+        "keeper": "USDT -> sUSDS",
+        "targetOracle": "USDT/USDC Curve EMA",
+        "downstreamOracle": "USDS/USD Chainlink"
+      }
+    ]
   },
   "launchConfiguration": {
     "semanticCreateOrder": [
@@ -237,7 +233,7 @@
     ]
   },
   "verification": {
-    "testsPassed": 246,
+    "testsPassed": 248,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
@@ -258,6 +254,8 @@
     "previewAbiParity": "pass",
     "independentCanonicalProxySemanticReview": "pass",
     "independentCanonicalProxyIntegrationReview": "pass",
+    "independentSelectedChainlinkSemanticReview": "pass",
+    "independentSelectedChainlinkDocumentationReview": "pass",
     "manifestMutationTests": "pass"
   },
   "latestMainnetCanary": {
@@ -265,9 +263,9 @@
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90271961105869561167682",
-    "simulatedContractionQuoteSusds": "9027196110586956116768",
-    "simulatedContractionQuoteCrvUsd": "9994438638831380475760",
+    "simulatedSusdsReceived": "90273364828690285538377",
+    "simulatedContractionQuoteSusds": "9027336482869028553837",
+    "simulatedContractionQuoteCrvUsd": "9994594051909217718251",
     "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
     "contractionPathHash": "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986",
     "broadcast": false
@@ -275,7 +273,7 @@
   "operatorInputs": {
     "factoryOwner": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
     "factoryDefaultsApproved": false,
-    "selectedOracleFamily": null,
+    "selectedOracleFamily": "chainlink_for_frxusd_usds",
     "chainlinkFrxUsdMaxDelay": 93600,
     "chainlinkUsdsMaxDelay": 93600,
     "operatorConfirmationRequired": true
@@ -288,13 +286,10 @@
       "previewModule",
       "implementation",
       "factory",
-      "frxUsdTargetOracle",
-      "sfrxUsdBackingOracle",
       "usdcTargetOracle",
       "usdtTargetOracle",
-      "susdsBackingOracle",
-      "frxUsdChainlinkOracle",
-      "usdsChainlinkOracle"
+      "frxUsdUsdOracle",
+      "usdsUsdOracle"
     ],
     "previewModuleAddress": null,
     "implementationAddress": null,
@@ -307,8 +302,7 @@
     "activated": false
   },
   "activationBlockers": [
-    "Governance must choose Curve EMA or direct canonical Chainlink proxy adapters for the frxUSD and USDS checks and record one coherent selection.",
-    "If Chainlink is selected, governance must reconfirm or replace the provisional 93,600-second frxUSD and USDS maxDelay values after reviewing both feeds independently.",
+    "Governance must reconfirm or replace the provisional 93,600-second frxUSD and USDS maxDelay values after reviewing both selected Chainlink feeds independently.",
     "Governance must confirm the hardcoded Curve Ownership Agent factory owner and all shared defaults.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
     "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."

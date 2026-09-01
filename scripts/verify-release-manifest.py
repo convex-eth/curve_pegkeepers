@@ -16,7 +16,7 @@ MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
 REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 22_300
-EXPECTED_TESTS = 246
+EXPECTED_TESTS = 248
 
 ARTIFACTS = {
     "implementation": (
@@ -50,6 +50,10 @@ ARTIFACTS = {
 def fail(label: str, actual: object, expected: object) -> None:
     if actual != expected:
         raise SystemExit(f"{label}: expected {expected!r}, got {actual!r}")
+
+
+def fail_keys(label: str, actual: dict[str, Any], expected: set[str]) -> None:
+    fail(f"{label} fields", set(actual), expected)
 
 
 def bytecode(artifact: dict[str, Any], key: str) -> bytes:
@@ -311,13 +315,10 @@ def main() -> None:
         "_deployPreviewModule()",
         "_deployImplementation(deployment.previewModule)",
         "_deployFactory(config, deployment.implementation)",
-        "deployment.frxUsdTargetOracle =",
-        "deployment.sfrxUsdBackingOracle =",
         "deployment.usdcTargetOracle =",
         "deployment.usdtTargetOracle =",
-        "deployment.susdsBackingOracle =",
-        "deployment.frxUsdChainlinkOracle =",
-        "deployment.usdsChainlinkOracle =",
+        "deployment.frxUsdUsdOracle =",
+        "deployment.usdsUsdOracle =",
     ]
     create_positions = [deploy_script.find(marker) for marker in create_markers]
     if -1 in create_positions or create_positions != sorted(create_positions):
@@ -327,13 +328,10 @@ def main() -> None:
         "previewModule",
         "implementation",
         "factory",
-        "frxUsdTargetOracle",
-        "sfrxUsdBackingOracle",
         "usdcTargetOracle",
         "usdtTargetOracle",
-        "susdsBackingOracle",
-        "frxUsdChainlinkOracle",
-        "usdsChainlinkOracle",
+        "frxUsdUsdOracle",
+        "usdsUsdOracle",
     ]
     if 'vm.serializeUint(objectKey, "chainId", block.chainid)' not in deploy_script:
         raise SystemExit("deployment JSON chainId missing")
@@ -342,9 +340,19 @@ def main() -> None:
             raise SystemExit(f"deployment JSON field missing: {field}")
     if 'vm.parseJsonUint(json, ".chainId") == block.chainid' not in proposal_script:
         raise SystemExit("proposal deployment chain binding missing")
-    for field in deployment_fields[2:8]:
+    for field in deployment_fields[2:]:
         if f'vm.parseJsonAddress(json, ".{field}")' not in proposal_script:
             raise SystemExit(f"proposal deployment field missing: {field}")
+    obsolete_deployment_fields = (
+        "frxUsdTargetOracle",
+        "sfrxUsdBackingOracle",
+        "susdsBackingOracle",
+        "frxUsdChainlinkOracle",
+        "usdsChainlinkOracle",
+    )
+    for field in obsolete_deployment_fields:
+        if field in deploy_script or field in proposal_script:
+            raise SystemExit(f"obsolete alternative-oracle deployment field present: {field}")
 
     impl_release = manifest["implementation"]["artifact"]
     fail("implementation constructor args", impl_release["constructorArgsBytes"], 32)
@@ -427,12 +435,75 @@ def main() -> None:
         raise SystemExit("obsolete blueprint evidence present")
 
     oracle = manifest["oraclePolicy"]
-    fail("oracle selection", oracle["selectionStatus"], "unresolved_curve_or_chainlink")
-    fail("oracle selection blocker", oracle["releaseBlockedUntilSelection"], True)
+    fail_keys(
+        "oracle policy",
+        oracle,
+        {
+            "selectionStatus",
+            "releaseBlockedUntilSelection",
+            "commonPriceDecimals",
+            "favorablePriceCap",
+            "minimumLaunchPrice",
+            "curve",
+            "chainlink",
+            "proposalBindings",
+        },
+    )
+    fail_keys(
+        "Curve oracle policy",
+        oracle["curve"],
+        {"source", "artifact", "deploymentScript", "adapters"},
+    )
+    fail_keys(
+        "Chainlink oracle policy",
+        oracle["chainlink"],
+        {
+            "source",
+            "artifact",
+            "deploymentScript",
+            "adapters",
+            "directProxyReadsSupported",
+            "underlyingAggregatorRotationSupported",
+            "maxDelayStatus",
+        },
+    )
+    for index, adapter in enumerate(oracle["curve"]["adapters"]):
+        fail_keys(
+            f"Curve adapter {index}",
+            adapter,
+            {"role", "pool", "asset", "referenceAsset", "inverted"},
+        )
+    for index, adapter in enumerate(oracle["chainlink"]["adapters"]):
+        fail_keys(
+            f"Chainlink adapter {index}",
+            adapter,
+            {
+                "role",
+                "ens",
+                "proxy",
+                "officialListing",
+                "deviationThresholdBps",
+                "heartbeatSeconds",
+                "feedDecimals",
+                "maxDelay",
+            },
+        )
+    for index, binding in enumerate(oracle["proposalBindings"]):
+        fail_keys(
+            f"proposal oracle binding {index}",
+            binding,
+            {"keeper", "targetOracle", "downstreamOracle"},
+        )
+    fail(
+        "oracle selection",
+        oracle["selectionStatus"],
+        "selected_chainlink_for_frxusd_usds",
+    )
+    fail("oracle selection blocker", oracle["releaseBlockedUntilSelection"], False)
     fail("oracle precision", oracle["commonPriceDecimals"], 18)
     fail("oracle par cap", oracle["favorablePriceCap"], "1000000000000000000")
     fail("oracle floor", oracle["minimumLaunchPrice"], "999700000000000000")
-    fail("Curve adapter count", len(oracle["curve"]["adapters"]), 5)
+    fail("Curve adapter count", len(oracle["curve"]["adapters"]), 2)
     fail("Chainlink adapter count", len(oracle["chainlink"]["adapters"]), 2)
     fail("Curve deployment script", oracle["curve"]["deploymentScript"], "script/DeployPegKeeperV3.s.sol")
     fail(
@@ -448,11 +519,8 @@ def main() -> None:
             for adapter in oracle["curve"]["adapters"]
         ],
         [
-            {"role": "frxUSD target", "pool": "0x81a2612f6dea269a6dd1f6deab45c5424ee2c4b7", "asset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "referenceAsset": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", "inverted": True},
-            {"role": "sfrxUSD downstream", "pool": "0xf292eb6c5dcb693eaaf392d0562a01c3710e5978", "asset": "0xcf62f905562626cfcdd2261162a51fd02fc9c5b6", "referenceAsset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "inverted": True},
             {"role": "USDC target", "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85", "asset": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "referenceAsset": "0xdac17f958d2ee523a2206206994597c13d831ec7", "inverted": True},
             {"role": "USDT target", "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85", "asset": "0xdac17f958d2ee523a2206206994597c13d831ec7", "referenceAsset": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "inverted": False},
-            {"role": "sUSDS downstream", "pool": "0x81a2612f6dea269a6dd1f6deab45c5424ee2c4b7", "asset": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", "referenceAsset": "0xcacd6fd266af91b8aed52accc382b4e165586e29", "inverted": False},
         ],
     )
     fail(
@@ -515,20 +583,56 @@ def main() -> None:
             ),
         ],
     )
+    fail(
+        "proposal oracle bindings",
+        oracle["proposalBindings"],
+        [
+            {
+                "keeper": "frxUSD -> sfrxUSD",
+                "targetOracle": "frxUSD/USD Chainlink",
+                "downstreamOracle": "frxUSD/USD Chainlink",
+            },
+            {
+                "keeper": "USDC -> sUSDS",
+                "targetOracle": "USDC/USDT Curve EMA",
+                "downstreamOracle": "USDS/USD Chainlink",
+            },
+            {
+                "keeper": "USDT -> sUSDS",
+                "targetOracle": "USDT/USDC Curve EMA",
+                "downstreamOracle": "USDS/USD Chainlink",
+            },
+        ],
+    )
+    for required_snippet in (
+        'frxUsdOracle = vm.parseJsonAddress(json, ".frxUsdUsdOracle")',
+        "frxUsdBackingOracle = frxUsdOracle",
+        'usdsOracle = vm.parseJsonAddress(json, ".usdsUsdOracle")',
+        "_validateChainlinkOracle(frxUsdOracle, FRXUSD_USD_PROXY)",
+        "_validateChainlinkOracle(usdsOracle, USDS_USD_PROXY)",
+        "_validateCurveOracle(usdcOracle, USDC_USDT_ORACLE_POOL, USDC, USDT, true)",
+        "_validateCurveOracle(usdtOracle, USDC_USDT_ORACLE_POOL, USDT, USDC, false)",
+    ):
+        if required_snippet not in proposal_script:
+            raise SystemExit(f"selected proposal oracle binding missing: {required_snippet}")
+
     lowered_deploy_script = deploy_script.lower()
+    lowered_proposal_script = proposal_script.lower()
     for required_proxy in (
         "0x9b4a96210bc8d9d55b1908b465d8b0de68b7ff83",
         "0xff30586cd0f29ed462364c7e81375fc0c71219b1",
     ):
-        if required_proxy not in lowered_deploy_script:
-            raise SystemExit(f"canonical Chainlink proxy missing from deployer: {required_proxy}")
+        if required_proxy not in lowered_deploy_script or required_proxy not in lowered_proposal_script:
+            raise SystemExit(
+                f"canonical Chainlink proxy missing from deployer or proposal: {required_proxy}"
+            )
     for obsolete_aggregator in (
         "0x62a897c3e81d809c7444bb63d7d51e1f2ebb6c3d",
         "0x592700e4fcdd674dc54d2681ded3b63f54f63f9a",
     ):
-        if obsolete_aggregator in lowered_deploy_script:
+        if obsolete_aggregator in lowered_deploy_script or obsolete_aggregator in lowered_proposal_script:
             raise SystemExit(
-                f"underlying Chainlink aggregator pinned in deployer: {obsolete_aggregator}"
+                f"underlying Chainlink aggregator pinned in deployer or proposal: {obsolete_aggregator}"
             )
     if len(curve_runtime) > EIP_170_LIMIT or len(chainlink_runtime) > EIP_170_LIMIT:
         raise SystemExit("oracle runtime exceeds EIP-170")
@@ -597,6 +701,8 @@ def main() -> None:
         "independentDeploymentReview",
         "independentCanonicalProxySemanticReview",
         "independentCanonicalProxyIntegrationReview",
+        "independentSelectedChainlinkSemanticReview",
+        "independentSelectedChainlinkDocumentationReview",
         "manifestMutationTests",
     ):
         fail(label, verification[label], "pass")
@@ -607,25 +713,60 @@ def main() -> None:
     fail("canary result", canary["result"], "pass")
     fail("canary broadcast", canary["broadcast"], False)
     fail("canary crvUSD sold", canary["simulatedCrvUsdSold"], "100000000000000000000000")
-    fail("canary sUSDS received", canary["simulatedSusdsReceived"], "90271961105869561167682")
-    fail("canary contraction sUSDS", canary["simulatedContractionQuoteSusds"], "9027196110586956116768")
-    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9994438638831380475760")
+    fail("canary sUSDS received", canary["simulatedSusdsReceived"], "90273364828690285538377")
+    fail("canary contraction sUSDS", canary["simulatedContractionQuoteSusds"], "9027336482869028553837")
+    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9994594051909217718251")
     fail("canary expansion hash", canary["expansionPathHash"], "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f")
     fail("canary contraction hash", canary["contractionPathHash"], "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986")
 
     operator = manifest["operatorInputs"]
+    fail_keys(
+        "operator inputs",
+        operator,
+        {
+            "factoryOwner",
+            "factoryDefaultsApproved",
+            "selectedOracleFamily",
+            "chainlinkFrxUsdMaxDelay",
+            "chainlinkUsdsMaxDelay",
+            "operatorConfirmationRequired",
+        },
+    )
     fail(
         "factory owner",
         str(operator["factoryOwner"] or "").lower(),
         "0x40907540d8a6c65c637785e8f8b742ae6b0b9968",
     )
-    fail("oracle family unresolved", operator["selectedOracleFamily"], None)
+    fail(
+        "selected oracle family",
+        operator["selectedOracleFamily"],
+        "chainlink_for_frxusd_usds",
+    )
     fail("frxUSD provisional Chainlink delay", operator["chainlinkFrxUsdMaxDelay"], 93_600)
     fail("USDS provisional Chainlink delay", operator["chainlinkUsdsMaxDelay"], 93_600)
     fail("factory defaults unapproved", operator["factoryDefaultsApproved"], False)
     fail("operator confirmation", operator["operatorConfirmationRequired"], True)
 
     deployment = manifest["deployment"]
+    fail_keys(
+        "deployment evidence",
+        deployment,
+        {
+            "script",
+            "outputPath",
+            "environmentConfiguration",
+            "monotonicCreateOrder",
+            "previewModuleAddress",
+            "implementationAddress",
+            "factoryAddress",
+            "oracleAddresses",
+            "keeperAddresses",
+            "transactionHashes",
+            "verified",
+            "registered",
+            "activated",
+        },
+    )
     fail("deployment script", deployment["script"], "script/DeployPegKeeperV3.s.sol")
     fail(
         "deployment output",
@@ -648,7 +789,8 @@ def main() -> None:
         f"source={source_commit} tests={EXPECTED_TESTS} "
         f"implementation_runtime={len(impl_runtime) + 32} "
         f"factory_runtime={len(factory_runtime) + 64} "
-        f"preview_runtime={len(preview_runtime)} oracle_selection=unresolved"
+        f"preview_runtime={len(preview_runtime)} "
+        "oracle_selection=chainlink_for_frxusd_usds"
     )
 
 

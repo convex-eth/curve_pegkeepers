@@ -4,12 +4,12 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `b45211758a97d3806bdadba14f4ec2631cd25568`.
+- [x] Production source commit: `b05af5944bb332b04bb765b4d64f925f90ba3a10`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
 - [x] Release manifest status is `release_candidate_not_deployed`.
-- [x] Manifest verifier is fail-closed against source provenance, generated artifacts, ABI parity, bytecode sizes/hashes, proxy architecture, both oracle families, test inventory, canary evidence, and undeployed state.
+- [x] Manifest verifier is fail-closed against source provenance, generated artifacts, ABI parity, bytecode sizes/hashes, proxy architecture, selected oracle wiring, test inventory, canary evidence, and undeployed state.
 - [x] Deployment addresses, transaction hashes, registration state, and activation state remain empty/false.
 - [x] No deployment or governance execution occurred while preparing this package.
 
@@ -74,22 +74,20 @@ Canonical files:
   2. `USDC -> sUSDS`
   3. `USDT -> sUSDS`
 
-## 2. Mandatory unresolved decisions
+## 2. Mandatory pre-broadcast decisions
 
 These are release blockers. The deployer exposes one explicit recommended configuration; hardcoding it does not substitute for governance confirmation.
 
-- [ ] Choose one oracle family for the final proposal and manifest deployment section:
-  - Curve StableSwap-NG EMA adapters; or
-  - direct canonical Chainlink proxy adapters.
-- [ ] If Chainlink is selected, reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `frxUSD/USD`.
-- [ ] If Chainlink is selected, independently reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `USDS/USD`.
-- [ ] Document how the selected `USDS/USD` check is applied to sUSDS economic backing and any required share-to-asset conversion.
+- [x] Oracle family selected coherently: direct canonical Chainlink proxy adapters for frxUSD and USDS; Curve EMA remains only for USDC and USDT target health.
+- [ ] Reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `frxUSD/USD`.
+- [ ] Independently reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `USDS/USD`.
+- [x] Documented how the selected `USDS/USD` check is applied to sUSDS economic backing after `convertToAssets()`.
 - [ ] Confirm the independent USDC and USDT target-health checks; selecting Chainlink for frxUSD/USDS does not remove them.
 - [ ] Confirm the hardcoded deployment-factory owner: Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968`.
 - [ ] Confirm all shared factory defaults and candidate addresses.
 - [ ] Obtain explicit authorization before any broadcast, proposal submission, vote, registration, debt-ceiling update, unpause, or activation.
 
-The checked evidence below proves reproducibility. It does **not** resolve these decisions.
+The checked evidence below proves reproducibility. It does **not** resolve the remaining unchecked decisions.
 
 ## 3. Oracle-provider validation
 
@@ -109,33 +107,27 @@ Common policy:
 - [x] Target-healthy/yield-unhealthy expansion retains target as `undeployed_backing`.
 - [x] Preview and execution apply the same target-oracle haircut to route-loss and fallback valuation.
 
-### Curve EMA alternative
+### Curve EMA target adapters
 
-Candidate pools:
+Selected pool:
 
 - USDC/USDT: `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85`
-- frxUSD/sUSDS: `0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7`
-- sfrxUSD/frxUSD: `0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978`
 
-Candidate roles:
+Selected roles:
 
-- frxUSD target: frxUSD/sUSDS, frxUSD orientation.
-- sfrxUSD downstream backing: sfrxUSD/frxUSD, sfrxUSD orientation.
 - USDC target: USDC/USDT, USDC orientation.
 - USDT target: USDC/USDT, USDT orientation.
-- sUSDS downstream backing: frxUSD/sUSDS, sUSDS orientation.
 
-Before selection:
+Before broadcast:
 
 - [ ] Reconfirm pool code, `N_COINS == 2`, coin order, and distinct indices.
 - [ ] Reconfirm `price_oracle()` behavior, inversion, and zero-output rejection.
-- [ ] Reconfirm rate-provider normalization for yield-bearing pool coins.
 - [ ] Record current pool liquidity, recent EMA behavior, and relative-pair contagion risk.
-- [ ] Record five deployed adapter addresses and verify their immutable configuration.
+- [ ] Record both deployed adapter addresses and verify their immutable configuration.
 
-### Direct Chainlink proxy alternative
+### Selected direct Chainlink proxies
 
-Pinned candidate configuration:
+Pinned selected configuration:
 
 - frxUSD/USD ENS: `frxusd-usd.data.eth`
 - frxUSD/USD canonical proxy: `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83`
@@ -146,7 +138,7 @@ Pinned candidate configuration:
 - Provisional frxUSD/USD maximum delay: `93,600` seconds (`26 hours`).
 - Provisional USDS/USD maximum delay: `93,600` seconds (`26 hours`).
 
-Before selection:
+Before broadcast:
 
 - [ ] Reconfirm both canonical proxy addresses against Chainlink's official feed listings and ENS records.
 - [ ] Reconfirm proxy code, 8-decimal metadata, current positive answer, completed round, update timestamp, and approved freshness window.
@@ -156,6 +148,11 @@ Before selection:
 - [ ] Confirm underlying aggregator rotation remains live through the same immutable proxy address.
 
 Fork tests confirm direct `latestRoundData()` reads through both canonical proxies. The access-controlled addresses previously returned by the Feed Registry were underlying OCR aggregators, not the stable consumer-facing proxy endpoints.
+
+Proposal bindings:
+
+- frxUSD -> sfrxUSD: the frxUSD/USD adapter is both the target oracle and the sfrxUSD backing oracle after `convertToAssets()`.
+- USDC -> sUSDS and USDT -> sUSDS: the USDS/USD adapter is the backing oracle after `convertToAssets()`; each target retains its separate Curve EMA adapter.
 
 ## 4. Launch configuration
 
@@ -189,7 +186,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `b45211758a97d3806bdadba14f4ec2631cd25568`.
+All checked gates were run against production source commit `b05af5944bb332b04bb765b4d64f925f90ba3a10`.
 
 ```bash
 forge fmt --check
@@ -230,15 +227,15 @@ Recorded outcomes:
 - [x] `git diff --check`: pass.
 - [x] `forge lint`: pass.
 - [x] `forge build --sizes`: pass.
-- [x] Complete suite: `246 passed, 0 failed, 0 skipped`.
+- [x] Complete suite: `248 passed, 0 failed, 0 skipped`.
 - [x] PegKeeperV3 fork tests: pass.
 - [x] Curve adapter unit/deployment/proposal coverage: pass.
 - [x] Chainlink adapter unit/deployment/live-proxy fork coverage: pass.
 - [x] Unified deployment and chain-bound JSON handoff coverage: pass.
-- [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: ten sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
+- [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: seven sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
 - [x] Mainnet canary at block `25,868,730`: pass with no broadcast.
 - [x] Manifest verifier: pass.
-- [x] Manifest mutation tests reject wrong proxy, heartbeat, preview artifact, test inventory, direct-read policy, and undeployed-state values; byte-exact restoration passes.
+- [x] Manifest mutation tests reject Curve-family selection, wrong proxy, obsolete underlying aggregator, Feed Registry semantics, delay drift, heartbeat drift, proposal-binding drift, CREATE-order drift, test-inventory drift, deployed-state drift, and extra obsolete nested oracle/deployment fields; byte-exact restoration passes.
 
 Canary route hashes:
 
@@ -255,23 +252,23 @@ Canary route hashes:
 - [x] Deployment-visibility correction review: no security or logic findings; frozen source diff `3e3f3231bfbd5f37c3ae8f80e0fd101adc0971b515ed96c69f8a08b38ee96010`.
 - [x] Vyper preview semantic-parity and integration reviews: no blocking findings; frozen source diff `2fb94ff190d694b359fd91c9f80ad2ccb6721d9f6ba6f727e56006d38223f5d8`.
 - [x] Canonical Chainlink proxy semantic/security and deployment/integration reviews: no blocking findings; frozen source diff `879bfffa66d470cb3c9eacdcef455f8c01156626cb67a8ac85cb1929e2957eb6`.
+- [x] Selected Chainlink proposal semantic/security and documentation/integration reviews: no blocking findings; frozen source diff `ef0bb3a98bc567a2999898c2dc628bb78766a724e9fd615da85a0258570d68fd`.
 - [x] Reviewer-identified stale release evidence was resolved by replacing the Solidity-preview and Feed-Registry-era manifest, verifier, and checklist claims with this Vyper/direct-proxy package.
 - The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
 
 ## 7. Pre-broadcast simulation only
 
-Do not add `--broadcast` until all unresolved decisions are checked and explicit authorization exists.
+Do not add `--broadcast` until all remaining pre-broadcast decisions are checked and explicit authorization exists.
 
 1. Build from the exact production source commit.
 2. Run the manifest verifier.
 3. Simulate `DeployPegKeeperV3.s.sol` on a fresh mainnet fork with the intended deployment sender and no `--broadcast`.
-4. Confirm exactly ten sequential CREATEs: preview module, implementation, factory, five Curve adapters, then two Chainlink adapters.
+4. Confirm exactly seven sequential CREATEs: preview module, implementation, factory, two Curve target adapters, then the frxUSD and USDS Chainlink adapters.
 5. Validate every deployed contract and immutable configuration in simulation, including all factory defaults and both provisional Chainlink delays.
-6. Inspect `deployments/mainnet/PegKeeperV3-deployment.json`; confirm chain ID and all ten addresses match the transaction batch.
-7. Select and document one coherent oracle family for the keeper proposal. Deploying both alternatives does not select one.
-8. Re-run the current-block canary and complete test suite.
-9. Independently review the complete transaction batch and deployment JSON.
-10. Add `--broadcast` only after explicit authorization and with the same reviewed sender/configuration.
+6. Inspect `deployments/mainnet/PegKeeperV3-deployment.json`; confirm chain ID and all seven contract addresses match the transaction batch.
+7. Re-run the current-block canary and complete test suite.
+8. Independently review the complete transaction batch and deployment JSON.
+9. Add `--broadcast` only after explicit authorization and with the same reviewed sender/configuration.
 
 ## 8. Proposal simulation
 
@@ -281,12 +278,12 @@ Required proposal input:
 deployments/mainnet/PegKeeperV3-deployment.json
 ```
 
-The proposal rejects a deployment file whose `chainId` differs from the active chain and then validates the factory, implementation, preview module, and selected Curve adapters on-chain before building calldata.
+The proposal rejects a deployment file whose `chainId` differs from the active chain and then validates the factory, implementation, preview module, two selected Curve target adapters, and selected canonical-proxy Chainlink adapters on-chain before building calldata.
 
 Before proposal submission:
 
 - [ ] Confirm every candidate address and code hash from an independent source.
-- [ ] Confirm the selected oracle family is wired coherently; do not mix providers accidentally.
+- [ ] Confirm the selected Chainlink proxy, decimals, delay, and keeper bindings match this package exactly.
 - [ ] Recompute the three factory CREATE addresses from the final factory nonce.
 - [ ] Confirm semantic keeper order and names.
 - [ ] Confirm all three keepers remain paused after execution.
