@@ -407,6 +407,15 @@ contract PegKeeperV3FactoryTest is Test {
         assertEq(badFactory.keeperAt(1), address(0));
     }
 
+    function test_factoryConstructorRejectsFactoryAsFeeReceiver() public {
+        address expectedFactory = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        IPegKeeperV3Factory.DeploymentDefaults memory invalid =
+            _defaults(governance, emergencyAdmin, expectedFactory, 25_000_000e18);
+
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        _deployFactory(address(this), address(controllerFactory), implementation, invalid);
+    }
+
     function test_factoryRejectsInvalidSharedRolesAndFeeReceiver() public {
         IPegKeeperV3Factory.DeploymentDefaults memory invalid =
             _defaults(governance, governance, feeReceiver, 25_000_000e18);
@@ -430,6 +439,10 @@ contract PegKeeperV3FactoryTest is Test {
         factory.setDefaults(invalid);
 
         invalid = _defaults(governance, address(factory), feeReceiver, 25_000_000e18);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
+        factory.setDefaults(invalid);
+
+        invalid = _defaults(governance, emergencyAdmin, address(factory), 25_000_000e18);
         vm.expectRevert(IPegKeeperV3Factory.InvalidDefaults.selector);
         factory.setDefaults(invalid);
 

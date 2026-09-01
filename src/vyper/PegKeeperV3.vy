@@ -464,17 +464,17 @@ def _target_price() -> uint256:
 @view
 def _yield_price() -> (uint256, bool):
     ok: bool = False
-    response: Bytes[32] = empty(Bytes[32])
+    response: Bytes[64] = empty(Bytes[64])
     ok, response = raw_call(
         self.yield_oracle.address,
         method_id("price()"),
-        max_outsize=32,
+        max_outsize=64,
         is_static_call=True,
         revert_on_failure=False,
     )
     if not ok or len(response) != 32:
         return 0, False
-    price: uint256 = convert(response, uint256)
+    price: uint256 = convert(slice(response, 0, 32), uint256)
     return price, price >= self.min_yield_oracle_price
 
 

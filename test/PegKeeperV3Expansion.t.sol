@@ -180,6 +180,65 @@ contract ExpansionPool {
     }
 }
 
+contract ReentrantExpansionPool {
+    uint256 internal constant PPM = 1_000_000;
+
+    ExpansionToken public immutable crvUsd;
+    ExpansionToken public immutable targetAsset;
+    address public callbackTarget;
+    bytes public callbackData;
+    bool public callbackAttempted;
+    bool public callbackSucceeded;
+    bool internal callbackActive;
+
+    constructor(ExpansionToken crvUsd_, ExpansionToken targetAsset_) {
+        crvUsd = crvUsd_;
+        targetAsset = targetAsset_;
+    }
+
+    function coins(uint256 index) external view returns (address) {
+        if (index == 0) return address(targetAsset);
+        require(index == 1, "coin index");
+        return address(crvUsd);
+    }
+
+    function setCallback(address target, bytes calldata data) external {
+        callbackTarget = target;
+        callbackData = data;
+    }
+
+    function get_dy(int128 i, int128 j, uint256 dx) external pure returns (uint256) {
+        if (i == 1 && j == 0) return dx * 1_000_100 / (PPM * 1e12);
+        require(i == 0 && j == 1, "indices");
+        return dx * 1_010_000 * 1e12 / PPM;
+    }
+
+    function exchange(int128 i, int128 j, uint256 dx, uint256 minDy)
+        external
+        returns (uint256 amountOut)
+    {
+        if (!callbackActive && callbackTarget != address(0)) {
+            callbackActive = true;
+            callbackAttempted = true;
+            (callbackSucceeded,) = callbackTarget.call(callbackData);
+            callbackActive = false;
+        }
+
+        if (i == 1 && j == 0) {
+            amountOut = dx * 1_000_100 / (PPM * 1e12);
+            require(amountOut >= minDy, "slippage");
+            require(crvUsd.transferFrom(msg.sender, address(this), dx), "transfer");
+            targetAsset.mint(msg.sender, amountOut);
+        } else {
+            require(i == 0 && j == 1, "indices");
+            amountOut = dx * 1_010_000 * 1e12 / PPM;
+            require(amountOut >= minDy, "slippage");
+            require(targetAsset.transferFrom(msg.sender, address(this), dx), "transfer");
+            crvUsd.mint(msg.sender, amountOut);
+        }
+    }
+}
+
 contract PegKeeperV3ExpansionTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant MIN_EXPANSION = 10_000e18;
@@ -214,6 +273,42 @@ contract PegKeeperV3ExpansionTest is Test {
         yieldOracle = new ExpansionOracle();
         pegKeeper = _deploy();
         factory.setDebtCeiling(address(pegKeeper), MAX_DEPLOYED);
+    }
+
+    function test_targetAmmCallbackCannotReenterExpansion() public {
+        ReentrantExpansionPool reentrantPool = new ReentrantExpansionPool(crvUsd, targetAsset);
+        IPegKeeperV3 reentrantKeeper = PegKeeperV3TestDeployer.deploy(
+            address(factory),
+            address(reentrantPool),
+            address(targetAsset),
+            address(backingAsset),
+            address(yieldToken),
+            MAX_DEPLOYED,
+            2,
+            address(targetOracle),
+            address(yieldOracle)
+        );
+        factory.setDebtCeiling(address(reentrantKeeper), MAX_DEPLOYED);
+        reentrantPool.setCallback(
+            address(reentrantKeeper), abi.encodeCall(IPegKeeperV3.expand, (MIN_EXPANSION))
+        );
+        crvUsd.mint(address(reentrantKeeper), 2 * MIN_EXPANSION);
+
+        vm.startPrank(governance);
+        reentrantKeeper.set_expansion_config(0, 500_000, 100_000);
+        reentrantKeeper.set_direction_paused(5, false);
+        reentrantKeeper.set_direction_paused(0, false);
+        vm.stopPrank();
+
+        vm.prank(keeper);
+        reentrantKeeper.expand(MIN_EXPANSION);
+
+        assertTrue(reentrantPool.callbackAttempted());
+        assertFalse(reentrantPool.callbackSucceeded());
+        assertEq(reentrantKeeper.deployed_crvusd(), MIN_EXPANSION);
+        assertEq(crvUsd.balanceOf(address(reentrantKeeper)), MIN_EXPANSION);
+        assertGt(reentrantKeeper.undeployed_backing(), 0);
+        assertGe(reentrantKeeper.trusted_backing_value(), reentrantKeeper.deployed_crvusd());
     }
 
     function test_constructorRequiresBothOracleAdapters() public {

@@ -103,6 +103,15 @@ contract OversizedExpansionOracle {
     }
 }
 
+contract ShortExpansionOracle {
+    fallback() external {
+        assembly ("memory-safe") {
+            mstore(0, 1000000000000000000)
+            return(0, 16)
+        }
+    }
+}
+
 contract PegKeeperV3DownstreamExpansionTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant MIN_EXPANSION = 10_000e18;
@@ -207,12 +216,19 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
     }
 
-    function test_previewRejectsOversizedYieldOracleReturn() public {
+    function test_previewAndExecutionRejectOversizedYieldOracleReturn() public {
+        _assertMalformedYieldOracleFallsBack(address(new OversizedExpansionOracle()));
+    }
+
+    function test_previewAndExecutionRejectShortYieldOracleReturn() public {
+        _assertMalformedYieldOracleFallsBack(address(new ShortExpansionOracle()));
+    }
+
+    function _assertMalformedYieldOracleFallsBack(address malformedOracle) internal {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
-        OversizedExpansionOracle oversizedOracle = new OversizedExpansionOracle();
         vm.prank(governance);
         pegKeeper.set_oracles(
-            address(targetOracle), address(oversizedOracle), MIN_ORACLE_PRICE, MIN_ORACLE_PRICE
+            address(targetOracle), malformedOracle, MIN_ORACLE_PRICE, MIN_ORACLE_PRICE
         );
 
         (uint256 targetOut, uint256 backingOut,,, uint256 yieldOut, bool expectedToDeploy) =
@@ -221,6 +237,13 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(backingOut, 0);
         assertEq(yieldOut, 0);
         assertFalse(expectedToDeploy);
+
+        vm.prank(keeper);
+        (, uint256 retained, uint256 yieldReceived,, bool deployedToYield) =
+            pegKeeper.expand(MIN_EXPANSION);
+        assertGt(retained, 0);
+        assertEq(yieldReceived, 0);
+        assertFalse(deployedToYield);
     }
 
     function test_previewExpansionPredictsConfiguredDownstreamRoute() public {

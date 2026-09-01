@@ -56,7 +56,7 @@ V3 is not intended to:
 - **crvUSD:** the stablecoin whose supply V3 expands and contracts.
 - **Target AMM:** the external crvUSD/stablecoin pool used by keeper expansion and fallback contraction.
 - **Target asset:** the non-crvUSD coin in the target AMM, such as USDT.
-- **Undeployed backing:** target asset retained by a successful fallback expansion and explicitly included in backing accounting. Unsolicited target-asset transfers are not automatically included.
+- **Undeployed backing:** the complete live configured target-asset balance held by V3, including target retained by fallback expansion and unsolicited target-asset transfers. Arbitrary and intermediate route tokens are not included.
 - **Backing asset:** the approved stablecoin denomination returned by the yield token's `asset()` and `convertToAssets()` accounting interface, such as USDS for sUSDS or frxUSD for sfrxUSD.
 - **Yield token:** the fixed yield-bearing token that every successful downstream expansion path must leave in V3, such as sUSDS or sfrxUSD.
 - **Downstream expansion path:** the updatable sequence from the target asset to the yield token.
@@ -132,7 +132,7 @@ yieldContractionPaused
 
 `undeployedBacking()` and `accountedYieldTokenUnits()` remain ABI-compatible view getters, but they are not storage counters. They return `targetAsset.balanceOf(V3)` and `yieldToken.balanceOf(V3)` respectively. Every configured target-asset or yield-token unit held by V3 is protocol inventory, including an unsolicited transfer; intermediate and arbitrary token balances are not backing.
 
-The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `23,169` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,201`-byte implementation runtime, `1,375` bytes below EIP-170. The keeper-identity-bound Vyper preview module is `8,056` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
+The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `23,201` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,233`-byte implementation runtime, `1,343` bytes below EIP-170. The keeper-identity-bound Vyper preview module is `8,056` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
 
 The implementation keeps economic actions separate while centralizing repeated invariants. `_remaining_exposure_capacity()` is the sole local-cap and Factory-allocation calculation used by expansion and surplus claims; velocity remains an independent bound. `_target_amm_swap_exact_in()` owns target-AMM quoting, approval reset, minimum output, and exact input/output balance deltas. `_transfer_exact_to()` owns recipient balance-delta verification for protocol payouts. `_settle_keeper_contraction_and_reduce_exposure()` owns realized profit, keeper reward, exit margin, and capped exposure reduction for both keeper-triggered contraction paths, while each caller visibly retains its own live-inventory and final-solvency checks. `_checked_route_conversion_cost()` owns the configured route-loss ceiling. Expansion, direct buyback, undeployed-backing deployment, and the two contraction front halves remain distinct because their authorization, valuation, routing, inventory, and fallback semantics differ.
 
@@ -770,7 +770,7 @@ For every step:
 3. Execute the typed venue call.
 4. Reset the approval to zero.
 5. Compute output from the balance delta.
-6. Normalize measured input and output value, using whole-position `convertToAssets()` deltas when the configured yield token is spent or received.
+6. Normalize measured input and output value. ERC-4626 route steps use action-local deltas: deposit compares assets actually spent with `convertToAssets(shares actually received)`, and redeem compares `convertToAssets(shares actually spent)` with assets actually received. Whole-position `convertToAssets()` deltas remain reserved for persistent backing, solvency, surplus, and realized contraction-profit accounting.
 7. Enforce both the quote-consistency floor and the absolute normalized-value floor; the configured buffer bounds total step loss rather than extra deterioration after the quote.
 8. Feed the measured output into the next step.
 

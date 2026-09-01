@@ -338,6 +338,7 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
         or _newDefaults.admin == _newDefaults.emergencyAdmin
         or _newDefaults.admin == self
         or _newDefaults.emergencyAdmin == self
+        or _newDefaults.feeReceiver == self
         or _newDefaults.maxDeployedCrvUsd == 0
         or _newDefaults.targetAmmExecutionBufferBps > BPS
         or _newDefaults.expansionMaxRouteLossBps > BPS
