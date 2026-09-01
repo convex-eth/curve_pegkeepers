@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
-REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 22_300
-EXPECTED_TESTS = 248
+REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 24_000
+EXPECTED_TESTS = 269
 
 ARTIFACTS = {
     "implementation": (
@@ -189,6 +189,28 @@ def listed_test_count() -> int:
 
 def main() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text())
+    fail_keys(
+        "release manifest",
+        manifest,
+        {
+            "status",
+            "generatedAtUtc",
+            "repository",
+            "productionSourceCommit",
+            "toolchain",
+            "implementation",
+            "previewModule",
+            "deploymentFactory",
+            "minimalProxy",
+            "oraclePolicy",
+            "launchConfiguration",
+            "verification",
+            "latestMainnetCanary",
+            "operatorInputs",
+            "deployment",
+            "activationBlockers",
+        },
+    )
     fail("release status", manifest["status"], "release_candidate_not_deployed")
     fail("repository", manifest["repository"], "git@github.com:convex-eth/curve_pegkeepers.git")
     remote = subprocess.run(
@@ -638,7 +660,25 @@ def main() -> None:
         raise SystemExit("oracle runtime exceeds EIP-170")
 
     launch = manifest["launchConfiguration"]
+    fail_keys(
+        "launch configuration",
+        launch,
+        {
+            "semanticCreateOrder",
+            "keepers",
+            "allKeepersStartPaused",
+            "velocity",
+            "monetaryPolicies",
+            "executionPolicy",
+        },
+    )
     fail("semantic order", launch["semanticCreateOrder"], ["frxUSD -> sfrxUSD", "USDC -> sUSDS", "USDT -> sUSDS"])
+    for index, keeper in enumerate(launch["keepers"]):
+        fail_keys(
+            f"launch keeper {index}",
+            keeper,
+            {"index", "name", "route", "maxDeployedCrvUsd"},
+        )
     fail("keeper indices", [keeper["index"] for keeper in launch["keepers"]], [1, 2, 3])
     fail(
         "keeper capacities",
@@ -646,6 +686,63 @@ def main() -> None:
         ["2500000000000000000000000", "2500000000000000000000000", "5000000000000000000000000"],
     )
     fail("keepers paused", launch["allKeepersStartPaused"], True)
+    execution_policy = launch["executionPolicy"]
+    fail_keys(
+        "execution policy",
+        execution_policy,
+        {
+            "curveSwapBps",
+            "targetAmmBps",
+            "erc4626DepositBps",
+            "erc4626RedeemBps",
+            "daiUsdsConverterBps",
+            "downstreamAndYieldToTargetRouteLossBps",
+            "monetaryContractionRouteLossAllowanceBps",
+            "monetaryContractionUsesPositiveProfitFloor",
+            "normalExitProfitFloorPpm",
+            "earlyExitProfitFloorPpm",
+            "intermediateErc4626StepsAllowed",
+            "erc4626StepValuation",
+        },
+    )
+    fail("Curve execution tolerance", execution_policy["curveSwapBps"], 3)
+    fail("target-AMM Curve execution tolerance", execution_policy["targetAmmBps"], 3)
+    fail("ERC-4626 deposit execution tolerance", execution_policy["erc4626DepositBps"], 1)
+    fail("ERC-4626 redeem execution tolerance", execution_policy["erc4626RedeemBps"], 1)
+    fail("DaiUsds execution tolerance", execution_policy["daiUsdsConverterBps"], 0)
+    fail(
+        "downstream and yield-to-target route tolerance",
+        execution_policy["downstreamAndYieldToTargetRouteLossBps"],
+        5,
+    )
+    fail(
+        "contraction general route-loss allowance",
+        execution_policy["monetaryContractionRouteLossAllowanceBps"],
+        None,
+    )
+    fail(
+        "contraction positive exit-profit floor",
+        execution_policy["monetaryContractionUsesPositiveProfitFloor"],
+        True,
+    )
+    fail("normal exit-profit floor", execution_policy["normalExitProfitFloorPpm"], 1_000)
+    fail("early exit-profit floor", execution_policy["earlyExitProfitFloorPpm"], 5_000)
+    fail("intermediate ERC-4626 steps", execution_policy["intermediateErc4626StepsAllowed"], True)
+    fail(
+        "ERC-4626 step valuation",
+        execution_policy["erc4626StepValuation"],
+        "action_local_share_delta_convertToAssets",
+    )
+    fail_keys(
+        "velocity configuration",
+        launch["velocity"],
+        {
+            "maxBurstBpsOfMaxDeployed",
+            "fullRefillSeconds",
+            "sharedAcrossExposureIncreasingPaths",
+            "contractionRefundsPressure",
+        },
+    )
     fail("velocity burst", launch["velocity"]["maxBurstBpsOfMaxDeployed"], 500)
     fail("velocity refill", launch["velocity"]["fullRefillSeconds"], 300)
     fail("velocity shared", launch["velocity"]["sharedAcrossExposureIncreasingPaths"], True)
@@ -679,6 +776,39 @@ def main() -> None:
     fail("Forge version", forge_version, f"forge Version: {toolchain['forgeVersion']}")
 
     verification = manifest["verification"]
+    fail_keys(
+        "verification evidence",
+        verification,
+        {
+            "testsPassed",
+            "testsFailed",
+            "testsSkipped",
+            "keeperAbiParity",
+            "factoryAbiParity",
+            "previewAbiParity",
+            "chainlinkAbiParity",
+            "runtimeSizeTest",
+            "unifiedDeploymentTest",
+            "deploymentJsonTest",
+            "curveOracleTests",
+            "chainlinkOracleTests",
+            "proposalTests",
+            "releaseCanary",
+            "independentFactoryReview",
+            "independentChainlinkReview",
+            "independentRefactorReview",
+            "independentDeploymentReview",
+            "independentPreviewParityReview",
+            "independentCanonicalProxySemanticReview",
+            "independentCanonicalProxyIntegrationReview",
+            "independentSelectedChainlinkSemanticReview",
+            "independentSelectedChainlinkDocumentationReview",
+            "manifestMutationTests",
+            "independentCurrentSourceSecurityReview",
+            "independentCurrentLaunchPolicyReview",
+            "independentCurrentSourcePackageReview",
+        },
+    )
     fail("listed tests", listed_test_count(), EXPECTED_TESTS)
     fail("manifest tests", verification["testsPassed"], EXPECTED_TESTS)
     fail("manifest failures", verification["testsFailed"], 0)
@@ -699,15 +829,35 @@ def main() -> None:
         "independentChainlinkReview",
         "independentRefactorReview",
         "independentDeploymentReview",
+        "independentPreviewParityReview",
         "independentCanonicalProxySemanticReview",
         "independentCanonicalProxyIntegrationReview",
         "independentSelectedChainlinkSemanticReview",
         "independentSelectedChainlinkDocumentationReview",
         "manifestMutationTests",
+        "independentCurrentSourceSecurityReview",
+        "independentCurrentLaunchPolicyReview",
+        "independentCurrentSourcePackageReview",
     ):
         fail(label, verification[label], "pass")
 
     canary = manifest["latestMainnetCanary"]
+    fail_keys(
+        "pinned canary evidence",
+        canary,
+        {
+            "block",
+            "script",
+            "result",
+            "simulatedCrvUsdSold",
+            "simulatedSusdsReceived",
+            "simulatedContractionQuoteSusds",
+            "simulatedContractionQuoteCrvUsd",
+            "expansionPathHash",
+            "contractionPathHash",
+            "broadcast",
+        },
+    )
     fail("canary block", canary["block"], 25_868_730)
     fail("canary script", canary["script"], "script/PegKeeperV3ReleaseCanary.s.sol")
     fail("canary result", canary["result"], "pass")
@@ -715,9 +865,9 @@ def main() -> None:
     fail("canary crvUSD sold", canary["simulatedCrvUsdSold"], "100000000000000000000000")
     fail("canary sUSDS received", canary["simulatedSusdsReceived"], "90273364828690285538377")
     fail("canary contraction sUSDS", canary["simulatedContractionQuoteSusds"], "9027336482869028553837")
-    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9994594051909217718251")
-    fail("canary expansion hash", canary["expansionPathHash"], "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f")
-    fail("canary contraction hash", canary["contractionPathHash"], "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986")
+    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9999527931042703308646")
+    fail("canary expansion hash", canary["expansionPathHash"], "0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951")
+    fail("canary contraction hash", canary["contractionPathHash"], "0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974")
 
     operator = manifest["operatorInputs"]
     fail_keys(
@@ -783,6 +933,18 @@ def main() -> None:
         fail(f"undeployed {label}", deployment[label], [])
     for label in ("verified", "registered", "activated"):
         fail(f"undeployed {label}", deployment[label], False)
+
+    fail(
+        "activation blockers",
+        manifest["activationBlockers"],
+        [
+            "Governance must independently reconfirm the canonical frxUSD/USD and USDS/USD Chainlink proxies, 8-decimal metadata, live positive completed rounds, and provisional 93,600-second maxDelay values.",
+            "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
+            "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
+            "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
+            "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none.",
+        ],
+    )
 
     print(
         "PegKeeperV3 Vyper/direct-proxy release manifest verified: "

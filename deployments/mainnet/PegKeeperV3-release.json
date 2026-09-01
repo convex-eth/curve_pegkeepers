@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-01T00:15:23Z",
+  "generatedAtUtc": "2026-09-01T04:13:50Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "b05af5944bb332b04bb765b4d64f925f90ba3a10",
+  "productionSourceCommit": "dc385d8495ea57eca7371f8669c07a3da6826e97",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -14,39 +14,39 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "66567739b5f64d8f027a39ea5d6f15fef8a96496e4c277e7a75d1abc74c89e79"
+      "sha256": "8256d06a6041d840640759247b18ad424ebf154cab78953209d801de7f277f84"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 21452,
-      "compilerCreationKeccak256": "0xca9b14ca0035fe501c02d5715bfe40d748bccbbf17525420103e4b14323ae04a",
-      "semanticCoreRuntimeBytes": 21298,
-      "semanticCoreRuntimeKeccak256": "0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828",
+      "compilerCreationBytes": 23323,
+      "compilerCreationKeccak256": "0xbf43875f53153e9c7d4145b483289a4b1a30f1e1c07d5d6e5d6ced4395fb5784",
+      "semanticCoreRuntimeBytes": 23169,
+      "semanticCoreRuntimeKeccak256": "0x9576821b9178ac6508667133e09b2306092e01bbb46bb9df18a0a9db84499465",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 21484,
+      "fullInitCodeBytes": 23355,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 27668,
-      "deployedRuntimeBytes": 21330,
+      "fullInitCodeMarginBytes": 25797,
+      "deployedRuntimeBytes": 23201,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 3246,
-      "abiFunctions": 76,
-      "abiEvents": 12
+      "deployedRuntimeMarginBytes": 1375,
+      "abiFunctions": 77,
+      "abiEvents": 13
     },
     "lockedAgainstOperationalInitialization": true
   },
   "previewModule": {
     "source": {
       "path": "src/vyper/PegKeeperV3PreviewModule.vy",
-      "sha256": "6af8135d8ccf9af7b4711b75a13ebeca589ba7651220e4ee1099cca24987bf01"
+      "sha256": "4e3c6862217c78908c8f4907a21585a2cb566abdf77d364cd607090799326c19"
     },
     "artifact": {
       "path": "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
-      "creationBytes": 6717,
-      "creationKeccak256": "0xfabd1f4c403e773e7ded5c1ff6b4ff911b027ec0d0bbff5d02c17cf759406754",
-      "runtimeBytes": 6680,
-      "runtimeKeccak256": "0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324",
+      "creationBytes": 8093,
+      "creationKeccak256": "0x46fdeaf58faffdb42b822ca407e890ac78ae8de394a032f8e26cf4f05d5f4e9d",
+      "runtimeBytes": 8056,
+      "runtimeKeccak256": "0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b",
       "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 17896,
+      "runtimeMarginBytes": 16520,
       "abiFunctions": 3,
       "abiEvents": 0
     },
@@ -230,10 +230,24 @@
     "monetaryPolicies": [
       "0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251",
       "0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1"
-    ]
+    ],
+    "executionPolicy": {
+      "curveSwapBps": 3,
+      "targetAmmBps": 3,
+      "erc4626DepositBps": 1,
+      "erc4626RedeemBps": 1,
+      "daiUsdsConverterBps": 0,
+      "downstreamAndYieldToTargetRouteLossBps": 5,
+      "monetaryContractionRouteLossAllowanceBps": null,
+      "monetaryContractionUsesPositiveProfitFloor": true,
+      "normalExitProfitFloorPpm": 1000,
+      "earlyExitProfitFloorPpm": 5000,
+      "intermediateErc4626StepsAllowed": true,
+      "erc4626StepValuation": "action_local_share_delta_convertToAssets"
+    }
   },
   "verification": {
-    "testsPassed": 248,
+    "testsPassed": 269,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
@@ -250,13 +264,16 @@
     "independentChainlinkReview": "pass",
     "independentRefactorReview": "pass",
     "independentDeploymentReview": "pass",
-    "independentPreviewParityReview": "pass_with_release_evidence_blocker_resolved_by_following_commit",
+    "independentPreviewParityReview": "pass",
     "previewAbiParity": "pass",
     "independentCanonicalProxySemanticReview": "pass",
     "independentCanonicalProxyIntegrationReview": "pass",
     "independentSelectedChainlinkSemanticReview": "pass",
     "independentSelectedChainlinkDocumentationReview": "pass",
-    "manifestMutationTests": "pass"
+    "manifestMutationTests": "pass",
+    "independentCurrentSourceSecurityReview": "pass",
+    "independentCurrentLaunchPolicyReview": "pass",
+    "independentCurrentSourcePackageReview": "pass"
   },
   "latestMainnetCanary": {
     "block": 25868730,
@@ -265,9 +282,9 @@
     "simulatedCrvUsdSold": "100000000000000000000000",
     "simulatedSusdsReceived": "90273364828690285538377",
     "simulatedContractionQuoteSusds": "9027336482869028553837",
-    "simulatedContractionQuoteCrvUsd": "9994594051909217718251",
-    "expansionPathHash": "0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f",
-    "contractionPathHash": "0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986",
+    "simulatedContractionQuoteCrvUsd": "9999527931042703308646",
+    "expansionPathHash": "0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951",
+    "contractionPathHash": "0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974",
     "broadcast": false
   },
   "operatorInputs": {
@@ -302,8 +319,9 @@
     "activated": false
   },
   "activationBlockers": [
-    "Governance must reconfirm or replace the provisional 93,600-second frxUSD and USDS maxDelay values after reviewing both selected Chainlink feeds independently.",
-    "Governance must confirm the hardcoded Curve Ownership Agent factory owner and all shared defaults.",
+    "Governance must independently reconfirm the canonical frxUSD/USD and USDS/USD Chainlink proxies, 8-decimal metadata, live positive completed rounds, and provisional 93,600-second maxDelay values.",
+    "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
+    "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
     "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."
   ]

@@ -4,7 +4,7 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `b05af5944bb332b04bb765b4d64f925f90ba3a10`.
+- [x] Production source commit: `dc385d8495ea57eca7371f8669c07a3da6826e97`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
@@ -25,22 +25,22 @@ Canonical files:
 
 ### PegKeeper implementation
 
-- [x] Semantic-core runtime: `21,298` bytes.
-- [x] Semantic-core hash: `0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828`.
-- [x] Specialized deployed runtime: `21,330` bytes.
-- [x] Refactor regression budget: at most `22,300` bytes.
-- [x] EIP-170 headroom: `3,246` bytes.
-- [x] Full implementation initcode: `21,484` bytes.
-- [x] EIP-3860 headroom: `27,668` bytes.
+- [x] Semantic-core runtime: `23,169` bytes.
+- [x] Semantic-core hash: `0x9576821b9178ac6508667133e09b2306092e01bbb46bb9df18a0a9db84499465`.
+- [x] Specialized deployed runtime: `23,201` bytes.
+- [x] Refactor regression budget: at most `24,000` bytes.
+- [x] EIP-170 headroom: `1,375` bytes.
+- [x] Full implementation initcode: `23,355` bytes.
+- [x] EIP-3860 headroom: `25,797` bytes.
 - [x] Operational initialization is locked on the standalone implementation.
-- [x] Keeper ABI is exactly `76 functions / 12 events` and matches `IPegKeeperV3`.
+- [x] Keeper ABI is exactly `77 functions / 13 events` and matches `IPegKeeperV3`.
 
 ### Preview module
 
 - [x] Canonical source: `src/vyper/PegKeeperV3PreviewModule.vy`, compiled with Vyper `0.3.10 --optimize codesize`.
-- [x] Creation code: `6,717` bytes.
-- [x] Runtime: `6,680` bytes.
-- [x] Runtime hash: `0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324`.
+- [x] Creation code: `8,093` bytes.
+- [x] Runtime: `8,056` bytes.
+- [x] Runtime hash: `0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b`.
 - [x] ABI is exactly `3 functions / 0 events` and matches `IPegKeeperV3PreviewModule`.
 - [x] Module is stateless.
 - [x] Every keeper-dependent preview derives keeper identity from `msg.sender`; no spoofable keeper argument exists.
@@ -160,6 +160,10 @@ Proposal bindings:
 - [x] USDC -> sUSDS maximum deployed crvUSD: `2,500,000e18`.
 - [x] USDT -> sUSDS maximum deployed crvUSD: `5,000,000e18`.
 - [x] Every keeper starts paused.
+- [x] Every Curve step, including target-AMM Curve legs, uses `3 bps`.
+- [x] ERC-4626 deposit and redeem steps use `1 bps`; DaiUsds converter steps use `0 bps`.
+- [x] Complete downstream-deployment and yield-to-target maintenance routes use `5 bps`.
+- [x] Monetary contraction has no general route-loss allowance and must clear its positive `1,000 ppm` normal or `5,000 ppm` early exit-profit floor.
 - [x] Existing PegKeeperV2 registrations remain untouched.
 - [x] No GHO, pyUSD, or USDC -> sfrxUSD keeper is included.
 - [x] Every new keeper is registered with both active aggregate monetary policies:
@@ -186,7 +190,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `b05af5944bb332b04bb765b4d64f925f90ba3a10`.
+All checked gates were run against production source commit `dc385d8495ea57eca7371f8669c07a3da6826e97`.
 
 ```bash
 forge fmt --check
@@ -227,7 +231,7 @@ Recorded outcomes:
 - [x] `git diff --check`: pass.
 - [x] `forge lint`: pass.
 - [x] `forge build --sizes`: pass.
-- [x] Complete suite: `248 passed, 0 failed, 0 skipped`.
+- [x] Complete suite: `269 passed, 0 failed, 0 skipped`.
 - [x] PegKeeperV3 fork tests: pass.
 - [x] Curve adapter unit/deployment/proposal coverage: pass.
 - [x] Chainlink adapter unit/deployment/live-proxy fork coverage: pass.
@@ -235,12 +239,12 @@ Recorded outcomes:
 - [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: seven sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
 - [x] Mainnet canary at block `25,868,730`: pass with no broadcast.
 - [x] Manifest verifier: pass.
-- [x] Manifest mutation tests reject Curve-family selection, wrong proxy, obsolete underlying aggregator, Feed Registry semantics, delay drift, heartbeat drift, proposal-binding drift, CREATE-order drift, test-inventory drift, deployed-state drift, and extra obsolete nested oracle/deployment fields; byte-exact restoration passes.
+- [x] Manifest mutation tests reject top-level/schema drift, launch-tolerance drift, a monetary-contraction loss allowance, Curve-family selection, wrong proxy, obsolete underlying aggregator, Feed Registry semantics, delay drift, heartbeat drift, proposal-binding drift, CREATE-order drift, test-inventory drift, deployed-state drift, and extra obsolete nested oracle/deployment fields; byte-exact restoration passes.
 
 Canary route hashes:
 
-- expansion: `0x44f656895137eb8000021497d6f0e888c645e33302d3f669924f2c690722422f`
-- contraction: `0x725f94e6e18aaf43cbc98a5cb47f187661271a0f8d7879a3955ac7817e3ba986`
+- expansion: `0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951`
+- contraction: `0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974`
 
 ## 6. Independent review evidence
 
@@ -253,6 +257,8 @@ Canary route hashes:
 - [x] Vyper preview semantic-parity and integration reviews: no blocking findings; frozen source diff `2fb94ff190d694b359fd91c9f80ad2ccb6721d9f6ba6f727e56006d38223f5d8`.
 - [x] Canonical Chainlink proxy semantic/security and deployment/integration reviews: no blocking findings; frozen source diff `879bfffa66d470cb3c9eacdcef455f8c01156626cb67a8ac85cb1929e2957eb6`.
 - [x] Selected Chainlink proposal semantic/security and documentation/integration reviews: no blocking findings; frozen source diff `ef0bb3a98bc567a2999898c2dc628bb78766a724e9fd615da85a0258570d68fd`.
+- [x] Current launch-policy and whole-source reviews: no blocking findings; frozen source diff `e124021e0f1dddf92a6893a71debe323d126e64105149ac2e82c0c8e03ff4616`.
+- [x] Current security review found one ERC-4626 preview branch-order blocker; the action-local parity correction and donation-rounding regression passed exact-hash re-review at frozen source diff `97b91ed71ddc4edd4792b30f68cd7029bcefce353f18fdc153b1aefeb787c776`.
 - [x] Reviewer-identified stale release evidence was resolved by replacing the Solidity-preview and Feed-Registry-era manifest, verifier, and checklist claims with this Vyper/direct-proxy package.
 - The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
 
