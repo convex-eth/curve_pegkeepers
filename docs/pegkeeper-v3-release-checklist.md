@@ -1,318 +1,162 @@
 # PegKeeperV3 release checklist
 
-This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidate**. It is not authorization to deploy, broadcast, submit governance, vote, register, unpause, or activate anything.
+This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does not authorize deployment, broadcast, proposal submission, registration, debt-ceiling changes, unpause, or activation.
 
-## 0. Frozen release state
+## 0. Frozen source
 
-- [x] Production source commit: `62b692314ce5aab561223fc0f3cb75289bb77acf`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
-- [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
-- [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
-- [x] Release manifest status is `release_candidate_not_deployed`.
-- [x] Manifest verifier is fail-closed against source provenance, generated artifacts, ABI parity, bytecode sizes/hashes, proxy architecture, selected oracle wiring, test inventory, canary evidence, and undeployed state.
-- [x] Deployment addresses, transaction hashes, registration state, and activation state remain empty/false.
-- [x] No deployment or governance execution occurred while preparing this package.
+- [x] Production source commit: `202181a49450a07747ef5eaf1eb7914eb985a8d5`.
+- [x] Exact pre-commit staged source diff SHA-256: `776122efb715ce509fbb54326228f79ea17f379a57bbdcca5f87a687236fd014`.
+- [x] Source commit is pushed to `origin/main`.
+- [x] Evidence is regenerated from the exact production source commit.
+- [x] Evidence drift is restricted to:
+  - `deployments/mainnet/PegKeeperV3-release.json`;
+  - `docs/pegkeeper-v3-release-checklist.md`;
+  - `scripts/verify-release-manifest.py`.
+- [x] Deployment state remains empty: no candidate addresses, transaction hashes, verification, registration, or activation.
 
-Canonical files:
+## 1. Toolchain and build
 
-- `deployments/mainnet/PegKeeperV3-release.json`
-- `scripts/verify-release-manifest.py`
-- `script/PegKeeperV3ReleaseCanary.s.sol`
-- `script/DeployPegKeeperV3.s.sol`
-- `script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`
+- [x] Solidity: `0.8.35`.
+- [x] Vyper: `0.3.10+commit.9136169` at `.venv/bin/vyper`.
+- [x] Vyper optimizer: `codesize`.
+- [x] EVM target: `shanghai`.
+- [x] Forge: `1.7.1`.
+- [x] `forge fmt --check` passed.
+- [x] `git diff --check` passed.
+- [x] `forge lint` passed.
+- [x] Forced build passed.
 
-## 1. Architecture and bytecode evidence
+## 2. Final artifacts
 
-### PegKeeper implementation
+### PegKeeperV3 implementation
 
-- [x] Semantic-core runtime: `23,201` bytes.
-- [x] Semantic-core hash: `0x55a15662a255b85d29d547da33d56ae4544552371a5887598ac1429fccda3bdd`.
-- [x] Specialized deployed runtime: `23,233` bytes.
-- [x] Refactor regression budget: at most `24,000` bytes.
-- [x] EIP-170 headroom: `1,343` bytes.
-- [x] Full implementation initcode: `23,387` bytes.
-- [x] EIP-3860 headroom: `25,765` bytes.
-- [x] Operational initialization is locked on the standalone implementation.
-- [x] Keeper ABI is exactly `77 functions / 13 events` and matches `IPegKeeperV3`.
+- [x] Source SHA-256: `73ddb6880bff69d6ed89a1ef62681166a603cd423cd123a05e8533d75302b703`.
+- [x] Compiler creation code: `23,915` bytes.
+- [x] Compiler creation keccak: `0x8797ee4ac0b2e1fb4050314a7c3d5594223122a39114ae49a728ed023d9cc6c7`.
+- [x] Full initcode with constructor argument: `23,947` bytes; EIP-3860 margin `25,205` bytes.
+- [x] Semantic runtime core: `23,761` bytes.
+- [x] Semantic runtime keccak: `0x83d97e75622beff4a7f7bad21cb00cd2f9685b4e57eae25988caeb3834e62662`.
+- [x] Deployed runtime with immutable preview address: `23,793` bytes; EIP-170 margin `783` bytes.
+- [x] ABI parity: `80` functions and `13` events.
+- [x] Locked implementation cannot be operationally initialized.
 
 ### Preview module
 
-- [x] Canonical source: `src/vyper/PegKeeperV3PreviewModule.vy`, compiled with Vyper `0.3.10 --optimize codesize`.
-- [x] Creation code: `8,093` bytes.
-- [x] Runtime: `8,056` bytes.
-- [x] Runtime hash: `0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b`.
-- [x] ABI is exactly `3 functions / 0 events` and matches `IPegKeeperV3PreviewModule`.
-- [x] Module is stateless.
-- [x] Every keeper-dependent preview derives keeper identity from `msg.sender`; no spoofable keeper argument exists.
-- [x] Preview projects post-action global backing, oracle health/value, route/fallback branch, and keeper-local velocity.
+- [x] Source SHA-256: `f4273aefd5427a21f12b9a82a2cd5b5c6ff3c6c70e01976a07ba9c884e2c40aa`.
+- [x] Runtime: `8,185` bytes; EIP-170 margin `16,391` bytes.
+- [x] Runtime keccak: `0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c`.
+- [x] ABI parity: `3` functions and no events.
+- [x] Stateless and keeper-identity-bound.
 
-### Deployment factory
+### Factory
 
-- [x] Specialized runtime: `3,928` bytes.
-- [x] Full initcode: `5,408` bytes.
-- [x] Factory ABI is exactly `16 functions / 4 events` and matches `IPegKeeperV3Factory`.
-- [x] Factory implementation address is immutable after construction.
-- [x] No implementation setter or update event exists.
-- [x] All seven legacy custom-error selectors are preserved:
-  - `NotOwner()` — `0x30cd7471`
-  - `NotPendingOwner()` — `0x1853971c`
-  - `InvalidOwner()` — `0x49e27cff`
-  - `InvalidImplementation()` — `0x68155f9a`
-  - `InvalidDefaults()` — `0xa7f2ca4b`
-  - `InvalidTargetAmm()` — `0xf871d4c8`
-  - `DeploymentFailed()` — `0x30116425`
+- [x] Source SHA-256: `72a3ec80dd49f2e64d8474287cc997fc31dc1cacff6144a2174204fbfb238dc5`.
+- [x] Compiler creation code: `5,113` bytes.
+- [x] Full initcode with constructor arguments: `5,465` bytes.
+- [x] Deployed runtime with immutables: `3,985` bytes.
+- [x] ABI parity: `16` functions and `4` events.
+- [x] Implementation binding is immutable and no implementation setter exists.
+- [x] Each keeper uses one checked EIP-1167 `CREATE` followed by atomic initialization.
 
-### EIP-1167 keepers
+## 3. Endpoint and route semantics
 
-- [x] Each keeper is a canonical `45`-byte EIP-1167 runtime.
-- [x] Factory performs exactly one `CREATE` per keeper.
-- [x] Initialization is factory-bound and atomic with proxy creation.
-- [x] Failed deployment/initialization does not mutate keeper count, registry, or index state.
-- [x] No proxy admin, upgrade slot, implementation setter, or upgrade path exists.
-- [x] Semantic CREATE order is fixed:
-  1. `frxUSD -> sfrxUSD`
-  2. `USDC -> sUSDS`
-  3. `USDT -> sUSDS`
+- [x] Final-token endpoint mode is explicit at factory deployment; no interface probing is used.
+- [x] Vanilla ERC-20 mode uses identity token-unit/backing-asset conversion.
+- [x] ERC-4626 mode uses `convertToAssets()` and `convertToShares()`.
+- [x] Intermediate ERC-4626 route steps remain supported independently of persistent endpoint mode.
+- [x] Shared `targetAsset == finalToken` inventory is counted once in nominal and oracle backing values.
+- [x] Empty expansion is accepted only when target and final tokens are identical; contraction remains independently validated.
+- [x] Frax mint is route kind `4`; Frax redemption is distinct route kind `5`; unsupported kinds start at `6`.
+- [x] Successful routed-expansion rewards are denominated in configured final-token units.
+- [x] Direct-buyback unit sizing uses vanilla identity conversion or ERC-4626 share conversion as configured.
+- [x] Dai/USDS and ERC-4626 route support remains compiled and tested but is not selected for this launch.
 
-## 2. Mandatory pre-broadcast decisions
+## 4. Selected undeployed launch
 
-These are release blockers. The deployer exposes one explicit recommended configuration; hardcoding it does not substitute for governance confirmation.
+All keepers use plain frxUSD as final token and start fully paused.
 
-- [x] Oracle family selected coherently: direct canonical Chainlink proxy adapters for frxUSD and USDS; Curve EMA remains only for USDC and USDT target health.
-- [ ] Reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `frxUSD/USD`.
-- [ ] Independently reconfirm or replace the provisional `26 hours` (`93,600` seconds) `maxDelay` for `USDS/USD`.
-- [x] Documented how the selected `USDS/USD` check is applied to sUSDS economic backing after `convertToAssets()`.
-- [ ] Confirm the independent USDC and USDT target-health checks; selecting Chainlink for frxUSD/USDS does not remove them.
-- [ ] Confirm the hardcoded deployment-factory owner: Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968`.
-- [ ] Confirm all shared factory defaults and candidate addresses.
-- [ ] Obtain explicit authorization before any broadcast, proposal submission, vote, registration, debt-ceiling update, unpause, or activation.
+1. `frxUSD -> frxUSD`, cap `2,500,000 crvUSD`
+   - expansion: empty identity route;
+   - contraction: `frxUSD -> crvUSD` through the target AMM.
+2. `USDC -> frxUSD`, cap `2,500,000 crvUSD`
+   - expansion: Frax `USDC -> frxUSD` mint;
+   - contraction: Frax `frxUSD -> USDC` redemption, then target AMM to crvUSD.
+3. `USDT -> frxUSD`, cap `5,000,000 crvUSD`
+   - expansion: 3pool `USDT -> USDC`, then Frax mint;
+   - contraction: Frax redemption, reverse 3pool `USDC -> USDT`, then target AMM to crvUSD.
 
-The checked evidence below proves reproducibility. It does **not** resolve the remaining unchecked decisions.
+- [x] Curve swap and target-AMM tolerance: `3 bps`.
+- [x] Frax mint/redemption tolerance: `1 bps`.
+- [x] ERC-4626 deposit/redeem support tolerance: `1 bps`.
+- [x] Dai/USDS conversion tolerance: `0 bps`.
+- [x] Complete expansion/downstream route loss bound: `5 bps`.
+- [x] Monetary contraction uses positive exit-profit floors, not a general route-loss allowance.
+- [x] Velocity: `5%` burst, `300` seconds full refill, shared by exposure-increasing paths.
 
-## 3. Oracle-provider validation
+## 5. Oracles
 
-Common adapter API:
+- [x] USDC target health: USDC/USDT Curve EMA, inverted as required by coin order.
+- [x] USDT target health: USDT/USDC Curve EMA.
+- [x] frxUSD target/final-token health: canonical `frxusd-usd.data.eth` Chainlink proxy `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83`.
+- [x] Chainlink adapter reads the proxy directly and tolerates underlying aggregator rotation.
+- [x] Feed decimals: `8`.
+- [x] Provisional `maxDelay`: `93,600` seconds.
+- [ ] Governance must reconfirm the proxy, feed metadata, positive completed round, and `maxDelay` immediately before broadcast.
 
-```solidity
-function price() external view returns (uint256);
-```
+## 6. Verification evidence
 
-Common policy:
+- [x] Full forced suite: `289 passed`, `0 failed`, `0 skipped`.
+- [x] Stateful invariants: all six campaigns passed at `256` runs × `500` calls.
+- [x] All focused endpoint, Frax redemption, deployment, proposal, fork, and rollback suites passed.
+- [x] ABI parity passed for implementation, Factory, preview module, Curve oracle, and Chainlink oracle.
+- [x] Runtime-size and pinned code-identity tests passed.
+- [x] Unified no-broadcast deployment simulation passed and its temporary JSON was validated then removed.
+- [x] Pinned mainnet canary passed at block `25,868,730` with no broadcast:
+  - crvUSD sold: `100000000000000000000000`;
+  - frxUSD received: `100016620117244135933000`;
+  - contraction quote input: `10001662011724413593300` frxUSD;
+  - contraction quote output: `9999492700894871027318` crvUSD;
+  - expansion path hash: `0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d`;
+  - contraction path hash: `0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1`.
+- [x] Independent bounded reviews found no protocol-level source blocker and no launch-policy/proposal-wiring blocker. Both source-package reviewers correctly blocked the stale committed manifest/checklist; this regenerated evidence package resolves that finding and is subject to the final exact staged-diff audit.
+- [x] Manifest mutation tests rejected top-level schema drift, test-count drift, endpoint-mode drift, Frax redemption-buffer drift, adapter-count drift, deployed-state drift, canary-hash drift, and activation-blocker drift; byte-exact restoration passed.
 
-- [x] Adapter must be a nonzero contract; `address(0)` never disables checks.
-- [x] Output is normalized to `1e18`.
-- [x] Favorable prices are capped in keeper accounting: `effectivePrice = min(price, 1e18)`.
-- [x] Launch floor currently encoded by the Curve proposal: `999_700_000_000_000_000`.
-- [x] Target-unhealthy expansion reverts.
-- [x] Target-healthy/yield-unhealthy expansion retains target as `undeployed_backing`.
-- [x] Preview and execution apply the same target-oracle haircut to route-loss and fallback valuation.
+## 7. Deployment package
 
-### Curve EMA target adapters
+The hardcoded deployer performs six monotonic CREATEs:
 
-Selected pool:
+1. preview module;
+2. locked implementation;
+3. Factory;
+4. USDC Curve target oracle;
+5. USDT Curve target oracle;
+6. frxUSD Chainlink oracle.
 
-- USDC/USDT: `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85`
+- [x] Deployer and proposal contain no environment-driven production inputs.
+- [x] Proposal consumes the chain-bound deployment JSON and validates candidate identities before use.
+- [x] USDS deployment/oracle evidence is not required for this launch.
+- [x] No deployment JSON exists in the release package.
+- [x] No deployment or governance transaction has been broadcast.
 
-Selected roles:
+## 8. Activation blockers
 
-- USDC target: USDC/USDT, USDC orientation.
-- USDT target: USDC/USDT, USDT orientation.
+- [ ] Reconfirm frxUSD Chainlink proxy, metadata, round health, and delay bound.
+- [ ] Reconfirm Curve EMA pool code, coin order, orientation, and behavior.
+- [ ] Reconfirm Frax custodian endpoints, fees, limits, authorization, preview behavior, and live USDC inventory.
+- [ ] Run an inventory-bounded current-block Frax redemption execution canary before enabling either redemption route.
+- [ ] Obtain explicit approval for Factory defaults, candidate addresses, debt ceilings, policy registration, and activation order.
+- [ ] Run every release gate and a fresh current-block canary from the production source commit immediately before broadcast.
 
-Before broadcast:
+The pinned-block custodian inventory observation is not an activation guarantee. The current release stays undeployed and every keeper starts paused.
 
-- [ ] Reconfirm pool code, `N_COINS == 2`, coin order, and distinct indices.
-- [ ] Reconfirm `price_oracle()` behavior, inversion, and zero-output rejection.
-- [ ] Record current pool liquidity, recent EMA behavior, and relative-pair contagion risk.
-- [ ] Record both deployed adapter addresses and verify their immutable configuration.
+## 9. Operator sequence after explicit authorization
 
-### Selected direct Chainlink proxies
-
-Pinned selected configuration:
-
-- frxUSD/USD ENS: `frxusd-usd.data.eth`
-- frxUSD/USD canonical proxy: `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83`
-- frxUSD/USD official deviation threshold: `0.5%`; heartbeat: `86,400` seconds (`24 hours`).
-- USDS/USD ENS: `usds-usd.data.eth`
-- USDS/USD canonical proxy: `0xfF30586cD0F29eD462364C7e81375FC0C71219b1`
-- USDS/USD official deviation threshold: `0.3%`; heartbeat: `86,400` seconds (`24 hours`).
-- Provisional frxUSD/USD maximum delay: `93,600` seconds (`26 hours`).
-- Provisional USDS/USD maximum delay: `93,600` seconds (`26 hours`).
-
-Before broadcast:
-
-- [ ] Reconfirm both canonical proxy addresses against Chainlink's official feed listings and ENS records.
-- [ ] Reconfirm proxy code, 8-decimal metadata, current positive answer, completed round, update timestamp, and approved freshness window.
-- [ ] Record the rationale for each approved `maxDelay`; do not copy one threshold without reviewing both feeds.
-- [ ] Record two separately deployed adapter addresses and verify proxy/feed-decimals/max-delay immutables.
-- [ ] Confirm every adapter `price()` succeeds through its canonical proxy.
-- [ ] Confirm underlying aggregator rotation remains live through the same immutable proxy address.
-
-Fork tests confirm direct `latestRoundData()` reads through both canonical proxies. The access-controlled addresses previously returned by the Feed Registry were underlying OCR aggregators, not the stable consumer-facing proxy endpoints.
-
-Proposal bindings:
-
-- frxUSD -> sfrxUSD: the frxUSD/USD adapter is both the target oracle and the sfrxUSD backing oracle after `convertToAssets()`.
-- USDC -> sUSDS and USDT -> sUSDS: the USDS/USD adapter is the backing oracle after `convertToAssets()`; each target retains its separate Curve EMA adapter.
-
-## 4. Launch configuration
-
-- [x] frxUSD -> sfrxUSD maximum deployed crvUSD: `2,500,000e18`.
-- [x] USDC -> sUSDS maximum deployed crvUSD: `2,500,000e18`.
-- [x] USDT -> sUSDS maximum deployed crvUSD: `5,000,000e18`.
-- [x] Every keeper starts paused.
-- [x] Every Curve step, including target-AMM Curve legs, uses `3 bps`.
-- [x] ERC-4626 deposit and redeem steps use `1 bps`; DaiUsds converter steps use `0 bps`.
-- [x] Complete downstream-deployment and yield-to-target maintenance routes use `5 bps`.
-- [x] Monetary contraction has no general route-loss allowance and must clear its positive `1,000 ppm` normal or `5,000 ppm` early exit-profit floor.
-- [x] Existing PegKeeperV2 registrations remain untouched.
-- [x] No GHO, pyUSD, or USDC -> sfrxUSD keeper is included.
-- [x] Every new keeper is registered with both active aggregate monetary policies:
-  - `0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251`
-  - `0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1`
-
-Keeper-local velocity:
-
-- [x] One global bucket per keeper, shared across callers and exposure-increasing paths.
-- [x] `expand()` and `claimSurplus()` charge the same bucket.
-- [x] Contraction does not refund pressure.
-- [x] Oracle, policy, floor, ceiling, and factory-setting updates do not reset pressure.
-- [x] Reverted transactions consume no pressure.
-- [x] Launch burst is `5%` of `maxDeployedCrvUsd`.
-- [x] Full refill is `300 seconds`.
-
-Launch rates:
-
-| Keeper | Burst | Refill rate |
-|---|---:|---:|
-| frxUSD -> sfrxUSD | 125,000 crvUSD | 25,000 crvUSD/minute |
-| USDC -> sUSDS | 125,000 crvUSD | 25,000 crvUSD/minute |
-| USDT -> sUSDS | 250,000 crvUSD | 50,000 crvUSD/minute |
-
-## 5. Reproducible release gates
-
-All checked gates were run against production source commit `62b692314ce5aab561223fc0f3cb75289bb77acf`.
-
-```bash
-forge fmt --check
-git diff --check
-forge lint
-forge build --sizes
-forge test --force --summary
-forge test --match-path 'test/PegKeeperV3*Fork.t.sol' -vv
-forge test --match-contract PegKeeperV3RuntimeSizeTest -vv
-forge test --match-contract PegKeeperV3UnifiedDeploymentTest -vv
-forge test --match-contract PegKeeperV3ProposalDeploymentJsonTest -vv
-forge script script/PegKeeperV3ReleaseCanary.s.sol:PegKeeperV3ReleaseCanary \
-  --fork-url "$ETH_RPC_URL" \
-  --fork-block-number 25868730 -vv
-PYTHONDONTWRITEBYTECODE=1 python3 scripts/verify-release-manifest.py
-```
-
-ABI checks:
-
-```bash
-python3 scripts/check-vyper-solidity-abi.py \
-  out/PegKeeperV3.vy/PegKeeperV3.json \
-  out/IPegKeeperV3.sol/IPegKeeperV3.json
-python3 scripts/check-vyper-solidity-abi.py \
-  out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json \
-  out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json
-python3 scripts/check-vyper-solidity-abi.py \
-  out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json \
-  out/IPegKeeperV3PreviewModule.sol/IPegKeeperV3PreviewModule.json
-python3 scripts/check-vyper-solidity-abi.py \
-  out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json \
-  out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json
-```
-
-Recorded outcomes:
-
-- [x] `forge fmt --check`: pass.
-- [x] `git diff --check`: pass.
-- [x] `forge lint`: pass.
-- [x] `forge build --sizes`: pass.
-- [x] Complete suite: `278 passed, 0 failed, 0 skipped`.
-- [x] Stateful invariant campaign: `6` invariants at `256` runs × `500` calls, including a required successful path for every economic handler action.
-- [x] Target-AMM callback reentrancy regression: nested expansion rejected while the outer expansion completes.
-- [x] PegKeeperV3 fork tests: pass.
-- [x] Curve adapter unit/deployment/proposal coverage: pass.
-- [x] Chainlink adapter unit/deployment/live-proxy fork coverage: pass.
-- [x] Unified deployment and chain-bound JSON handoff coverage: pass.
-- [x] Actual `DeployPegKeeperV3.run()` mainnet-fork simulation: seven sequential CREATEs, complete JSON output, no broadcast; simulated output removed afterward.
-- [x] Mainnet canary at block `25,868,730`: pass with no broadcast.
-- [x] Manifest verifier: pass.
-- [x] Manifest mutation tests reject top-level/schema drift, launch-tolerance drift, a monetary-contraction loss allowance, Curve-family selection, wrong proxy, obsolete underlying aggregator, Feed Registry semantics, delay drift, heartbeat drift, proposal-binding drift, CREATE-order drift, test-inventory drift, deployed-state drift, and extra obsolete nested oracle/deployment fields; byte-exact restoration passes.
-
-Canary route hashes:
-
-- expansion: `0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951`
-- contraction: `0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974`
-
-## 6. Independent review evidence
-
-- [x] Immutable EIP-1167 factory review: no findings; targeted factory suite `19 passed, 0 failed`.
-- [x] Chainlink adapter/deployment review: no findings; targeted non-fork suite `8 passed, 0 failed`.
-- [x] Preview/execution parity review: no logic finding.
-- [x] PegKeeperV3 invariant-helper refactor review: no security or logic findings; frozen source diff `880390b5f2d9d1eec7bbf3e95b98bfb1be4be5262d0f015704fa75e14476feb2`.
-- [x] Unified deployment review: no security or logic findings; frozen source diff `031c41652daba68622b3cfe1d816e0d9d63632421487b319494f1d78eeb8e77e`.
-- [x] Deployment-visibility correction review: no security or logic findings; frozen source diff `3e3f3231bfbd5f37c3ae8f80e0fd101adc0971b515ed96c69f8a08b38ee96010`.
-- [x] Vyper preview semantic-parity and integration reviews: no blocking findings; frozen source diff `2fb94ff190d694b359fd91c9f80ad2ccb6721d9f6ba6f727e56006d38223f5d8`.
-- [x] Canonical Chainlink proxy semantic/security and deployment/integration reviews: no blocking findings; frozen source diff `879bfffa66d470cb3c9eacdcef455f8c01156626cb67a8ac85cb1929e2957eb6`.
-- [x] Selected Chainlink proposal semantic/security and documentation/integration reviews: no blocking findings; frozen source diff `ef0bb3a98bc567a2999898c2dc628bb78766a724e9fd615da85a0258570d68fd`.
-- [x] Current launch-policy and whole-source reviews: no blocking findings; frozen source diff `e124021e0f1dddf92a6893a71debe323d126e64105149ac2e82c0c8e03ff4616`.
-- [x] Current security review found one ERC-4626 preview branch-order blocker; the action-local parity correction and donation-rounding regression passed exact-hash re-review at frozen source diff `97b91ed71ddc4edd4792b30f68cd7029bcefce353f18fdc153b1aefeb787c776`.
-- [x] Reviewer-identified stale release evidence was resolved by replacing the Solidity-preview and Feed-Registry-era manifest, verifier, and checklist claims with this Vyper/direct-proxy package.
-- The final package audit must review the exact frozen evidence diff and be reported with publication; it is not self-certified inside the diff it reviews.
-
-## 7. Pre-broadcast simulation only
-
-Do not add `--broadcast` until all remaining pre-broadcast decisions are checked and explicit authorization exists.
-
-1. Build from the exact production source commit.
-2. Run the manifest verifier.
-3. Simulate `DeployPegKeeperV3.s.sol` on a fresh mainnet fork with the intended deployment sender and no `--broadcast`.
-4. Confirm exactly seven sequential CREATEs: preview module, implementation, factory, two Curve target adapters, then the frxUSD and USDS Chainlink adapters.
-5. Validate every deployed contract and immutable configuration in simulation, including all factory defaults and both provisional Chainlink delays.
-6. Inspect `deployments/mainnet/PegKeeperV3-deployment.json`; confirm chain ID and all seven contract addresses match the transaction batch.
-7. Re-run the current-block canary and complete test suite.
-8. Independently review the complete transaction batch and deployment JSON.
-9. Add `--broadcast` only after explicit authorization and with the same reviewed sender/configuration.
-
-## 8. Proposal simulation
-
-Required proposal input:
-
-```text
-deployments/mainnet/PegKeeperV3-deployment.json
-```
-
-The proposal rejects a deployment file whose `chainId` differs from the active chain and then validates the factory, implementation, preview module, two selected Curve target adapters, and selected canonical-proxy Chainlink adapters on-chain before building calldata.
-
-Before proposal submission:
-
-- [ ] Confirm every candidate address and code hash from an independent source.
-- [ ] Confirm the selected Chainlink proxy, decimals, delay, and keeper bindings match this package exactly.
-- [ ] Recompute the three factory CREATE addresses from the final factory nonce.
-- [ ] Confirm semantic keeper order and names.
-- [ ] Confirm all three keepers remain paused after execution.
-- [ ] Confirm exact debt ceilings and both monetary-policy registrations.
-- [ ] Simulate the full proposal from a fresh pinned mainnet fork.
-- [ ] Have a reviewer compare decoded calldata against the approved checklist.
-- [ ] Record proposal identifier only after authorized submission.
-
-## 9. Post-deployment verification and activation
-
-After an authorized deployment—but before registration or activation:
-
-- [ ] Record preview module, implementation, factory, oracle, and keeper addresses.
-- [ ] Record transaction hashes and deployment block.
-- [ ] Verify source and bytecode against this package.
-- [ ] Confirm each keeper proxy runtime is canonical EIP-1167 and points to the pinned implementation.
-- [ ] Confirm each keeper is initialized once, correctly indexed, and paused.
-- [ ] Confirm owner, emergency admin, fee receiver, routes, policies, oracle floors, velocity, and capacities.
-- [ ] Re-run live read-only previews and accounting invariants.
-- [ ] Obtain explicit governance approval for registration/debt-ceiling actions.
-- [ ] Register and set debt ceilings only through the approved proposal.
-- [ ] Keep activation/unpause as a separate explicit decision after monitoring and review.
-
-Stopping after deployment is valid. Stopping after registration while paused is valid. Unpausing without a separate explicit decision is not.
+1. Check out `202181a49450a07747ef5eaf1eb7914eb985a8d5` and verify the evidence commit changes only the three evidence files.
+2. Run `make check` and the current-block no-broadcast canary.
+3. Run the unified deployer without broadcast from the intended deployment sender; inspect and remove the temporary deployment JSON if the run is rejected.
+4. Reconfirm all hardcoded addresses, code hashes, nonces, oracle health, Frax capacity, and policy/cap values.
+5. Only after separate explicit authorization, broadcast the deployment.
+6. Verify deployed code, immutables, ownership, Factory defaults, and JSON provenance before constructing governance calldata.
+7. Simulate the exact proposal against the deployed candidates; keep all execution directions paused.
+8. Submit, vote, register, fund, and activate only under separate governance authorization and a staged risk plan.

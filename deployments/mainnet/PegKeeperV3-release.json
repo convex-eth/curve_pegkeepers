@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-01T06:24:52Z",
+  "generatedAtUtc": "2026-09-01T11:11:27Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "62b692314ce5aab561223fc0f3cb75289bb77acf",
+  "productionSourceCommit": "202181a49450a07747ef5eaf1eb7914eb985a8d5",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -14,22 +14,22 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "d05d672f175626894ed1e0db3aea53abb7a84296c939a498699a7428a2de2a72"
+      "sha256": "73ddb6880bff69d6ed89a1ef62681166a603cd423cd123a05e8533d75302b703"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 23355,
-      "compilerCreationKeccak256": "0x03e9211658c46a775ff647707faa8f72a8792ea46594e37cfbb0ce25926cd787",
-      "semanticCoreRuntimeBytes": 23201,
-      "semanticCoreRuntimeKeccak256": "0x55a15662a255b85d29d547da33d56ae4544552371a5887598ac1429fccda3bdd",
+      "compilerCreationBytes": 23915,
+      "compilerCreationKeccak256": "0x8797ee4ac0b2e1fb4050314a7c3d5594223122a39114ae49a728ed023d9cc6c7",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 23387,
+      "fullInitCodeBytes": 23947,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 25765,
-      "deployedRuntimeBytes": 23233,
+      "fullInitCodeMarginBytes": 25205,
+      "semanticCoreRuntimeBytes": 23761,
+      "semanticCoreRuntimeKeccak256": "0x83d97e75622beff4a7f7bad21cb00cd2f9685b4e57eae25988caeb3834e62662",
+      "deployedRuntimeBytes": 23793,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 1343,
-      "abiFunctions": 77,
+      "deployedRuntimeMarginBytes": 783,
+      "abiFunctions": 80,
       "abiEvents": 13
     },
     "lockedAgainstOperationalInitialization": true
@@ -37,16 +37,16 @@
   "previewModule": {
     "source": {
       "path": "src/vyper/PegKeeperV3PreviewModule.vy",
-      "sha256": "4e3c6862217c78908c8f4907a21585a2cb566abdf77d364cd607090799326c19"
+      "sha256": "f4273aefd5427a21f12b9a82a2cd5b5c6ff3c6c70e01976a07ba9c884e2c40aa"
     },
     "artifact": {
       "path": "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
-      "creationBytes": 8093,
-      "creationKeccak256": "0x46fdeaf58faffdb42b822ca407e890ac78ae8de394a032f8e26cf4f05d5f4e9d",
-      "runtimeBytes": 8056,
-      "runtimeKeccak256": "0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b",
+      "creationBytes": 8222,
+      "creationKeccak256": "0x2a93f925fe3bc5c7ea92843d0a7561303bac320d77cbd22352596860b2eddfd2",
+      "runtimeBytes": 8185,
+      "runtimeKeccak256": "0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c",
       "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 16520,
+      "runtimeMarginBytes": 16391,
       "abiFunctions": 3,
       "abiEvents": 0
     },
@@ -56,21 +56,21 @@
   "deploymentFactory": {
     "source": {
       "path": "src/vyper/PegKeeperV3Factory.vy",
-      "sha256": "efe5e37ed12d291f3a1e1e7ecb991e86f42f0f5f12d419de37e54cc3f1705c78"
+      "sha256": "72a3ec80dd49f2e64d8474287cc997fc31dc1cacff6144a2174204fbfb238dc5"
     },
     "artifact": {
       "path": "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
-      "compilerCreationBytes": 5056,
-      "compilerCreationKeccak256": "0x9ae1af028c299794d776e5727517a4e7d8125b7c5d424babd3b182a6a4b2bba3",
-      "runtimeTemplateBytes": 3864,
-      "runtimeTemplateKeccak256": "0x4a2d078bc1a15b17f6a54f05e2874306d005aa3e102592675584bd82db5ec249",
+      "compilerCreationBytes": 5113,
+      "compilerCreationKeccak256": "0x50425a9790516d250948462c9a2d69c2020f685b0391cf67299bfae9bb9edcd7",
       "constructorArgsBytes": 352,
-      "fullInitCodeBytes": 5408,
+      "fullInitCodeBytes": 5465,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 43744,
-      "deployedRuntimeBytes": 3928,
+      "fullInitCodeMarginBytes": 43687,
+      "runtimeTemplateBytes": 3921,
+      "runtimeTemplateKeccak256": "0x7ebc7e4db0aa24234d38a1f2a6a51bd2e7d85c175745ef80d031f63dfa827f29",
+      "deployedRuntimeBytes": 3985,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 20648,
+      "deployedRuntimeMarginBytes": 20591,
       "abiFunctions": 16,
       "abiEvents": 4
     },
@@ -99,7 +99,7 @@
     "implementationSetterPresent": false
   },
   "oraclePolicy": {
-    "selectionStatus": "selected_chainlink_for_frxusd_usds",
+    "selectionStatus": "selected_chainlink_for_frxusd",
     "releaseBlockedUntilSelection": false,
     "commonPriceDecimals": 18,
     "favorablePriceCap": "1000000000000000000",
@@ -115,20 +115,21 @@
         "compilerCreationKeccak256": "0x7b3ffd51dafbcac2f9e05b92ac7a8ff0e0e383bd51d59455b40cd34fd2267aad",
         "runtimeTemplateBytes": 329,
         "runtimeTemplateKeccak256": "0xfb1bf536fa996ce08fe9176ab628f2d33de000f9736291d93954a34a7ebe3ca6",
-        "abiFunctions": 5
+        "abiFunctions": 5,
+        "abiEvents": 0
       },
       "deploymentScript": "script/DeployPegKeeperV3.s.sol",
       "adapters": [
         {
           "role": "USDC target",
-          "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
+          "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85",
           "asset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           "referenceAsset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
           "inverted": true
         },
         {
           "role": "USDT target",
-          "pool": "0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85",
+          "pool": "0x4f493b7de8aac7d55f71853688b1f7c8f0243c85",
           "asset": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
           "referenceAsset": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
           "inverted": false
@@ -160,16 +161,6 @@
           "heartbeatSeconds": 86400,
           "feedDecimals": 8,
           "maxDelay": 93600
-        },
-        {
-          "role": "USDS/USD",
-          "ens": "usds-usd.data.eth",
-          "proxy": "0xfF30586cD0F29eD462364C7e81375FC0C71219b1",
-          "officialListing": "https://data.chain.link/feeds/ethereum/mainnet/usds-usd",
-          "deviationThresholdBps": 30,
-          "heartbeatSeconds": 86400,
-          "feedDecimals": 8,
-          "maxDelay": 93600
         }
       ],
       "directProxyReadsSupported": true,
@@ -178,45 +169,57 @@
     },
     "proposalBindings": [
       {
-        "keeper": "frxUSD -> sfrxUSD",
+        "keeper": "frxUSD -> frxUSD",
         "targetOracle": "frxUSD/USD Chainlink",
         "downstreamOracle": "frxUSD/USD Chainlink"
       },
       {
-        "keeper": "USDC -> sUSDS",
+        "keeper": "USDC -> frxUSD",
         "targetOracle": "USDC/USDT Curve EMA",
-        "downstreamOracle": "USDS/USD Chainlink"
+        "downstreamOracle": "frxUSD/USD Chainlink"
       },
       {
-        "keeper": "USDT -> sUSDS",
+        "keeper": "USDT -> frxUSD",
         "targetOracle": "USDT/USDC Curve EMA",
-        "downstreamOracle": "USDS/USD Chainlink"
+        "downstreamOracle": "frxUSD/USD Chainlink"
       }
     ]
   },
   "launchConfiguration": {
     "semanticCreateOrder": [
-      "frxUSD -> sfrxUSD",
-      "USDC -> sUSDS",
-      "USDT -> sUSDS"
+      "frxUSD -> frxUSD",
+      "USDC -> frxUSD",
+      "USDT -> frxUSD"
     ],
     "keepers": [
       {
         "index": 1,
-        "name": "Pegkeeper 1",
-        "route": "frxUSD -> sfrxUSD",
+        "name": "PegKeeperV3 frxUSD -> frxUSD",
+        "route": "frxUSD -> frxUSD",
+        "finalToken": "frxUSD",
+        "endpointMode": "vanilla_erc20",
+        "expansionPath": "empty",
+        "contractionPath": "CURVE_FRXUSD_TO_CRVUSD",
         "maxDeployedCrvUsd": "2500000000000000000000000"
       },
       {
         "index": 2,
-        "name": "Pegkeeper 2",
-        "route": "USDC -> sUSDS",
+        "name": "PegKeeperV3 USDC -> frxUSD",
+        "route": "USDC -> frxUSD",
+        "finalToken": "frxUSD",
+        "endpointMode": "vanilla_erc20",
+        "expansionPath": "FRXUSD_MINT",
+        "contractionPath": "FRXUSD_REDEEM -> CURVE_USDC_TO_CRVUSD",
         "maxDeployedCrvUsd": "2500000000000000000000000"
       },
       {
         "index": 3,
-        "name": "Pegkeeper 3",
-        "route": "USDT -> sUSDS",
+        "name": "PegKeeperV3 USDT -> frxUSD",
+        "route": "USDT -> frxUSD",
+        "finalToken": "frxUSD",
+        "endpointMode": "vanilla_erc20",
+        "expansionPath": "CURVE_USDT_TO_USDC -> FRXUSD_MINT",
+        "contractionPath": "FRXUSD_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
         "maxDeployedCrvUsd": "5000000000000000000000000"
       }
     ],
@@ -228,14 +231,16 @@
       "contractionRefundsPressure": false
     },
     "monetaryPolicies": [
-      "0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251",
-      "0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1"
+      "0x07491D124DDB3ef59a8938fCB3eE50f9fA0b9251",
+      "0xc684432fD6322c6D58b6bC5d28B18569aA0AD0A1"
     ],
     "executionPolicy": {
       "curveSwapBps": 3,
       "targetAmmBps": 3,
       "erc4626DepositBps": 1,
       "erc4626RedeemBps": 1,
+      "frxUsdMintBps": 1,
+      "frxUsdRedeemBps": 1,
       "daiUsdsConverterBps": 0,
       "downstreamAndYieldToTargetRouteLossBps": 5,
       "monetaryContractionRouteLossAllowanceBps": null,
@@ -243,11 +248,15 @@
       "normalExitProfitFloorPpm": 1000,
       "earlyExitProfitFloorPpm": 5000,
       "intermediateErc4626StepsAllowed": true,
-      "erc4626StepValuation": "action_local_share_delta_convertToAssets"
+      "erc4626StepValuation": "action_local_share_delta_convertToAssets",
+      "finalEndpointModesSupported": [
+        "vanilla_erc20",
+        "erc4626"
+      ]
     }
   },
   "verification": {
-    "testsPassed": 278,
+    "testsPassed": 289,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
@@ -280,19 +289,19 @@
     "script": "script/PegKeeperV3ReleaseCanary.s.sol",
     "result": "pass",
     "simulatedCrvUsdSold": "100000000000000000000000",
-    "simulatedSusdsReceived": "90273364828690285538377",
-    "simulatedContractionQuoteSusds": "9027336482869028553837",
-    "simulatedContractionQuoteCrvUsd": "9999527931042703308646",
-    "expansionPathHash": "0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951",
-    "contractionPathHash": "0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974",
+    "simulatedFrxUsdReceived": "100016620117244135933000",
+    "simulatedContractionQuoteFrxUsd": "10001662011724413593300",
+    "simulatedContractionQuoteCrvUsd": "9999492700894871027318",
+    "expansionPathHash": "0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d",
+    "contractionPathHash": "0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1",
     "broadcast": false
   },
   "operatorInputs": {
-    "factoryOwner": "0x40907540d8a6C65c637785e8f8B742ae6b0b9968",
+    "factoryOwner": "0x40907540D8A6c65c637785e8f8B742ae6b0b9968",
     "factoryDefaultsApproved": false,
-    "selectedOracleFamily": "chainlink_for_frxusd_usds",
+    "selectedOracleFamily": "chainlink_for_frxusd",
     "chainlinkFrxUsdMaxDelay": 93600,
-    "chainlinkUsdsMaxDelay": 93600,
+    "fraxRedemptionActivationApproved": false,
     "operatorConfirmationRequired": true
   },
   "deployment": {
@@ -305,8 +314,7 @@
       "factory",
       "usdcTargetOracle",
       "usdtTargetOracle",
-      "frxUsdUsdOracle",
-      "usdsUsdOracle"
+      "frxUsdUsdOracle"
     ],
     "previewModuleAddress": null,
     "implementationAddress": null,
@@ -319,8 +327,9 @@
     "activated": false
   },
   "activationBlockers": [
-    "Governance must independently reconfirm the canonical frxUSD/USD and USDS/USD Chainlink proxies, 8-decimal metadata, live positive completed rounds, and provisional 93,600-second maxDelay values.",
+    "Governance must independently reconfirm the canonical frxUSD/USD Chainlink proxy, 8-decimal metadata, live positive completed round, and provisional 93,600-second maxDelay.",
     "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
+    "Before enabling a Frax-redemption route, governance must reconfirm the custodian endpoints, fees, limits, authorization model, preview behavior, and live USDC inventory, then execute an inventory-bounded fork canary.",
     "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
     "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."
