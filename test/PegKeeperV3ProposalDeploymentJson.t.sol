@@ -12,19 +12,16 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
     string internal constant TEST_OUTPUT =
         "deployments/mainnet/PegKeeperV3-proposal-input.test.json";
 
-    function test_proposalLoadsFactoryAndCurveOraclesFromDeploymentJson() public {
+    function test_proposalLoadsFactoryAndSelectedOraclesFromDeploymentJson() public {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = DeployPegKeeperV3.Deployment({
             previewModule: makeAddr("previewModule"),
             implementation: makeAddr("implementation"),
             factory: makeAddr("factory"),
-            frxUsdTargetOracle: makeAddr("frxUsdTargetOracle"),
-            sfrxUsdBackingOracle: makeAddr("sfrxUsdBackingOracle"),
             usdcTargetOracle: makeAddr("usdcTargetOracle"),
             usdtTargetOracle: makeAddr("usdtTargetOracle"),
-            susdsBackingOracle: makeAddr("susdsBackingOracle"),
-            frxUsdChainlinkOracle: makeAddr("frxUsdChainlinkOracle"),
-            usdsChainlinkOracle: makeAddr("usdsChainlinkOracle")
+            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
+            usdsUsdOracle: makeAddr("usdsUsdOracle")
         });
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
 
@@ -32,11 +29,11 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         proposal.loadDeployment(TEST_OUTPUT);
 
         assertEq(proposal.deploymentFactory(), deployment.factory);
-        assertEq(proposal.frxUsdOracle(), deployment.frxUsdTargetOracle);
-        assertEq(proposal.frxUsdBackingOracle(), deployment.sfrxUsdBackingOracle);
+        assertEq(proposal.frxUsdOracle(), deployment.frxUsdUsdOracle);
+        assertEq(proposal.frxUsdBackingOracle(), deployment.frxUsdUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcTargetOracle);
         assertEq(proposal.usdtOracle(), deployment.usdtTargetOracle);
-        assertEq(proposal.susdsBackingOracle(), deployment.susdsBackingOracle);
+        assertEq(proposal.usdsOracle(), deployment.usdsUsdOracle);
         vm.removeFile(TEST_OUTPUT);
     }
 

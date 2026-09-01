@@ -10,7 +10,9 @@ import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.s
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 
 /// @notice Monotonic mainnet deployer for every PegKeeperV3 release dependency.
-/// @dev Deploys both oracle families so governance can select one after independent feed review.
+/// @dev Deploys Curve target adapters for USDC/USDT and canonical Chainlink adapters for
+///      frxUSD/USD and USDS/USD. The Chainlink adapters are reused for backing-asset checks
+///      after sfrxUSD/sUSDS shares are converted to frxUSD/USDS by the keeper.
 contract DeployPegKeeperV3 is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
 
@@ -22,16 +24,10 @@ contract DeployPegKeeperV3 is Script {
     address public constant CURVE_EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
 
-    address public constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address public constant SFRXUSD = 0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6;
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address public constant USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F;
-    address public constant SUSDS = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD;
 
     address public constant USDC_USDT_ORACLE_POOL = 0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85;
-    address public constant FRXUSD_SUSDS_ORACLE_POOL = 0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7;
-    address public constant SFRXUSD_FRXUSD_ORACLE_POOL = 0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978;
 
     address public constant FRXUSD_USD_PROXY = 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83;
     address public constant USDS_USD_PROXY = 0xfF30586cD0F29eD462364C7e81375FC0C71219b1;
@@ -57,16 +53,10 @@ contract DeployPegKeeperV3 is Script {
         uint256 fallbackSettlementGasReserve;
         uint256 expansionMaxRouteLossBps;
         address usdcUsdtPool;
-        address frxUsdSusdsPool;
-        address sfrxUsdFrxUsdPool;
-        address frxUsd;
-        address sfrxUsd;
-        address susds;
         address usdc;
         address usdt;
         address frxUsdProxy;
         uint256 frxUsdMaxDelay;
-        address usds;
         address usdsProxy;
         uint256 usdsMaxDelay;
     }
@@ -75,13 +65,10 @@ contract DeployPegKeeperV3 is Script {
         address previewModule;
         address implementation;
         address factory;
-        address frxUsdTargetOracle;
-        address sfrxUsdBackingOracle;
         address usdcTargetOracle;
         address usdtTargetOracle;
-        address susdsBackingOracle;
-        address frxUsdChainlinkOracle;
-        address usdsChainlinkOracle;
+        address frxUsdUsdOracle;
+        address usdsUsdOracle;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -109,16 +96,10 @@ contract DeployPegKeeperV3 is Script {
         config.fallbackSettlementGasReserve = FALLBACK_SETTLEMENT_GAS_RESERVE;
         config.expansionMaxRouteLossBps = EXPANSION_MAX_ROUTE_LOSS_BPS;
         config.usdcUsdtPool = USDC_USDT_ORACLE_POOL;
-        config.frxUsdSusdsPool = FRXUSD_SUSDS_ORACLE_POOL;
-        config.sfrxUsdFrxUsdPool = SFRXUSD_FRXUSD_ORACLE_POOL;
-        config.frxUsd = FRXUSD;
-        config.sfrxUsd = SFRXUSD;
-        config.susds = SUSDS;
         config.usdc = USDC;
         config.usdt = USDT;
         config.frxUsdProxy = FRXUSD_USD_PROXY;
         config.frxUsdMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
-        config.usds = USDS;
         config.usdsProxy = USDS_USD_PROXY;
         config.usdsMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
     }
@@ -133,28 +114,17 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Deploying immutable PegKeeperV3Factory");
         deployment.factory = _deployFactory(config, deployment.implementation);
 
-        console2.log("Deploying Curve frxUSD target oracle");
-        deployment.frxUsdTargetOracle =
-            _deployCurveAdapter(config.frxUsdSusdsPool, config.frxUsd, config.susds);
-        console2.log("Deploying Curve sfrxUSD backing oracle");
-        deployment.sfrxUsdBackingOracle =
-            _deployCurveAdapter(config.sfrxUsdFrxUsdPool, config.sfrxUsd, config.frxUsd);
         console2.log("Deploying Curve USDC target oracle");
         deployment.usdcTargetOracle =
             _deployCurveAdapter(config.usdcUsdtPool, config.usdc, config.usdt);
         console2.log("Deploying Curve USDT target oracle");
         deployment.usdtTargetOracle =
             _deployCurveAdapter(config.usdcUsdtPool, config.usdt, config.usdc);
-        console2.log("Deploying Curve sUSDS backing oracle");
-        deployment.susdsBackingOracle =
-            _deployCurveAdapter(config.frxUsdSusdsPool, config.susds, config.frxUsd);
-
         console2.log("Deploying Chainlink frxUSD/USD oracle");
-        deployment.frxUsdChainlinkOracle =
+        deployment.frxUsdUsdOracle =
             _deployChainlinkAdapter(config.frxUsdProxy, config.frxUsdMaxDelay);
         console2.log("Deploying Chainlink USDS/USD oracle");
-        deployment.usdsChainlinkOracle =
-            _deployChainlinkAdapter(config.usdsProxy, config.usdsMaxDelay);
+        deployment.usdsUsdOracle = _deployChainlinkAdapter(config.usdsProxy, config.usdsMaxDelay);
 
         _verifyDeployment(deployment, config);
     }
@@ -165,14 +135,11 @@ contract DeployPegKeeperV3 is Script {
         vm.serializeAddress(objectKey, "previewModule", deployment.previewModule);
         vm.serializeAddress(objectKey, "implementation", deployment.implementation);
         vm.serializeAddress(objectKey, "factory", deployment.factory);
-        vm.serializeAddress(objectKey, "frxUsdTargetOracle", deployment.frxUsdTargetOracle);
-        vm.serializeAddress(objectKey, "sfrxUsdBackingOracle", deployment.sfrxUsdBackingOracle);
         vm.serializeAddress(objectKey, "usdcTargetOracle", deployment.usdcTargetOracle);
         vm.serializeAddress(objectKey, "usdtTargetOracle", deployment.usdtTargetOracle);
-        vm.serializeAddress(objectKey, "susdsBackingOracle", deployment.susdsBackingOracle);
-        vm.serializeAddress(objectKey, "frxUsdChainlinkOracle", deployment.frxUsdChainlinkOracle);
+        vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         string memory json =
-            vm.serializeAddress(objectKey, "usdsChainlinkOracle", deployment.usdsChainlinkOracle);
+            vm.serializeAddress(objectKey, "usdsUsdOracle", deployment.usdsUsdOracle);
         vm.writeJson(json, outputPath);
     }
 
@@ -308,34 +275,15 @@ contract DeployPegKeeperV3 is Script {
         );
 
         _verifyCurveOracle(
-            deployment.frxUsdTargetOracle, config.frxUsdSusdsPool, config.frxUsd, config.susds, true
-        );
-        _verifyCurveOracle(
-            deployment.sfrxUsdBackingOracle,
-            config.sfrxUsdFrxUsdPool,
-            config.sfrxUsd,
-            config.frxUsd,
-            true
-        );
-        _verifyCurveOracle(
             deployment.usdcTargetOracle, config.usdcUsdtPool, config.usdc, config.usdt, true
         );
         _verifyCurveOracle(
             deployment.usdtTargetOracle, config.usdcUsdtPool, config.usdt, config.usdc, false
         );
-        _verifyCurveOracle(
-            deployment.susdsBackingOracle,
-            config.frxUsdSusdsPool,
-            config.susds,
-            config.frxUsd,
-            false
-        );
         _verifyChainlinkOracle(
-            deployment.frxUsdChainlinkOracle, config.frxUsdProxy, config.frxUsdMaxDelay
+            deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
-        _verifyChainlinkOracle(
-            deployment.usdsChainlinkOracle, config.usdsProxy, config.usdsMaxDelay
-        );
+        _verifyChainlinkOracle(deployment.usdsUsdOracle, config.usdsProxy, config.usdsMaxDelay);
     }
 
     function _verifyCurveOracle(
@@ -375,15 +323,9 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Minimum downstream attempt gas", config.minDownstreamAttemptGas);
         console2.log("Fallback settlement gas reserve", config.fallbackSettlementGasReserve);
         console2.log("Expansion max route loss (bps)", config.expansionMaxRouteLossBps);
-        console2.log("frxUSD", config.frxUsd);
-        console2.log("sfrxUSD", config.sfrxUsd);
-        console2.log("sUSDS", config.susds);
         console2.log("USDC", config.usdc);
         console2.log("USDT", config.usdt);
-        console2.log("USDS", config.usds);
         console2.log("USDC/USDT Curve oracle pool", config.usdcUsdtPool);
-        console2.log("frxUSD/sUSDS Curve oracle pool", config.frxUsdSusdsPool);
-        console2.log("sfrxUSD/frxUSD Curve oracle pool", config.sfrxUsdFrxUsdPool);
         console2.log("frxUSD Chainlink proxy", config.frxUsdProxy);
         console2.log("frxUSD max delay (provisional)", config.frxUsdMaxDelay);
         console2.log("USDS Chainlink proxy", config.usdsProxy);
@@ -395,13 +337,10 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Preview module", deployment.previewModule);
         console2.log("Implementation", deployment.implementation);
         console2.log("Factory", deployment.factory);
-        console2.log("Curve frxUSD target oracle", deployment.frxUsdTargetOracle);
-        console2.log("Curve sfrxUSD backing oracle", deployment.sfrxUsdBackingOracle);
         console2.log("Curve USDC target oracle", deployment.usdcTargetOracle);
         console2.log("Curve USDT target oracle", deployment.usdtTargetOracle);
-        console2.log("Curve sUSDS backing oracle", deployment.susdsBackingOracle);
-        console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdChainlinkOracle);
-        console2.log("Chainlink USDS/USD oracle", deployment.usdsChainlinkOracle);
+        console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
+        console2.log("Chainlink USDS/USD oracle", deployment.usdsUsdOracle);
         console2.log("Deployment JSON", DEPLOYMENT_OUTPUT_PATH);
     }
 }

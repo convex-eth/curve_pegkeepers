@@ -7,7 +7,7 @@ Implementation:
 - Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
 - Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
 
-`script/DeployPegKeeperV3.s.sol` performs one explicit deployment of the preview module, locked implementation, immutable EIP-1167 factory, five Curve EMA adapters, and both alternative Chainlink adapters. It uses hardcoded public mainnet configuration and writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`. The proposal reads its factory and selected Curve adapters from that file, deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
+`script/DeployPegKeeperV3.s.sol` performs one explicit seven-CREATE deployment of the preview module, locked implementation, immutable EIP-1167 factory, two Curve EMA target adapters for USDC/USDT, and the selected canonical-proxy Chainlink adapters for frxUSD/USD and USDS/USD. It uses hardcoded public mainnet configuration and writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`. The proposal reads those exact dependencies from the file, deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
 
 ## Initial launch scope
 
@@ -67,32 +67,28 @@ Every deployment requires nonzero target and downstream adapters. Both launch fl
 
 | Keeper | Target adapter | Downstream backing adapter |
 |---|---|---|
-| frxUSD → sfrxUSD | frxUSD/sUSDS EMA, frxUSD orientation | sfrxUSD/frxUSD EMA, sfrxUSD orientation |
-| USDC → sUSDS | USDC/USDT EMA, USDC orientation | rate-normalized frxUSD/sUSDS EMA, sUSDS/frxUSD orientation |
-| USDT → sUSDS | USDC/USDT EMA, USDT orientation | rate-normalized frxUSD/sUSDS EMA, sUSDS/frxUSD orientation |
+| frxUSD → sfrxUSD | Chainlink frxUSD/USD | Chainlink frxUSD/USD after `sfrxUSD.convertToAssets()` |
+| USDC → sUSDS | USDC/USDT EMA, USDC orientation | Chainlink USDS/USD after `sUSDS.convertToAssets()` |
+| USDT → sUSDS | USDC/USDT EMA, USDT orientation | Chainlink USDS/USD after `sUSDS.convertToAssets()` |
 
 Launch oracle pools:
 
 | Pool | Address | Current depth snapshot | EMA window |
 |---|---|---:|---:|
 | USDC/USDT | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | approximately `$5.44m` | `866s` |
-| frxUSD/sUSDS | `0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7` | approximately `$1.86m` | `866s` |
-| sfrxUSD/frxUSD | `0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978` | approximately `$11.86m` | verify before launch |
 
-The frxUSD/sUSDS pool applies its sUSDS rate provider. Its EMA is therefore an underlying economic comparison, not a raw share-count quote. The frxUSD keeper instead checks downstream `sfrxUSD` health against the materially deeper sfrxUSD/frxUSD pool. Each keeper converts held shares to underlying assets once before applying the capped adapter multiplier; favorable values above par cannot over-credit backing. Route execution remains protected separately by quote floors, measured output, and route-loss limits.
+The USDC/USDT EMA remains a relative target-health check for those two keepers. Route execution remains protected separately by quote floors, measured output, and route-loss limits.
 
-### Alternative Chainlink sources — not selected
+### Selected Chainlink sources
 
-The repository also contains separate direct-proxy Chainlink adapters for frxUSD/USD and USDS/USD. They are alternatives for the frxUSD and USDS checks above, not additional launch requirements. The current proposal remains Curve-only until governance selects one source family and updates the exact adapter addresses.
-
-If selected, the frxUSD/USD adapter can serve both the frxUSD target check and the frxUSD-valued downstream check after `sfrxUSD.convertToAssets()`. The USDS/USD adapter can replace the Curve sUSDS/frxUSD downstream check after `sUSDS.convertToAssets()`. This decision does not by itself replace the separately configured USDC and USDT target checks.
+The launch proposal selects direct canonical-proxy Chainlink adapters for the frxUSD and USDS checks. The frxUSD/USD adapter serves both the frxUSD target check and the frxUSD-valued downstream check after `sfrxUSD.convertToAssets()`. The USDS/USD adapter serves the downstream backing check for both sUSDS keepers after `sUSDS.convertToAssets()`. USDC and USDT retain their separately configured Curve target checks.
 
 | Pair | Canonical ENS | Canonical proxy | Deviation | Heartbeat |
 |---|---|---|---:|---:|
 | frxUSD/USD | `frxusd-usd.data.eth` | `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83` | 0.5% | 24 hours |
 | USDS/USD | `usds-usd.data.eth` | `0xfF30586cD0F29eD462364C7e81375FC0C71219b1` | 0.3% | 24 hours |
 
-Both canonical proxies report 8 decimals and normalize to `1e18`. Fork tests confirm direct `latestRoundData()` reads through both proxy addresses. The immutable adapter address therefore remains stable when Chainlink rotates a proxy's underlying aggregator. The unified deployer currently uses a provisional `26 hours` maximum delay for both adapters: the listed 24-hour heartbeat plus two hours of grace. Heartbeat metadata and the adapter's rejection threshold are distinct; governance must still approve or replace each maximum delay before broadcast.
+Both canonical proxies report 8 decimals and normalize to `1e18`. Fork tests confirm direct `latestRoundData()` reads through both proxy addresses. The immutable adapter address therefore remains stable when Chainlink rotates a proxy's underlying aggregator. The unified deployer and proposal require a provisional `26 hours` maximum delay for both adapters: the listed 24-hour heartbeat plus two hours of grace. Heartbeat metadata and the adapter's rejection threshold are distinct; governance must still approve or replace each maximum delay before broadcast.
 
 Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
 

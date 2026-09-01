@@ -14,6 +14,7 @@ import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
+import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
 
 contract CurveEDAOProxyHarness {
@@ -68,11 +69,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
         proposal.setOracleAdapters(
-            deployment.frxUsdTargetOracle,
-            deployment.sfrxUsdBackingOracle,
+            deployment.frxUsdUsdOracle,
             deployment.usdcTargetOracle,
             deployment.usdtTargetOracle,
-            deployment.susdsBackingOracle
+            deployment.usdsUsdOracle
         );
 
         factory = IPegKeeperV3Factory(deployment.factory);
@@ -116,20 +116,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _assertMonetaryPolicyAction(actions[16], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
-    function test_OracleAdaptersUseSelectedExternalCurvePools() public view {
-        _assertOracle(
-            proposal.frxUsdOracle(),
-            proposal.FRXUSD_SUSDS_ORACLE_POOL(),
-            proposal.FRXUSD(),
-            proposal.SUSDS(),
-            true
-        );
-        _assertOracle(
-            proposal.frxUsdBackingOracle(),
-            proposal.FRXUSD_SFRXUSD_POOL(),
-            proposal.SFRXUSD(),
-            proposal.FRXUSD(),
-            true
+    function test_OracleAdaptersUseSelectedChainlinkFeedsForFrxUsdAndUsds() public view {
+        assertEq(proposal.frxUsdOracle(), proposal.frxUsdBackingOracle());
+        _assertChainlinkOracle(
+            proposal.frxUsdOracle(), proposal.FRXUSD_USD_PROXY(), proposal.CHAINLINK_MAX_DELAY()
         );
         _assertOracle(
             proposal.usdcOracle(),
@@ -145,13 +135,31 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDC(),
             false
         );
-        _assertOracle(
-            proposal.susdsBackingOracle(),
-            proposal.FRXUSD_SUSDS_ORACLE_POOL(),
-            proposal.SUSDS(),
-            proposal.FRXUSD(),
-            false
+        _assertChainlinkOracle(
+            proposal.usdsOracle(), proposal.USDS_USD_PROXY(), proposal.CHAINLINK_MAX_DELAY()
         );
+    }
+
+    function test_ProposalRejectsSwappedChainlinkFeeds() public {
+        proposal.setOracleAdapters(
+            proposal.usdsOracle(),
+            proposal.usdcOracle(),
+            proposal.usdtOracle(),
+            proposal.frxUsdOracle()
+        );
+
+        vm.expectRevert("oracle feed");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsChainlinkDelayDrift() public {
+        address frxUsdOracle = _deployChainlinkOracle(proposal.FRXUSD_USD_PROXY(), 24 hours);
+        proposal.setOracleAdapters(
+            frxUsdOracle, proposal.usdcOracle(), proposal.usdtOracle(), proposal.usdsOracle()
+        );
+
+        vm.expectRevert("oracle delay");
+        proposal.buildProposalActions();
     }
 
     function test_ProposalDeploysThreePausedKeepersWithSuggestedCapacities() public {
@@ -179,7 +187,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDS(),
             proposal.SUSDS(),
             proposal.usdcOracle(),
-            proposal.susdsBackingOracle(),
+            proposal.usdsOracle(),
             USDC_CAP
         );
         _assertKeeperEndpoints(
@@ -189,7 +197,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDS(),
             proposal.SUSDS(),
             proposal.usdtOracle(),
-            proposal.susdsBackingOracle(),
+            proposal.usdsOracle(),
             USDT_CAP
         );
 
@@ -343,6 +351,27 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(oracle.reference_asset(), referenceAsset);
         assertEq(oracle.inverted(), inverted);
         assertGe(oracle.price(), proposal.MIN_ORACLE_PRICE());
+    }
+
+    function _assertChainlinkOracle(address adapter, address feed, uint256 maxDelay) internal view {
+        IChainlinkStablecoinOracle oracle = IChainlinkStablecoinOracle(adapter);
+        assertEq(oracle.feed(), feed);
+        assertEq(oracle.feed_decimals(), 8);
+        assertEq(oracle.max_delay(), maxDelay);
+        assertGe(oracle.price(), proposal.MIN_ORACLE_PRICE());
+    }
+
+    function _deployChainlinkOracle(address feed, uint256 maxDelay)
+        internal
+        returns (address deployed)
+    {
+        bytes memory creationCode =
+            vm.getCode("out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json");
+        bytes memory initCode = bytes.concat(creationCode, abi.encode(feed, maxDelay));
+        assembly ("memory-safe") {
+            deployed := create(0, add(initCode, 0x20), mload(initCode))
+        }
+        require(deployed != address(0), "oracle deployment failed");
     }
 
     function _assertPolicy(IPegKeeperV3 keeper, uint256 cap) internal view {

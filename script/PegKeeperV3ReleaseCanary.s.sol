@@ -135,7 +135,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
                 USDT_POOL,
                 SUSDS,
                 deployment.usdtTargetOracle,
-                deployment.susdsBackingOracle,
+                deployment.usdsUsdOracle,
                 expansionPath,
                 contractionPath
             )

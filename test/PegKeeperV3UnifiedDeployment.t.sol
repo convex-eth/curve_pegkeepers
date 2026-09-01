@@ -15,19 +15,13 @@ import {MockFactory, MockToken} from "./PegKeeperV3Foundation.t.sol";
 contract PegKeeperV3UnifiedDeploymentTest is Test {
     string internal constant TEST_OUTPUT = "deployments/mainnet/PegKeeperV3-deployment.test.json";
 
-    address internal frxUsd = makeAddr("frxUSD");
-    address internal sfrxUsd = makeAddr("sfrxUSD");
-    address internal susds = makeAddr("sUSDS");
     address internal usdc = makeAddr("USDC");
     address internal usdt = makeAddr("USDT");
-    address internal usds = makeAddr("USDS");
 
     function test_deploysCompleteReleaseAndWritesEveryAddressToJson() public {
         MockToken crvUsd = new MockToken(18);
         MockFactory controllerFactory =
             new MockFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
-        MockCurveOraclePool frxUsdSusdsPool = new MockCurveOraclePool(frxUsd, susds);
-        MockCurveOraclePool sfrxUsdFrxUsdPool = new MockCurveOraclePool(sfrxUsd, frxUsd);
         MockCurveOraclePool usdcUsdtPool = new MockCurveOraclePool(usdc, usdt);
         MockChainlinkAggregator chainlinkAggregator = new MockChainlinkAggregator();
         MockChainlinkProxy chainlinkProxy = new MockChainlinkProxy(chainlinkAggregator);
@@ -47,16 +41,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             fallbackSettlementGasReserve: 300_000,
             expansionMaxRouteLossBps: 100,
             usdcUsdtPool: address(usdcUsdtPool),
-            frxUsdSusdsPool: address(frxUsdSusdsPool),
-            sfrxUsdFrxUsdPool: address(sfrxUsdFrxUsdPool),
-            frxUsd: frxUsd,
-            sfrxUsd: sfrxUsd,
-            susds: susds,
             usdc: usdc,
             usdt: usdt,
             frxUsdProxy: address(chainlinkProxy),
             frxUsdMaxDelay: 26 hours,
-            usds: usds,
             usdsProxy: address(chainlinkProxy),
             usdsMaxDelay: 26 hours
         });
@@ -86,60 +74,30 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(deployment.previewModule, vm.computeCreateAddress(address(deployer), 1));
         assertEq(deployment.implementation, vm.computeCreateAddress(address(deployer), 2));
         assertEq(deployment.factory, vm.computeCreateAddress(address(deployer), 3));
-        assertEq(deployment.frxUsdTargetOracle, vm.computeCreateAddress(address(deployer), 4));
-        assertEq(deployment.sfrxUsdBackingOracle, vm.computeCreateAddress(address(deployer), 5));
-        assertEq(deployment.usdcTargetOracle, vm.computeCreateAddress(address(deployer), 6));
-        assertEq(deployment.usdtTargetOracle, vm.computeCreateAddress(address(deployer), 7));
-        assertEq(deployment.susdsBackingOracle, vm.computeCreateAddress(address(deployer), 8));
-        assertEq(deployment.frxUsdChainlinkOracle, vm.computeCreateAddress(address(deployer), 9));
-        assertEq(deployment.usdsChainlinkOracle, vm.computeCreateAddress(address(deployer), 10));
-
-        _assertCurveOracle(
-            deployment.frxUsdTargetOracle, config.frxUsdSusdsPool, config.frxUsd, config.susds, true
-        );
-        _assertCurveOracle(
-            deployment.sfrxUsdBackingOracle,
-            config.sfrxUsdFrxUsdPool,
-            config.sfrxUsd,
-            config.frxUsd,
-            true
-        );
+        assertEq(deployment.usdcTargetOracle, vm.computeCreateAddress(address(deployer), 4));
+        assertEq(deployment.usdtTargetOracle, vm.computeCreateAddress(address(deployer), 5));
+        assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 6));
+        assertEq(deployment.usdsUsdOracle, vm.computeCreateAddress(address(deployer), 7));
         _assertCurveOracle(
             deployment.usdcTargetOracle, config.usdcUsdtPool, config.usdc, config.usdt, true
         );
         _assertCurveOracle(
             deployment.usdtTargetOracle, config.usdcUsdtPool, config.usdt, config.usdc, false
         );
-        _assertCurveOracle(
-            deployment.susdsBackingOracle,
-            config.frxUsdSusdsPool,
-            config.susds,
-            config.frxUsd,
-            false
-        );
         _assertChainlinkOracle(
-            deployment.frxUsdChainlinkOracle, config.frxUsdProxy, config.frxUsdMaxDelay
+            deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
-        _assertChainlinkOracle(
-            deployment.usdsChainlinkOracle, config.usdsProxy, config.usdsMaxDelay
-        );
+        _assertChainlinkOracle(deployment.usdsUsdOracle, config.usdsProxy, config.usdsMaxDelay);
 
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
         string memory json = vm.readFile(TEST_OUTPUT);
         assertEq(vm.parseJsonAddress(json, ".previewModule"), deployment.previewModule);
         assertEq(vm.parseJsonAddress(json, ".implementation"), deployment.implementation);
         assertEq(vm.parseJsonAddress(json, ".factory"), deployment.factory);
-        assertEq(vm.parseJsonAddress(json, ".frxUsdTargetOracle"), deployment.frxUsdTargetOracle);
-        assertEq(
-            vm.parseJsonAddress(json, ".sfrxUsdBackingOracle"), deployment.sfrxUsdBackingOracle
-        );
         assertEq(vm.parseJsonAddress(json, ".usdcTargetOracle"), deployment.usdcTargetOracle);
         assertEq(vm.parseJsonAddress(json, ".usdtTargetOracle"), deployment.usdtTargetOracle);
-        assertEq(vm.parseJsonAddress(json, ".susdsBackingOracle"), deployment.susdsBackingOracle);
-        assertEq(
-            vm.parseJsonAddress(json, ".frxUsdChainlinkOracle"), deployment.frxUsdChainlinkOracle
-        );
-        assertEq(vm.parseJsonAddress(json, ".usdsChainlinkOracle"), deployment.usdsChainlinkOracle);
+        assertEq(vm.parseJsonAddress(json, ".frxUsdUsdOracle"), deployment.frxUsdUsdOracle);
+        assertEq(vm.parseJsonAddress(json, ".usdsUsdOracle"), deployment.usdsUsdOracle);
         vm.removeFile(TEST_OUTPUT);
     }
 
@@ -158,8 +116,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.fallbackSettlementGasReserve, 300_000);
         assertEq(config.expansionMaxRouteLossBps, 100);
         assertEq(config.usdcUsdtPool, deployer.USDC_USDT_ORACLE_POOL());
-        assertEq(config.frxUsdSusdsPool, deployer.FRXUSD_SUSDS_ORACLE_POOL());
-        assertEq(config.sfrxUsdFrxUsdPool, deployer.SFRXUSD_FRXUSD_ORACLE_POOL());
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.frxUsdMaxDelay, 26 hours);
         assertEq(config.usdsProxy, deployer.USDS_USD_PROXY());

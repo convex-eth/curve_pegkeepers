@@ -16,9 +16,8 @@ contract ChainlinkStablecoinOracleForkTest is Test {
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
 
         IChainlinkStablecoinOracle frxUsdOracle =
-            IChainlinkStablecoinOracle(deployment.frxUsdChainlinkOracle);
-        IChainlinkStablecoinOracle usdsOracle =
-            IChainlinkStablecoinOracle(deployment.usdsChainlinkOracle);
+            IChainlinkStablecoinOracle(deployment.frxUsdUsdOracle);
+        IChainlinkStablecoinOracle usdsOracle = IChainlinkStablecoinOracle(deployment.usdsUsdOracle);
 
         assertEq(frxUsdOracle.feed(), deployer.FRXUSD_USD_PROXY());
         assertEq(frxUsdOracle.feed_decimals(), 8);
