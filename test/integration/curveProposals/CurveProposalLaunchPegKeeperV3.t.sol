@@ -40,6 +40,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant CONTROLLER_FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
     address internal constant MONETARY_POLICY = 0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251;
     address internal constant LEGACY_MONETARY_POLICY = 0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1;
+    address internal constant WRONG_FRXUSD_FEED = 0xfF30586cD0F29eD462364C7e81375FC0C71219b1;
     address internal constant CONVEX_VOTEPROXY = 0x989AEb4d175e16225E39E87d0D97A3360524AD80;
     address internal constant YEARN_VOTEPROXY = 0xF147b8125d2ef93FB6965Db97D6746952a133934;
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
@@ -69,10 +70,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
         proposal.setOracleAdapters(
-            deployment.frxUsdUsdOracle,
-            deployment.usdcTargetOracle,
-            deployment.usdtTargetOracle,
-            deployment.usdsUsdOracle
+            deployment.frxUsdUsdOracle, deployment.usdcTargetOracle, deployment.usdtTargetOracle
         );
 
         factory = IPegKeeperV3Factory(deployment.factory);
@@ -116,7 +114,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _assertMonetaryPolicyAction(actions[16], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
-    function test_OracleAdaptersUseSelectedChainlinkFeedsForFrxUsdAndUsds() public view {
+    function test_OracleAdaptersUseSelectedFrxUsdChainlinkFeed() public view {
         assertEq(proposal.frxUsdOracle(), proposal.frxUsdBackingOracle());
         _assertChainlinkOracle(
             proposal.frxUsdOracle(), proposal.FRXUSD_USD_PROXY(), proposal.CHAINLINK_MAX_DELAY()
@@ -135,18 +133,12 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDC(),
             false
         );
-        _assertChainlinkOracle(
-            proposal.usdsOracle(), proposal.USDS_USD_PROXY(), proposal.CHAINLINK_MAX_DELAY()
-        );
     }
 
     function test_ProposalRejectsSwappedChainlinkFeeds() public {
-        proposal.setOracleAdapters(
-            proposal.usdsOracle(),
-            proposal.usdcOracle(),
-            proposal.usdtOracle(),
-            proposal.frxUsdOracle()
-        );
+        address wrongFrxUsdOracle =
+            _deployChainlinkOracle(WRONG_FRXUSD_FEED, proposal.CHAINLINK_MAX_DELAY());
+        proposal.setOracleAdapters(wrongFrxUsdOracle, proposal.usdcOracle(), proposal.usdtOracle());
 
         vm.expectRevert("oracle feed");
         proposal.buildProposalActions();
@@ -154,9 +146,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     function test_ProposalRejectsChainlinkDelayDrift() public {
         address frxUsdOracle = _deployChainlinkOracle(proposal.FRXUSD_USD_PROXY(), 24 hours);
-        proposal.setOracleAdapters(
-            frxUsdOracle, proposal.usdcOracle(), proposal.usdtOracle(), proposal.usdsOracle()
-        );
+        proposal.setOracleAdapters(frxUsdOracle, proposal.usdcOracle(), proposal.usdtOracle());
 
         vm.expectRevert("oracle delay");
         proposal.buildProposalActions();
@@ -175,7 +165,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.FRXUSD_CRVUSD_POOL(),
             proposal.FRXUSD(),
             proposal.FRXUSD(),
-            proposal.SFRXUSD(),
+            proposal.FRXUSD(),
+            false,
             proposal.frxUsdOracle(),
             proposal.frxUsdBackingOracle(),
             FRXUSD_CAP
@@ -184,20 +175,22 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             expectedUsdcKeeper,
             proposal.USDC_CRVUSD_POOL(),
             proposal.USDC(),
-            proposal.USDS(),
-            proposal.SUSDS(),
+            proposal.FRXUSD(),
+            proposal.FRXUSD(),
+            false,
             proposal.usdcOracle(),
-            proposal.usdsOracle(),
+            proposal.frxUsdBackingOracle(),
             USDC_CAP
         );
         _assertKeeperEndpoints(
             expectedUsdtKeeper,
             proposal.USDT_CRVUSD_POOL(),
             proposal.USDT(),
-            proposal.USDS(),
-            proposal.SUSDS(),
+            proposal.FRXUSD(),
+            proposal.FRXUSD(),
+            false,
             proposal.usdtOracle(),
-            proposal.usdsOracle(),
+            proposal.frxUsdBackingOracle(),
             USDT_CAP
         );
 
@@ -228,30 +221,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _executeProposal();
 
         IPegKeeperV3 frxUsdKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
-        assertEq(frxUsdKeeper.expansion_path_length(), 1);
-        assertEq(frxUsdKeeper.contraction_path_length(), 2);
-        _assertStep(
-            frxUsdKeeper.expansion_path_step(0),
-            0,
-            proposal.FRXUSD_SFRXUSD_POOL(),
-            proposal.FRXUSD(),
-            proposal.SFRXUSD(),
-            1,
-            0,
-            3
-        );
+        assertEq(frxUsdKeeper.expansion_path_length(), 0);
+        assertEq(frxUsdKeeper.contraction_path_length(), 1);
         _assertStep(
             frxUsdKeeper.contraction_path_step(0),
-            0,
-            proposal.FRXUSD_SFRXUSD_POOL(),
-            proposal.SFRXUSD(),
-            proposal.FRXUSD(),
-            0,
-            1,
-            3
-        );
-        _assertStep(
-            frxUsdKeeper.contraction_path_step(1),
             0,
             proposal.FRXUSD_CRVUSD_POOL(),
             proposal.FRXUSD(),
@@ -261,8 +234,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             3
         );
 
-        _assertSusdsRoutes(IPegKeeperV3(expectedUsdcKeeper), proposal.USDC(), 1);
-        _assertSusdsRoutes(IPegKeeperV3(expectedUsdtKeeper), proposal.USDT(), 2);
+        _assertFrxUsdRoutes(IPegKeeperV3(expectedUsdcKeeper), proposal.USDC(), 1);
+        _assertFrxUsdRoutes(IPegKeeperV3(expectedUsdtKeeper), proposal.USDT(), 2);
     }
 
     function test_ProposalSetsSharedFactoryAndKeeperPolicyDefaults() public {
@@ -311,6 +284,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         address targetAsset,
         address backingAsset,
         address yieldToken,
+        bool yieldTokenIsErc4626,
         address targetOracle,
         address yieldOracle,
         uint256 cap
@@ -320,6 +294,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.target_asset(), targetAsset);
         assertEq(keeper.backing_asset(), backingAsset);
         assertEq(keeper.yield_token(), yieldToken);
+        assertEq(keeper.yield_token_is_erc4626(), yieldTokenIsErc4626);
         assertEq(keeper.target_oracle(), targetOracle);
         assertEq(keeper.yield_oracle(), yieldOracle);
         assertEq(keeper.min_target_oracle_price(), proposal.MIN_ORACLE_PRICE());
@@ -384,74 +359,63 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.max_deployed_crvusd(), cap);
     }
 
-    function _assertSusdsRoutes(IPegKeeperV3 keeper, address targetAsset, int128 threePoolIndex)
+    function _assertFrxUsdRoutes(IPegKeeperV3 keeper, address targetAsset, int128 threePoolIndex)
         internal
         view
     {
-        assertEq(keeper.expansion_path_length(), 3);
-        assertEq(keeper.contraction_path_length(), 4);
+        bool isUsdt = targetAsset == proposal.USDT();
+        assertEq(keeper.expansion_path_length(), isUsdt ? 2 : 1);
+        assertEq(keeper.contraction_path_length(), isUsdt ? 3 : 2);
+        uint256 mintIndex;
+        if (isUsdt) {
+            _assertStep(
+                keeper.expansion_path_step(0),
+                0,
+                proposal.THREE_POOL(),
+                proposal.USDT(),
+                proposal.USDC(),
+                threePoolIndex,
+                1,
+                3
+            );
+            mintIndex = 1;
+        }
         _assertStep(
-            keeper.expansion_path_step(0),
-            0,
-            proposal.THREE_POOL(),
-            targetAsset,
-            proposal.DAI(),
-            threePoolIndex,
-            0,
-            3
-        );
-        _assertStep(
-            keeper.expansion_path_step(1),
-            1,
-            proposal.DAI_USDS_CONVERTER(),
-            proposal.DAI(),
-            proposal.USDS(),
-            0,
-            0,
-            0
-        );
-        _assertStep(
-            keeper.expansion_path_step(2),
-            2,
-            proposal.SUSDS(),
-            proposal.USDS(),
-            proposal.SUSDS(),
+            keeper.expansion_path_step(mintIndex),
+            4,
+            proposal.FRXUSD_CUSTODIAN(),
+            proposal.USDC(),
+            proposal.FRXUSD(),
             0,
             0,
             1
         );
         _assertStep(
             keeper.contraction_path_step(0),
-            3,
-            proposal.SUSDS(),
-            proposal.SUSDS(),
-            proposal.USDS(),
+            5,
+            proposal.FRXUSD_CUSTODIAN(),
+            proposal.FRXUSD(),
+            proposal.USDC(),
             0,
             0,
             1
         );
+        uint256 targetAmmIndex = 1;
+        if (isUsdt) {
+            _assertStep(
+                keeper.contraction_path_step(1),
+                0,
+                proposal.THREE_POOL(),
+                proposal.USDC(),
+                proposal.USDT(),
+                1,
+                threePoolIndex,
+                3
+            );
+            targetAmmIndex = 2;
+        }
         _assertStep(
-            keeper.contraction_path_step(1),
-            1,
-            proposal.DAI_USDS_CONVERTER(),
-            proposal.USDS(),
-            proposal.DAI(),
-            0,
-            0,
-            0
-        );
-        _assertStep(
-            keeper.contraction_path_step(2),
-            0,
-            proposal.THREE_POOL(),
-            proposal.DAI(),
-            targetAsset,
-            0,
-            threePoolIndex,
-            3
-        );
-        _assertStep(
-            keeper.contraction_path_step(3),
+            keeper.contraction_path_step(targetAmmIndex),
             0,
             keeper.target_amm(),
             targetAsset,

@@ -13,26 +13,25 @@ import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOr
 /// @notice Deploy and register three initially paused PegKeeperV3 instances for frxUSD, USDC, and USDT.
 /// @dev Mirrors `docs/pegkeeper-v3-suggested-launch-parameters.md`. The audited V3 implementation and
 ///      a fresh deployment factory owned by the Curve Ownership Agent must already be deployed.
-///      frxUSD and USDS use the selected canonical-proxy Chainlink adapters; USDC and USDT retain
+///      frxUSD uses the selected canonical-proxy Chainlink adapter; USDC and USDT retain
 ///      opposite orientations of the external Curve EMA pool. This proposal configures no V2
 ///      PegKeepers and performs no activation actions.
 contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 23_201;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 23_233;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 23_761;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 23_793;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0x55a15662a255b85d29d547da33d56ae4544552371a5887598ac1429fccda3bdd;
+        0x83d97e75622beff4a7f7bad21cb00cd2f9685b4e57eae25988caeb3834e62662;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b;
+        0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
-    uint256 public constant ROUTE_DAI_USDS_CONVERTER = 1;
-    uint256 public constant ROUTE_ERC4626_DEPOSIT = 2;
-    uint256 public constant ROUTE_ERC4626_REDEEM = 3;
+    uint256 public constant ROUTE_FRXUSD_MINT = 4;
+    uint256 public constant ROUTE_FRXUSD_REDEEM = 5;
     uint256 public constant CURVE_EXECUTION_BUFFER_BPS = 3;
-    uint256 public constant ERC4626_EXECUTION_BUFFER_BPS = 1;
+    uint256 public constant FRXUSD_EXECUTION_BUFFER_BPS = 1;
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 1_000;
@@ -55,30 +54,23 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     address public constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address public constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address public constant SFRXUSD = 0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6;
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address public constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-    address public constant USDS = 0xdC035D45d973E3EC169d2276DDab16f1e407384F;
-    address public constant SUSDS = 0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD;
 
     address public constant USDC_USDT_ORACLE_POOL = 0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85;
     address public constant FRXUSD_USD_PROXY = 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83;
-    address public constant USDS_USD_PROXY = 0xfF30586cD0F29eD462364C7e81375FC0C71219b1;
 
     address public constant FRXUSD_CRVUSD_POOL = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1;
     address public constant USDC_CRVUSD_POOL = 0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E;
     address public constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
-    address public constant FRXUSD_SFRXUSD_POOL = 0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978;
     address public constant THREE_POOL = 0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7;
-    address public constant DAI_USDS_CONVERTER = 0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A;
+    address public constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
 
     address public deploymentFactory;
     address public frxUsdOracle;
     address public frxUsdBackingOracle;
     address public usdcOracle;
     address public usdtOracle;
-    address public usdsOracle;
 
     function run() external returns (uint256 proposalId) {
         loadDeployment(DEPLOYMENT_INPUT_PATH);
@@ -99,7 +91,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         frxUsdBackingOracle = frxUsdOracle;
         usdcOracle = vm.parseJsonAddress(json, ".usdcTargetOracle");
         usdtOracle = vm.parseJsonAddress(json, ".usdtTargetOracle");
-        usdsOracle = vm.parseJsonAddress(json, ".usdsUsdOracle");
     }
 
     function setDeploymentFactory(address factory) external {
@@ -107,22 +98,18 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         deploymentFactory = factory;
     }
 
-    function setOracleAdapters(
-        address frxUsdUsdOracle_,
-        address usdcOracle_,
-        address usdtOracle_,
-        address usdsUsdOracle_
-    ) external {
+    function setOracleAdapters(address frxUsdUsdOracle_, address usdcOracle_, address usdtOracle_)
+        external
+    {
         require(
-            frxUsdUsdOracle_ != address(0) && usdcOracle_ != address(0) && usdtOracle_ != address(0)
-                && usdsUsdOracle_ != address(0),
+            frxUsdUsdOracle_ != address(0) && usdcOracle_ != address(0)
+                && usdtOracle_ != address(0),
             "zero oracle"
         );
         frxUsdOracle = frxUsdUsdOracle_;
         frxUsdBackingOracle = frxUsdUsdOracle_;
         usdcOracle = usdcOracle_;
         usdtOracle = usdtOracle_;
-        usdsOracle = usdsUsdOracle_;
     }
 
     function expectedKeeper(uint256 keeperNumber) public view returns (address) {
@@ -148,7 +135,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
         actions[1] = _deployAction(
             FRXUSD_CRVUSD_POOL,
-            SFRXUSD,
+            FRXUSD,
+            false,
             frxUsdOracle,
             frxUsdBackingOracle,
             _frxUsdExpansion(),
@@ -161,11 +149,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
         actions[6] = _deployAction(
             USDC_CRVUSD_POOL,
-            SUSDS,
+            FRXUSD,
+            false,
             usdcOracle,
-            usdsOracle,
-            _susdsExpansion(USDC, 1),
-            _susdsContraction(USDC, 1)
+            frxUsdBackingOracle,
+            _frxUsdExpansion(USDC, 1),
+            _frxUsdContraction(USDC, 1)
         );
         actions[7] = _setPolicyAction(usdcKeeper, USDC_CAP);
         actions[8] = _debtCeilingAction(usdcKeeper, USDC_CAP);
@@ -175,11 +164,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[11] = _setDefaultsAction(USDT_CAP);
         actions[12] = _deployAction(
             USDT_CRVUSD_POOL,
-            SUSDS,
+            FRXUSD,
+            false,
             usdtOracle,
-            usdsOracle,
-            _susdsExpansion(USDT, 2),
-            _susdsContraction(USDT, 2)
+            frxUsdBackingOracle,
+            _frxUsdExpansion(USDT, 2),
+            _frxUsdContraction(USDT, 2)
         );
         actions[13] = _setPolicyAction(usdtKeeper, USDT_CAP);
         actions[14] = _debtCeilingAction(usdtKeeper, USDT_CAP);
@@ -215,7 +205,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         _validateChainlinkOracle(frxUsdOracle, FRXUSD_USD_PROXY);
         _validateCurveOracle(usdcOracle, USDC_USDT_ORACLE_POOL, USDC, USDT, true);
         _validateCurveOracle(usdtOracle, USDC_USDT_ORACLE_POOL, USDT, USDC, false);
-        _validateChainlinkOracle(usdsOracle, USDS_USD_PROXY);
     }
 
     function _validateCurveOracle(
@@ -269,6 +258,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     function _deployAction(
         address targetAmm,
         address yieldToken,
+        bool yieldTokenIsErc4626,
         address targetOracle,
         address yieldOracle,
         IPegKeeperV3.RouteStep[] memory expansion,
@@ -280,6 +270,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
                 IPegKeeperV3Factory.deployPegKeeper.selector,
                 targetAmm,
                 yieldToken,
+                yieldTokenIsErc4626,
                 targetOracle,
                 yieldOracle,
                 expansion,
@@ -340,39 +331,44 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     }
 
     function _frxUsdExpansion() internal pure returns (IPegKeeperV3.RouteStep[] memory route) {
-        route = new IPegKeeperV3.RouteStep[](1);
-        route[0] = _curve(FRXUSD_SFRXUSD_POOL, FRXUSD, SFRXUSD, 1, 0);
+        return new IPegKeeperV3.RouteStep[](0);
     }
 
     function _frxUsdContraction() internal pure returns (IPegKeeperV3.RouteStep[] memory route) {
-        route = new IPegKeeperV3.RouteStep[](2);
-        route[0] = _curve(FRXUSD_SFRXUSD_POOL, SFRXUSD, FRXUSD, 0, 1);
-        route[1] = _curve(FRXUSD_CRVUSD_POOL, FRXUSD, CRVUSD, 0, 1);
+        route = new IPegKeeperV3.RouteStep[](1);
+        route[0] = _curve(FRXUSD_CRVUSD_POOL, FRXUSD, CRVUSD, 0, 1);
     }
 
-    function _susdsExpansion(address targetAsset, int128 targetIndex)
+    function _frxUsdExpansion(address targetAsset, int128 targetIndex)
         internal
         pure
         returns (IPegKeeperV3.RouteStep[] memory route)
     {
-        route = new IPegKeeperV3.RouteStep[](3);
-        route[0] = _curve(THREE_POOL, targetAsset, DAI, targetIndex, 0);
-        route[1] = _converter(DAI, USDS);
-        route[2] = _vault(ROUTE_ERC4626_DEPOSIT, USDS, SUSDS);
+        bool isUsdt = targetAsset == USDT;
+        route = new IPegKeeperV3.RouteStep[](isUsdt ? 2 : 1);
+        uint256 mintIndex;
+        if (isUsdt) {
+            route[0] = _curve(THREE_POOL, USDT, USDC, targetIndex, 1);
+            mintIndex = 1;
+        }
+        route[mintIndex] = _frxUsd(ROUTE_FRXUSD_MINT, USDC, FRXUSD);
     }
 
-    function _susdsContraction(address targetAsset, int128 targetIndex)
+    function _frxUsdContraction(address targetAsset, int128 targetIndex)
         internal
         pure
         returns (IPegKeeperV3.RouteStep[] memory route)
     {
-        route = new IPegKeeperV3.RouteStep[](4);
-        route[0] = _vault(ROUTE_ERC4626_REDEEM, SUSDS, USDS);
-        route[1] = _converter(USDS, DAI);
-        route[2] = _curve(THREE_POOL, DAI, targetAsset, 0, targetIndex);
-        route[3] = _curve(
-            targetAsset == USDC ? USDC_CRVUSD_POOL : USDT_CRVUSD_POOL, targetAsset, CRVUSD, 0, 1
-        );
+        bool isUsdt = targetAsset == USDT;
+        route = new IPegKeeperV3.RouteStep[](isUsdt ? 3 : 2);
+        route[0] = _frxUsd(ROUTE_FRXUSD_REDEEM, FRXUSD, USDC);
+        uint256 targetAmmIndex = 1;
+        if (isUsdt) {
+            route[1] = _curve(THREE_POOL, USDC, USDT, 1, targetIndex);
+            targetAmmIndex = 2;
+        }
+        route[targetAmmIndex] =
+            _curve(isUsdt ? USDT_CRVUSD_POOL : USDC_CRVUSD_POOL, targetAsset, CRVUSD, 0, 1);
     }
 
     function _curve(
@@ -393,35 +389,19 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
     }
 
-    function _converter(address tokenIn, address tokenOut)
-        internal
-        pure
-        returns (IPegKeeperV3.RouteStep memory)
-    {
-        return IPegKeeperV3.RouteStep({
-            kind: ROUTE_DAI_USDS_CONVERTER,
-            venue: DAI_USDS_CONVERTER,
-            tokenIn: tokenIn,
-            tokenOut: tokenOut,
-            poolIndexIn: 0,
-            poolIndexOut: 0,
-            executionBufferBps: 0
-        });
-    }
-
-    function _vault(uint256 kind, address tokenIn, address tokenOut)
+    function _frxUsd(uint256 kind, address tokenIn, address tokenOut)
         internal
         pure
         returns (IPegKeeperV3.RouteStep memory)
     {
         return IPegKeeperV3.RouteStep({
             kind: kind,
-            venue: SUSDS,
+            venue: FRXUSD_CUSTODIAN,
             tokenIn: tokenIn,
             tokenOut: tokenOut,
             poolIndexIn: 0,
             poolIndexOut: 0,
-            executionBufferBps: ERC4626_EXECUTION_BUFFER_BPS
+            executionBufferBps: FRXUSD_EXECUTION_BUFFER_BPS
         });
     }
 

@@ -59,6 +59,7 @@ interface IPegKeeperV3Factory {
     function deployPegKeeper(
         address targetAmm,
         address yieldToken,
+        bool yieldTokenIsErc4626,
         address targetOracle,
         address yieldOracle,
         IPegKeeperV3.RouteStep[] calldata expansionSteps,

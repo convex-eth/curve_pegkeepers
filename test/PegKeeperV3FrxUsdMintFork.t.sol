@@ -129,7 +129,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
     function test_liveFrxUsdCustodianMintExecutesInsideExpansionRoute() public {
         uint256 custodianUsdcBefore = IForkToken(USDC).balanceOf(FRXUSD_CUSTODIAN);
         uint256 mintedBefore = IFrxUsdCustodianView(FRXUSD_CUSTODIAN).frxUSDMinted();
-        uint256 keeperFrxUsdBefore = IForkToken(FRXUSD).balanceOf(keeper);
+        uint256 keeperSfrxUsdBefore = IForkToken(SFRXUSD).balanceOf(keeper);
         assertEq(IFrxUsdMinter(FRXUSD_CUSTODIAN).asset(), USDC);
         assertEq(IFrxUsdMinter(FRXUSD_CUSTODIAN).frxUSD(), FRXUSD);
         assertEq(IFrxUsdMinter(FRXUSD_CUSTODIAN).previewDeposit(100_100e6), 100_100e18);
@@ -156,7 +156,7 @@ contract PegKeeperV3FrxUsdMintForkTest is Test {
         assertTrue(deployedToYield);
         assertEq(pegKeeper.accounted_yield_token_units(), yieldTokenReceived);
         assertEq(IForkToken(SFRXUSD).balanceOf(address(pegKeeper)), yieldTokenReceived);
-        assertEq(IForkToken(FRXUSD).balanceOf(keeper) - keeperFrxUsdBefore, keeperReward);
+        assertEq(IForkToken(SFRXUSD).balanceOf(keeper) - keeperSfrxUsdBefore, keeperReward);
         assertEq(IForkToken(USDC).balanceOf(FRXUSD_CUSTODIAN) - custodianUsdcBefore, 100_100e6);
         assertEq(IFrxUsdCustodianView(FRXUSD_CUSTODIAN).frxUSDMinted() - mintedBefore, 100_100e18);
         assertEq(IForkToken(USDC).allowance(address(pegKeeper), FRXUSD_CUSTODIAN), 0);

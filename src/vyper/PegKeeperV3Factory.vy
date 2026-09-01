@@ -175,6 +175,7 @@ def fee_receiver() -> address:
 def deployPegKeeper(
     _targetAmm: address,
     _yieldToken: address,
+    _yieldTokenIsErc4626: bool,
     _targetOracle: address,
     _yieldOracle: address,
     _expansionSteps: DynArray[RouteStep, 16],
@@ -184,7 +185,11 @@ def deployPegKeeper(
 
     target_asset: address = empty(address)
     backing_asset: address = empty(address)
-    target_asset, backing_asset = self._resolve_assets(_targetAmm, _yieldToken)
+    target_asset, backing_asset = self._resolve_assets(
+        _targetAmm,
+        _yieldToken,
+        _yieldTokenIsErc4626,
+    )
 
     index: uint256 = self.keeperCount + 1
     implementation: address = IMPLEMENTATION
@@ -269,7 +274,11 @@ def _check_owner():
 
 @internal
 @view
-def _resolve_assets(_targetAmm: address, _yieldToken: address) -> (address, address):
+def _resolve_assets(
+    _targetAmm: address,
+    _yieldToken: address,
+    _yieldTokenIsErc4626: bool,
+) -> (address, address):
     crv_usd: address = ControllerFactory(CONTROLLER_FACTORY).stablecoin()
     coin_0: address = TwoCoinPool(_targetAmm).coins(0)
     coin_1: address = TwoCoinPool(_targetAmm).coins(1)
@@ -282,7 +291,10 @@ def _resolve_assets(_targetAmm: address, _yieldToken: address) -> (address, addr
     else:
         raw_revert(method_id("InvalidTargetAmm()"))
 
-    return target_asset, YieldToken(_yieldToken).asset()
+    backing_asset: address = _yieldToken
+    if _yieldTokenIsErc4626:
+        backing_asset = YieldToken(_yieldToken).asset()
+    return target_asset, backing_asset
 
 
 @internal

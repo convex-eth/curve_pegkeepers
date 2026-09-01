@@ -10,9 +10,8 @@ import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.s
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 
 /// @notice Monotonic mainnet deployer for every PegKeeperV3 release dependency.
-/// @dev Deploys Curve target adapters for USDC/USDT and canonical Chainlink adapters for
-///      frxUSD/USD and USDS/USD. The Chainlink adapters are reused for backing-asset checks
-///      after sfrxUSD/sUSDS shares are converted to frxUSD/USDS by the keeper.
+/// @dev Deploys Curve target adapters for USDC/USDT and the canonical frxUSD/USD
+///      Chainlink adapter used by all three keepers' final-token accounting.
 contract DeployPegKeeperV3 is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
 
@@ -30,9 +29,7 @@ contract DeployPegKeeperV3 is Script {
     address public constant USDC_USDT_ORACLE_POOL = 0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85;
 
     address public constant FRXUSD_USD_PROXY = 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83;
-    address public constant USDS_USD_PROXY = 0xfF30586cD0F29eD462364C7e81375FC0C71219b1;
-
-    /// @dev Provisional heartbeat-plus-grace value. Reconfirm both feeds before broadcast.
+    /// @dev Provisional heartbeat-plus-grace value. Reconfirm the feed before broadcast.
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
 
     uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 2_500_000e18;
@@ -57,8 +54,6 @@ contract DeployPegKeeperV3 is Script {
         address usdt;
         address frxUsdProxy;
         uint256 frxUsdMaxDelay;
-        address usdsProxy;
-        uint256 usdsMaxDelay;
     }
 
     struct Deployment {
@@ -68,7 +63,6 @@ contract DeployPegKeeperV3 is Script {
         address usdcTargetOracle;
         address usdtTargetOracle;
         address frxUsdUsdOracle;
-        address usdsUsdOracle;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -100,8 +94,6 @@ contract DeployPegKeeperV3 is Script {
         config.usdt = USDT;
         config.frxUsdProxy = FRXUSD_USD_PROXY;
         config.frxUsdMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
-        config.usdsProxy = USDS_USD_PROXY;
-        config.usdsMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
     }
 
     function deploy(Config memory config) public returns (Deployment memory deployment) {
@@ -123,8 +115,6 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Deploying Chainlink frxUSD/USD oracle");
         deployment.frxUsdUsdOracle =
             _deployChainlinkAdapter(config.frxUsdProxy, config.frxUsdMaxDelay);
-        console2.log("Deploying Chainlink USDS/USD oracle");
-        deployment.usdsUsdOracle = _deployChainlinkAdapter(config.usdsProxy, config.usdsMaxDelay);
 
         _verifyDeployment(deployment, config);
     }
@@ -137,9 +127,8 @@ contract DeployPegKeeperV3 is Script {
         vm.serializeAddress(objectKey, "factory", deployment.factory);
         vm.serializeAddress(objectKey, "usdcTargetOracle", deployment.usdcTargetOracle);
         vm.serializeAddress(objectKey, "usdtTargetOracle", deployment.usdtTargetOracle);
-        vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         string memory json =
-            vm.serializeAddress(objectKey, "usdsUsdOracle", deployment.usdsUsdOracle);
+            vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         vm.writeJson(json, outputPath);
     }
 
@@ -283,7 +272,6 @@ contract DeployPegKeeperV3 is Script {
         _verifyChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
-        _verifyChainlinkOracle(deployment.usdsUsdOracle, config.usdsProxy, config.usdsMaxDelay);
     }
 
     function _verifyCurveOracle(
@@ -328,8 +316,6 @@ contract DeployPegKeeperV3 is Script {
         console2.log("USDC/USDT Curve oracle pool", config.usdcUsdtPool);
         console2.log("frxUSD Chainlink proxy", config.frxUsdProxy);
         console2.log("frxUSD max delay (provisional)", config.frxUsdMaxDelay);
-        console2.log("USDS Chainlink proxy", config.usdsProxy);
-        console2.log("USDS max delay (provisional)", config.usdsMaxDelay);
         console2.log("Output", DEPLOYMENT_OUTPUT_PATH);
     }
 
@@ -340,7 +326,6 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Curve USDC target oracle", deployment.usdcTargetOracle);
         console2.log("Curve USDT target oracle", deployment.usdtTargetOracle);
         console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
-        console2.log("Chainlink USDS/USD oracle", deployment.usdsUsdOracle);
         console2.log("Deployment JSON", DEPLOYMENT_OUTPUT_PATH);
     }
 }

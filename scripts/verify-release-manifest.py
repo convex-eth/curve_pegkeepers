@@ -340,7 +340,6 @@ def main() -> None:
         "deployment.usdcTargetOracle =",
         "deployment.usdtTargetOracle =",
         "deployment.frxUsdUsdOracle =",
-        "deployment.usdsUsdOracle =",
     ]
     create_positions = [deploy_script.find(marker) for marker in create_markers]
     if -1 in create_positions or create_positions != sorted(create_positions):
@@ -353,7 +352,6 @@ def main() -> None:
         "usdcTargetOracle",
         "usdtTargetOracle",
         "frxUsdUsdOracle",
-        "usdsUsdOracle",
     ]
     if 'vm.serializeUint(objectKey, "chainId", block.chainid)' not in deploy_script:
         raise SystemExit("deployment JSON chainId missing")
@@ -371,6 +369,7 @@ def main() -> None:
         "susdsBackingOracle",
         "frxUsdChainlinkOracle",
         "usdsChainlinkOracle",
+        "usdsUsdOracle",
     )
     for field in obsolete_deployment_fields:
         if field in deploy_script or field in proposal_script:
@@ -519,14 +518,14 @@ def main() -> None:
     fail(
         "oracle selection",
         oracle["selectionStatus"],
-        "selected_chainlink_for_frxusd_usds",
+        "selected_chainlink_for_frxusd",
     )
     fail("oracle selection blocker", oracle["releaseBlockedUntilSelection"], False)
     fail("oracle precision", oracle["commonPriceDecimals"], 18)
     fail("oracle par cap", oracle["favorablePriceCap"], "1000000000000000000")
     fail("oracle floor", oracle["minimumLaunchPrice"], "999700000000000000")
     fail("Curve adapter count", len(oracle["curve"]["adapters"]), 2)
-    fail("Chainlink adapter count", len(oracle["chainlink"]["adapters"]), 2)
+    fail("Chainlink adapter count", len(oracle["chainlink"]["adapters"]), 1)
     fail("Curve deployment script", oracle["curve"]["deploymentScript"], "script/DeployPegKeeperV3.s.sol")
     fail(
         "Curve adapter mappings",
@@ -595,14 +594,6 @@ def main() -> None:
                 50,
                 86_400,
             ),
-            (
-                "USDS/USD",
-                "usds-usd.data.eth",
-                "0xff30586cd0f29ed462364c7e81375fc0c71219b1",
-                "https://data.chain.link/feeds/ethereum/mainnet/usds-usd",
-                30,
-                86_400,
-            ),
         ],
     )
     fail(
@@ -610,28 +601,26 @@ def main() -> None:
         oracle["proposalBindings"],
         [
             {
-                "keeper": "frxUSD -> sfrxUSD",
+                "keeper": "frxUSD -> frxUSD",
                 "targetOracle": "frxUSD/USD Chainlink",
                 "downstreamOracle": "frxUSD/USD Chainlink",
             },
             {
-                "keeper": "USDC -> sUSDS",
+                "keeper": "USDC -> frxUSD",
                 "targetOracle": "USDC/USDT Curve EMA",
-                "downstreamOracle": "USDS/USD Chainlink",
+                "downstreamOracle": "frxUSD/USD Chainlink",
             },
             {
-                "keeper": "USDT -> sUSDS",
+                "keeper": "USDT -> frxUSD",
                 "targetOracle": "USDT/USDC Curve EMA",
-                "downstreamOracle": "USDS/USD Chainlink",
+                "downstreamOracle": "frxUSD/USD Chainlink",
             },
         ],
     )
     for required_snippet in (
         'frxUsdOracle = vm.parseJsonAddress(json, ".frxUsdUsdOracle")',
         "frxUsdBackingOracle = frxUsdOracle",
-        'usdsOracle = vm.parseJsonAddress(json, ".usdsUsdOracle")',
         "_validateChainlinkOracle(frxUsdOracle, FRXUSD_USD_PROXY)",
-        "_validateChainlinkOracle(usdsOracle, USDS_USD_PROXY)",
         "_validateCurveOracle(usdcOracle, USDC_USDT_ORACLE_POOL, USDC, USDT, true)",
         "_validateCurveOracle(usdtOracle, USDC_USDT_ORACLE_POOL, USDT, USDC, false)",
     ):
@@ -642,7 +631,6 @@ def main() -> None:
     lowered_proposal_script = proposal_script.lower()
     for required_proxy in (
         "0x9b4a96210bc8d9d55b1908b465d8b0de68b7ff83",
-        "0xff30586cd0f29ed462364c7e81375fc0c71219b1",
     ):
         if required_proxy not in lowered_deploy_script or required_proxy not in lowered_proposal_script:
             raise SystemExit(
@@ -672,14 +660,56 @@ def main() -> None:
             "executionPolicy",
         },
     )
-    fail("semantic order", launch["semanticCreateOrder"], ["frxUSD -> sfrxUSD", "USDC -> sUSDS", "USDT -> sUSDS"])
+    fail(
+        "semantic order",
+        launch["semanticCreateOrder"],
+        ["frxUSD -> frxUSD", "USDC -> frxUSD", "USDT -> frxUSD"],
+    )
     for index, keeper in enumerate(launch["keepers"]):
         fail_keys(
             f"launch keeper {index}",
             keeper,
-            {"index", "name", "route", "maxDeployedCrvUsd"},
+            {
+                "index",
+                "name",
+                "route",
+                "finalToken",
+                "endpointMode",
+                "expansionPath",
+                "contractionPath",
+                "maxDeployedCrvUsd",
+            },
         )
     fail("keeper indices", [keeper["index"] for keeper in launch["keepers"]], [1, 2, 3])
+    fail(
+        "keeper routes",
+        [keeper["route"] for keeper in launch["keepers"]],
+        ["frxUSD -> frxUSD", "USDC -> frxUSD", "USDT -> frxUSD"],
+    )
+    fail(
+        "keeper final tokens",
+        [keeper["finalToken"] for keeper in launch["keepers"]],
+        ["frxUSD", "frxUSD", "frxUSD"],
+    )
+    fail(
+        "keeper endpoint modes",
+        [keeper["endpointMode"] for keeper in launch["keepers"]],
+        ["vanilla_erc20", "vanilla_erc20", "vanilla_erc20"],
+    )
+    fail(
+        "keeper expansion paths",
+        [keeper["expansionPath"] for keeper in launch["keepers"]],
+        ["empty", "FRXUSD_MINT", "CURVE_USDT_TO_USDC -> FRXUSD_MINT"],
+    )
+    fail(
+        "keeper contraction paths",
+        [keeper["contractionPath"] for keeper in launch["keepers"]],
+        [
+            "CURVE_FRXUSD_TO_CRVUSD",
+            "FRXUSD_REDEEM -> CURVE_USDC_TO_CRVUSD",
+            "FRXUSD_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
+        ],
+    )
     fail(
         "keeper capacities",
         [keeper["maxDeployedCrvUsd"] for keeper in launch["keepers"]],
@@ -695,6 +725,8 @@ def main() -> None:
             "targetAmmBps",
             "erc4626DepositBps",
             "erc4626RedeemBps",
+            "frxUsdMintBps",
+            "frxUsdRedeemBps",
             "daiUsdsConverterBps",
             "downstreamAndYieldToTargetRouteLossBps",
             "monetaryContractionRouteLossAllowanceBps",
@@ -703,12 +735,15 @@ def main() -> None:
             "earlyExitProfitFloorPpm",
             "intermediateErc4626StepsAllowed",
             "erc4626StepValuation",
+            "finalEndpointModesSupported",
         },
     )
     fail("Curve execution tolerance", execution_policy["curveSwapBps"], 3)
     fail("target-AMM Curve execution tolerance", execution_policy["targetAmmBps"], 3)
     fail("ERC-4626 deposit execution tolerance", execution_policy["erc4626DepositBps"], 1)
     fail("ERC-4626 redeem execution tolerance", execution_policy["erc4626RedeemBps"], 1)
+    fail("frxUSD mint execution tolerance", execution_policy["frxUsdMintBps"], 1)
+    fail("frxUSD redeem execution tolerance", execution_policy["frxUsdRedeemBps"], 1)
     fail("DaiUsds execution tolerance", execution_policy["daiUsdsConverterBps"], 0)
     fail(
         "downstream and yield-to-target route tolerance",
@@ -732,6 +767,11 @@ def main() -> None:
         "ERC-4626 step valuation",
         execution_policy["erc4626StepValuation"],
         "action_local_share_delta_convertToAssets",
+    )
+    fail(
+        "final endpoint modes",
+        execution_policy["finalEndpointModesSupported"],
+        ["vanilla_erc20", "erc4626"],
     )
     fail_keys(
         "velocity configuration",
@@ -850,8 +890,8 @@ def main() -> None:
             "script",
             "result",
             "simulatedCrvUsdSold",
-            "simulatedSusdsReceived",
-            "simulatedContractionQuoteSusds",
+            "simulatedFrxUsdReceived",
+            "simulatedContractionQuoteFrxUsd",
             "simulatedContractionQuoteCrvUsd",
             "expansionPathHash",
             "contractionPathHash",
@@ -863,11 +903,11 @@ def main() -> None:
     fail("canary result", canary["result"], "pass")
     fail("canary broadcast", canary["broadcast"], False)
     fail("canary crvUSD sold", canary["simulatedCrvUsdSold"], "100000000000000000000000")
-    fail("canary sUSDS received", canary["simulatedSusdsReceived"], "90273364828690285538377")
-    fail("canary contraction sUSDS", canary["simulatedContractionQuoteSusds"], "9027336482869028553837")
-    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9999527931042703308646")
-    fail("canary expansion hash", canary["expansionPathHash"], "0xc8dc73a3e17a02c3a505f40f295122fad99eb6776b0768026c60507cedf15951")
-    fail("canary contraction hash", canary["contractionPathHash"], "0x4cd91610bf6f978bf3f54d051d65b8c9d2293726a1fbf4f1da7a872d9080e974")
+    fail("canary frxUSD received", canary["simulatedFrxUsdReceived"], "100016620117244135933000")
+    fail("canary contraction frxUSD", canary["simulatedContractionQuoteFrxUsd"], "10001662011724413593300")
+    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9999492700894871027318")
+    fail("canary expansion hash", canary["expansionPathHash"], "0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d")
+    fail("canary contraction hash", canary["contractionPathHash"], "0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1")
 
     operator = manifest["operatorInputs"]
     fail_keys(
@@ -878,7 +918,7 @@ def main() -> None:
             "factoryDefaultsApproved",
             "selectedOracleFamily",
             "chainlinkFrxUsdMaxDelay",
-            "chainlinkUsdsMaxDelay",
+            "fraxRedemptionActivationApproved",
             "operatorConfirmationRequired",
         },
     )
@@ -890,10 +930,14 @@ def main() -> None:
     fail(
         "selected oracle family",
         operator["selectedOracleFamily"],
-        "chainlink_for_frxusd_usds",
+        "chainlink_for_frxusd",
     )
     fail("frxUSD provisional Chainlink delay", operator["chainlinkFrxUsdMaxDelay"], 93_600)
-    fail("USDS provisional Chainlink delay", operator["chainlinkUsdsMaxDelay"], 93_600)
+    fail(
+        "Frax redemption activation unapproved",
+        operator["fraxRedemptionActivationApproved"],
+        False,
+    )
     fail("factory defaults unapproved", operator["factoryDefaultsApproved"], False)
     fail("operator confirmation", operator["operatorConfirmationRequired"], True)
 
@@ -938,8 +982,9 @@ def main() -> None:
         "activation blockers",
         manifest["activationBlockers"],
         [
-            "Governance must independently reconfirm the canonical frxUSD/USD and USDS/USD Chainlink proxies, 8-decimal metadata, live positive completed rounds, and provisional 93,600-second maxDelay values.",
+            "Governance must independently reconfirm the canonical frxUSD/USD Chainlink proxy, 8-decimal metadata, live positive completed round, and provisional 93,600-second maxDelay.",
             "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
+            "Before enabling a Frax-redemption route, governance must reconfirm the custodian endpoints, fees, limits, authorization model, preview behavior, and live USDC inventory, then execute an inventory-bounded fork canary.",
             "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
             "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
             "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none.",
@@ -952,7 +997,7 @@ def main() -> None:
         f"implementation_runtime={len(impl_runtime) + 32} "
         f"factory_runtime={len(factory_runtime) + 64} "
         f"preview_runtime={len(preview_runtime)} "
-        "oracle_selection=chainlink_for_frxusd_usds"
+        "oracle_selection=chainlink_for_frxusd"
     )
 
 

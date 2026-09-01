@@ -2,20 +2,20 @@
 
 Status: mainnet route research; no deployment or activation transaction is authorized.
 
-This document separates V3 route selection from the core specification. It covers the current
-candidate target AMMs and fixed yield-token endpoints:
+This document separates route research from the core specification. It covers historical
+ERC-4626 candidates as well as the selected vanilla-frxUSD launch endpoint:
 
 ```text
 target assets: frxUSD, USDT, USDC, PYUSD, GHO
-yield tokens:  sfrxUSD, sUSDS, sUSDe
+final tokens:  frxUSD (selected launch), sfrxUSD, sUSDS, sUSDe
 ```
 
 The measurements below are snapshots, not permanent limits or executable governance parameters.
 Every deployment still relies on same-transaction quotes, per-step execution minima, exact balance
 deltas, the configured full-route loss limit, and the final post-reward backing invariant. The selected
-launch proposal separately uses `3 bps` total-loss buffers for Curve swaps, `1 bps` for ERC-4626
-deposit/redeem integer rounding, `0 bps` for exact DaiUsds conversion, and `5 bps` for each complete
-downstream deployment or yield-to-target maintenance route.
+launch proposal separately uses `3 bps` total-loss buffers for Curve swaps, `1 bps` for Frax mint
+and redemption, and `5 bps` for each complete downstream deployment route. The implementation
+retains ERC-4626 and DaiUsds step support for non-launch configurations.
 
 ## Measurement basis
 
@@ -123,14 +123,15 @@ small, but inventory exhaustion dominates at larger amounts.
 | USDe/USDC | `0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72` | USDe, USDC | 1.0 bp | 50% | 5x |
 | GHO/USDe | `0x670a72e6D22b0956C0D2573288F82DCc5d6E3a61` | GHO, USDe | 0.5 bp | 50% | 8x |
 | DaiUsds | `0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A` | DAI <-> USDS | exact 1:1 typed conversion | n/a | n/a |
-| frxUSD mint | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC -> external frxUSD | `mintFee() = 0` | n/a | 6-to-18 decimal conversion |
+| Frax frxUSD custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC -> external frxUSD mint; external frxUSD -> USDC redeem | `mintFee() = 0`, `redeemFee() = 0` | n/a | 6-to-18 decimal conversion |
 
-### Frax USDC-to-frxUSD primary mint
+### Frax USDC/frxUSD primary-market adapter
 
 The Frax custodian above is a permissionless, upgradeable external-share minter. It is not a standard
 ERC-4626 vault because the venue is not the output share token: `asset()` is USDC while `frxUSD()` is
-the separately deployed frxUSD token. V3 therefore represents only its canonical mint direction with
-`FrxUsdMint`; it does not add a generic ERC-4626 exception or arbitrary call adapter.
+the separately deployed frxUSD token. V3 therefore represents the two directions as distinct typed
+steps: `FrxUsdMint` for USDC -> frxUSD and `FrxUsdRedeem` for frxUSD -> USDC. It does not add a generic
+ERC-4626 exception or arbitrary call adapter.
 
 Pinned contract state:
 
@@ -154,10 +155,21 @@ upgraded. Cap exhaustion, an adverse fee change, a proxy/interface change, or a 
 the route step fail atomically. V3 quotes immediately before execution, enforces the configured
 quote-relative minimum on its measured frxUSD balance delta, and resets its USDC allowance to zero.
 
-The adapter deliberately excludes redemption. Although the contract exposes frxUSD-to-USDC redeem
-methods, immediate redemption is limited by USDC remaining in the custodian and that inventory can be
-moved into RWA positions. The pinned `15,382.926751` USDC balance is not a scalable contraction rail.
-Yield contraction therefore remains an independently configured Curve route.
+`previewRedeem()` reports fee-adjusted unit conversion but does not enforce the custodian's live USDC
+inventory. `FrxUsdRedeem` therefore measures the actual USDC balance delta and reverts atomically on
+under-delivery, but that does not make redemption capacity durable. The canary block `25,868,730` held
+only `345.903530 USDC`; a later live probe held `119,416.458394 USDC`, with zero mint and redeem fees in
+both probes. Neither amount supports the proposed multi-million-crvUSD caps. Any route using redemption
+must remain paused until a fresh inventory-, limit-, fee-, and authorization-bounded execution canary
+passes at the intended activation block.
+
+### Selected launch override
+
+The selected release proposal does not use the historical yield endpoints in the cost ladders below.
+All three keepers use plain ERC-20 frxUSD as the final token. The frxUSD keeper has an empty expansion
+path and contracts directly through its frxUSD/crvUSD target AMM. USDC uses Frax mint and redemption;
+USDT adds the USDT/USDC 3pool leg around those primary-market steps. The exact launch routes and pause
+conditions are authoritative in `pegkeeper-v3-suggested-launch-parameters.md`.
 
 ### Why USDe primary minting is excluded
 
@@ -173,9 +185,8 @@ rate, and rounding. DAO admin-fee accrual is not V3 backing and never weakens an
 
 ## Route choices
 
-Expansion paths are shown below. Contraction paths are configured independently. Most rows can use a
-reversed typed path followed by the selected target AMM, but `FrxUsdMint` is expansion-only: sfrxUSD
-contraction uses Curve venues and never assumes custodian redemption liquidity.
+Historical expansion paths are shown below. Contraction paths are configured independently. The table
+predates the selected plain-frxUSD launch and remains route-cost research, not launch calldata.
 
 | Target | Yield | Deterministic expansion path | Current use |
 |---|---|---|---|

@@ -47,10 +47,6 @@ interface ControllerFactory:
     def debt_ceiling(_keeper: address) -> uint256: view
 
 
-interface YieldToken:
-    def convertToAssets(_shares: uint256) -> uint256: view
-
-
 interface PriceOracle:
     def price() -> uint256: view
 
@@ -88,6 +84,9 @@ interface PegKeeperV3:
     def yield_oracle() -> address: view
     def min_yield_oracle_price() -> uint256: view
     def yield_token() -> address: view
+    def yield_token_is_erc4626() -> bool: view
+    def yield_token_assets(_units: uint256) -> uint256: view
+    def yield_token_units(_assets: uint256) -> uint256: view
     def expansion_max_route_loss_bps() -> uint256: view
     def entry_min_profit_ppm() -> uint256: view
     def last_expansion_at() -> uint256: view
@@ -104,6 +103,7 @@ STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
 STEP_ERC4626_DEPOSIT: constant(uint256) = 2
 STEP_ERC4626_REDEEM: constant(uint256) = 3
 STEP_FRXUSD_MINT: constant(uint256) = 4
+STEP_FRXUSD_REDEEM: constant(uint256) = 5
 
 
 @external
@@ -253,6 +253,11 @@ def _preview_expansion(
         _crv_usd_amount,
     )
     assert trusted_backing_before + retained * target_multiplier >= deployed_after
+    if keeper.target_asset() == keeper.yield_token():
+        quote.backing_asset_out = quote.target_out
+        quote.yield_token_out = retained
+        quote.deploy_to_yield = True
+        return quote
     quote.backing_asset_out = 0
     quote.yield_token_out = 0
     return quote
@@ -285,28 +290,29 @@ def _preview_expansion_route(
     for i in range(MAX_ROUTE_STEPS):
         if i >= path_length:
             break
-        step: RouteStep = _keeper.expansion_path_step(i)
-        if i == path_length - 1:
-            quote.backing_asset_out = amount_out
-            backing_value: uint256 = self._oracle_value(
-                quote.backing_asset_out * backing_multiplier,
-                yield_price,
-            )
-            if backing_value > _crv_usd_amount:
-                quote.gross_profit = backing_value - _crv_usd_amount
-            quote.keeper_reward = self._backing_reward(
-                _keeper,
-                quote.gross_profit,
-                backing_multiplier,
-            )
-            if quote.keeper_reward > quote.backing_asset_out:
-                return quote
-            amount_out = quote.backing_asset_out - quote.keeper_reward
-        amount_out = self._preview_route_step(_keeper, step, amount_out)
+        amount_out = self._preview_route_step(
+            _keeper,
+            _keeper.expansion_path_step(i),
+            amount_out,
+        )
         if amount_out == 0:
             return quote
 
-    quote.yield_token_out = amount_out
+    gross_yield_token_out: uint256 = amount_out
+    quote.backing_asset_out = _keeper.yield_token_assets(gross_yield_token_out)
+    gross_route_value: uint256 = self._oracle_value(
+        quote.backing_asset_out * backing_multiplier,
+        yield_price,
+    )
+    if gross_route_value > _crv_usd_amount:
+        quote.gross_profit = gross_route_value - _crv_usd_amount
+    keeper_reward_assets: uint256 = (
+        quote.gross_profit * _keeper.keeper_profit_share_bps() / BPS / backing_multiplier
+    )
+    quote.keeper_reward = _keeper.yield_token_units(keeper_reward_assets)
+    if quote.keeper_reward > gross_yield_token_out:
+        return quote
+    quote.yield_token_out = gross_yield_token_out - quote.keeper_reward
     if quote.yield_token_out == 0:
         return quote
 
@@ -318,29 +324,15 @@ def _preview_expansion_route(
         _target_amount * self._multiplier(_keeper.target_asset()),
         _target_price,
     )
-    retained_route_value: uint256 = trusted_yield_value + self._oracle_value(
-        quote.keeper_reward * backing_multiplier,
-        yield_price,
-    )
     conversion_cost: uint256 = 0
-    if target_value > retained_route_value:
-        conversion_cost = target_value - retained_route_value
+    if target_value > gross_route_value:
+        conversion_cost = target_value - gross_route_value
     if conversion_cost > target_value * _keeper.expansion_max_route_loss_bps() / BPS:
         return quote
     if not self._meets_entry_floor(_keeper, trusted_yield_value, _crv_usd_amount):
         return quote
     quote.deploy_to_yield = True
     return quote
-
-
-@internal
-@view
-def _backing_reward(
-    _keeper: PegKeeperV3,
-    _gross_profit: uint256,
-    _backing_multiplier: uint256,
-) -> uint256:
-    return _gross_profit * _keeper.keeper_profit_share_bps() / BPS / _backing_multiplier
 
 
 @internal
@@ -361,8 +353,10 @@ def _preview_route_step(
         amount_out = _amount_in
     elif _step.kind == STEP_ERC4626_DEPOSIT or _step.kind == STEP_FRXUSD_MINT:
         amount_out = ERC4626Route(_step.venue).previewDeposit(_amount_in)
-    else:
+    elif _step.kind == STEP_ERC4626_REDEEM or _step.kind == STEP_FRXUSD_REDEEM:
         amount_out = ERC4626Route(_step.venue).previewRedeem(_amount_in)
+    else:
+        return 0
 
     input_value: uint256 = 0
     output_value: uint256 = 0
@@ -421,9 +415,7 @@ def _read_yield_price(_keeper: PegKeeperV3) -> (uint256, bool):
 @internal
 @view
 def _trusted_yield_value(_keeper: PegKeeperV3, _shares: uint256) -> uint256:
-    return YieldToken(_keeper.yield_token()).convertToAssets(_shares) * self._multiplier(
-        _keeper.backing_asset()
-    )
+    return _keeper.yield_token_assets(_shares) * self._multiplier(_keeper.backing_asset())
 
 
 @internal

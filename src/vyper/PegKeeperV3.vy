@@ -52,6 +52,8 @@ interface FrxUsdMinter:
     def frxUSD() -> address: view
     def previewDeposit(_assets: uint256) -> uint256: view
     def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
+    def previewRedeem(_shares: uint256) -> uint256: view
+    def redeem(_shares: uint256, _receiver: address, _owner: address) -> uint256: nonpayable
 
 interface YieldToken:
     def asset() -> address: view
@@ -186,6 +188,7 @@ STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
 STEP_ERC4626_DEPOSIT: constant(uint256) = 2
 STEP_ERC4626_REDEEM: constant(uint256) = 3
 STEP_FRXUSD_MINT: constant(uint256) = 4
+STEP_FRXUSD_REDEEM: constant(uint256) = 5
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_BACKING_DEPLOYMENT: constant(uint256) = 1
@@ -202,6 +205,7 @@ target_amm: public(TwoCoinPool)
 _target_asset: ERC20
 _backing_asset: ERC20
 _yield_token: YieldToken
+yield_token_is_erc4626: public(bool)
 target_multiplier: uint256
 backing_multiplier: uint256
 target_oracle: public(PriceOracle)
@@ -285,9 +289,11 @@ def initialize(
     crv_usd: address = ControllerFactory(controller_factory).stablecoin()
     assert crv_usd != empty(address)
     assert crv_usd != _target_asset.address
-    assert _yield_token.asset() == _backing_asset.address
-    assert _yield_token.convertToAssets(0) == 0
-    assert _yield_token.convertToShares(0) == 0
+    is_erc4626: bool = _yield_token.address != _backing_asset.address
+    if is_erc4626:
+        assert _yield_token.asset() == _backing_asset.address
+        assert _yield_token.convertToAssets(0) == 0
+        assert _yield_token.convertToShares(0) == 0
 
     crv_decimals: uint256 = ERC20(crv_usd).decimals()
     target_decimals: uint256 = _target_asset.decimals()
@@ -314,6 +320,7 @@ def initialize(
     self._target_asset = _target_asset
     self._backing_asset = _backing_asset
     self._yield_token = _yield_token
+    self.yield_token_is_erc4626 = is_erc4626
     self.target_multiplier = 10 ** (18 - target_decimals)
     self.backing_multiplier = 10 ** (18 - backing_decimals)
     self.target_oracle = _target_oracle
@@ -410,6 +417,34 @@ def backing_asset() -> address:
 @view
 def yield_token() -> address:
     return self._yield_token.address
+
+
+@internal
+@view
+def _yield_token_assets(_units: uint256) -> uint256:
+    if self.yield_token_is_erc4626:
+        return self._yield_token.convertToAssets(_units)
+    return _units
+
+
+@internal
+@view
+def _yield_token_units(_assets: uint256) -> uint256:
+    if self.yield_token_is_erc4626:
+        return self._yield_token.convertToShares(_assets)
+    return _assets
+
+
+@external
+@view
+def yield_token_assets(_units: uint256) -> uint256:
+    return self._yield_token_assets(_units)
+
+
+@external
+@view
+def yield_token_units(_assets: uint256) -> uint256:
+    return self._yield_token_units(_assets)
 
 
 @internal
@@ -554,8 +589,10 @@ def _normalize_backing(_amount: uint256) -> uint256:
 @internal
 @view
 def _trusted_backing_value() -> uint256:
-    target_value: uint256 = self._normalize_target(self._target_inventory())
-    backing_amount: uint256 = self._yield_token.convertToAssets(self._yield_inventory())
+    target_value: uint256 = 0
+    if self._target_asset.address != self._yield_token.address:
+        target_value = self._normalize_target(self._target_inventory())
+    backing_amount: uint256 = self._yield_token_assets(self._yield_inventory())
     return target_value + self._normalize_backing(backing_amount)
 
 
@@ -565,7 +602,7 @@ def _oracle_backing_value() -> uint256:
     value: uint256 = 0
     target_inventory: uint256 = self._target_inventory()
     yield_inventory: uint256 = self._yield_inventory()
-    if target_inventory > 0:
+    if target_inventory > 0 and self._target_asset.address != self._yield_token.address:
         value = self._oracle_value(
             self._normalize_target(target_inventory), self._target_price()
         )
@@ -583,7 +620,7 @@ def _oracle_backing_value() -> uint256:
 @internal
 @view
 def _trusted_yield_value(_yield_token_units: uint256) -> uint256:
-    return self._normalize_backing(self._yield_token.convertToAssets(_yield_token_units))
+    return self._normalize_backing(self._yield_token_assets(_yield_token_units))
 
 
 @external
@@ -765,7 +802,7 @@ def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
     payout_assets: uint256 = payout_budget / self.backing_multiplier
     assert payout_assets > 1
 
-    yield_token_out: uint256 = self._yield_token.convertToShares(payout_assets - 1)
+    yield_token_out: uint256 = self._yield_token_units(payout_assets - 1)
     assert yield_token_out > 0
     assert yield_token_out <= accounted_before
 
@@ -1068,6 +1105,16 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         self._oracle_value(self._normalize_target(target_retained), target_price), crv_usd_sold
     )
 
+    backing_asset_received: uint256 = 0
+    yield_token_received: uint256 = 0
+    backing_retained: uint256 = target_retained
+    deployed_to_yield: bool = False
+    if self._target_asset.address == self._yield_token.address:
+        backing_asset_received = target_received
+        yield_token_received = target_retained
+        backing_retained = 0
+        deployed_to_yield = True
+
     self.deployed_crvusd = deployed_after
     self.last_expansion_at = block.timestamp
 
@@ -1077,16 +1124,16 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         msg.sender,
         crv_usd_sold,
         target_received,
-        0,
-        0,
+        backing_asset_received,
+        yield_token_received,
         gross_profit,
         keeper_reward,
-        target_retained,
-        False,
+        backing_retained,
+        deployed_to_yield,
         block.timestamp + self.min_deployment_time,
     )
 
-    return crv_usd_sold, target_retained, 0, keeper_reward, False
+    return crv_usd_sold, backing_retained, yield_token_received, keeper_reward, deployed_to_yield
 
 
 @external
@@ -1232,6 +1279,10 @@ def _validate_route_step(_step: RouteStep):
         assert _step.pool_index_in == 0 and _step.pool_index_out == 0
         assert FrxUsdMinter(_step.venue).asset() == _step.token_in
         assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_out
+    elif _step.kind == STEP_FRXUSD_REDEEM:
+        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
+        assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_in
+        assert FrxUsdMinter(_step.venue).asset() == _step.token_out
     else:
         raise
 
@@ -1254,17 +1305,17 @@ def setPaths(
     _contraction_steps: DynArray[RouteStep, 16],
 ):
     assert self._is_admin_or_factory(msg.sender)
-    assert len(_expansion_steps) > 0
-    assert len(_contraction_steps) > 0
     assert _expansion_max_route_loss_bps <= BPS
 
-    assert _expansion_steps[0].token_in == self._target_asset.address
-    expansion_last: RouteStep = _expansion_steps[len(_expansion_steps) - 1]
-    assert expansion_last.token_out == self._yield_token.address
-    assert expansion_last.token_in == self._backing_asset.address
+    if len(_expansion_steps) == 0:
+        assert self._target_asset.address == self._yield_token.address
+    else:
+        assert _expansion_steps[0].token_in == self._target_asset.address
+        expansion_last: RouteStep = _expansion_steps[len(_expansion_steps) - 1]
+        assert expansion_last.token_out == self._yield_token.address
 
+    assert len(_contraction_steps) > 0
     assert _contraction_steps[0].token_in == self._yield_token.address
-    assert _contraction_steps[0].token_out == self._backing_asset.address
     contraction_last: RouteStep = _contraction_steps[len(_contraction_steps) - 1]
     assert contraction_last.token_out == self._crv_usd.address
 
@@ -1357,6 +1408,10 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
         quoted_output = FrxUsdMinter(_step.venue).previewDeposit(_amount_in)
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
         FrxUsdMinter(_step.venue).deposit(_amount_in, self)
+    elif _step.kind == STEP_FRXUSD_REDEEM:
+        quoted_output = FrxUsdMinter(_step.venue).previewRedeem(_amount_in)
+        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
+        FrxUsdMinter(_step.venue).redeem(_amount_in, self, self)
     else:
         quoted_output = ERC4626Route(_step.venue).previewRedeem(_amount_in)
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
@@ -1448,43 +1503,40 @@ def executeExpansionPath(
     assert healthy
 
     amount_in: uint256 = _target_amount
-    backing_asset_received: uint256 = 0
-    gross_profit: uint256 = 0
-    keeper_reward: uint256 = 0
     path_length: uint256 = len(self.expansion_path)
     for i in range(MAX_ROUTE_STEPS):
         if i >= path_length:
             break
-        step: RouteStep = self.expansion_path[i]
-        if i == path_length - 1:
-            backing_asset_received = amount_in
-            backing_value: uint256 = self._oracle_value(
-                backing_asset_received * self.backing_multiplier, yield_price
-            )
-            if backing_value > _crv_usd_sold:
-                gross_profit = backing_value - _crv_usd_sold
-            keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-            keeper_reward = keeper_reward_value / self.backing_multiplier
-            assert keeper_reward <= backing_asset_received
-            self._transfer_exact_to(self._backing_asset, _keeper, keeper_reward)
-            amount_in = backing_asset_received - keeper_reward
-        amount_in = self._execute_route_step(step, amount_in)
+        amount_in = self._execute_route_step(self.expansion_path[i], amount_in)
 
-    yield_token_received: uint256 = amount_in
+    gross_yield_token_received: uint256 = amount_in
+    assert gross_yield_token_received > 0
+    backing_asset_received: uint256 = self._yield_token_assets(gross_yield_token_received)
+    gross_route_value: uint256 = self._oracle_value(
+        backing_asset_received * self.backing_multiplier,
+        yield_price,
+    )
+    gross_profit: uint256 = 0
+    if gross_route_value > _crv_usd_sold:
+        gross_profit = gross_route_value - _crv_usd_sold
+
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward_assets: uint256 = keeper_reward_value / self.backing_multiplier
+    keeper_reward: uint256 = self._yield_token_units(keeper_reward_assets)
+    assert keeper_reward <= gross_yield_token_received
+    self._transfer_exact_to(ERC20(self._yield_token.address), _keeper, keeper_reward)
+
+    yield_token_received: uint256 = gross_yield_token_received - keeper_reward
     assert yield_token_received > 0
     trusted_yield_received: uint256 = self._oracle_value(
-        self._yield_token.convertToAssets(yield_token_received) * self.backing_multiplier,
+        self._yield_token_assets(yield_token_received) * self.backing_multiplier,
         yield_price,
     )
     target_price: uint256 = self._target_price()
     target_value: uint256 = self._oracle_value(
         _target_amount * self.target_multiplier, target_price
     )
-    route_retained_value: uint256 = (
-        trusted_yield_received
-        + self._oracle_value(keeper_reward * self.backing_multiplier, yield_price)
-    )
-    self._checked_route_conversion_cost(target_value, route_retained_value)
+    self._checked_route_conversion_cost(target_value, gross_route_value)
     assert self._meets_entry_floor(trusted_yield_received, _crv_usd_sold)
     return backing_asset_received, yield_token_received, gross_profit, keeper_reward
 
@@ -1523,7 +1575,7 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 
     target_value_spent: uint256 = target_spent * self.target_multiplier
     trusted_value_received: uint256 = self._oracle_value(
-        self._yield_token.convertToAssets(yield_token_received) * self.backing_multiplier,
+        self._yield_token_assets(yield_token_received) * self.backing_multiplier,
         yield_price,
     )
     conversion_cost: uint256 = self._checked_route_conversion_cost(

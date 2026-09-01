@@ -73,7 +73,7 @@ contract PegKeeperV3DownstreamExpansionForkTest is Test {
         IUSDT(USDT).approve(USDT_POOL, purchaseAmount);
         IStableSwap2Pool(USDT_POOL).exchange(0, 1, purchaseAmount, 0);
 
-        uint256 keeperUsdsBefore = IERC20(USDS).balanceOf(keeper);
+        uint256 keeperSusdsBefore = IERC20(SUSDS).balanceOf(keeper);
         uint256 protocolSusdsBefore = IERC20(SUSDS).balanceOf(address(pegKeeper));
         vm.prank(keeper);
         (
@@ -89,7 +89,7 @@ contract PegKeeperV3DownstreamExpansionForkTest is Test {
         assertGt(yieldReceived, 0);
         assertGt(reward, 0);
         assertTrue(deployedToYield);
-        assertEq(IERC20(USDS).balanceOf(keeper) - keeperUsdsBefore, reward);
+        assertEq(IERC20(SUSDS).balanceOf(keeper) - keeperSusdsBefore, reward);
         assertEq(IERC20(SUSDS).balanceOf(address(pegKeeper)) - protocolSusdsBefore, yieldReceived);
         assertEq(pegKeeper.accounted_yield_token_units(), yieldReceived);
         assertEq(pegKeeper.undeployed_backing(), 0);

@@ -115,6 +115,7 @@ contract PegKeeperV3FactoryTest is Test {
         address deployed = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -160,6 +161,37 @@ contract PegKeeperV3FactoryTest is Test {
         assertTrue(pegKeeper.all_execution_paused());
     }
 
+    function test_ownerExplicitlyDeploysPlainErc20IdentityEndpoint() public {
+        IPegKeeperV3.RouteStep[] memory empty = new IPegKeeperV3.RouteStep[](0);
+        IPegKeeperV3.RouteStep[] memory contraction = new IPegKeeperV3.RouteStep[](1);
+        contraction[0] = IPegKeeperV3.RouteStep({
+            kind: 0,
+            venue: address(targetAmm),
+            tokenIn: address(targetAsset),
+            tokenOut: address(crvUsd),
+            poolIndexIn: 0,
+            poolIndexOut: 1,
+            executionBufferBps: 3
+        });
+        address deployed = factory.deployPegKeeper(
+            address(targetAmm),
+            address(targetAsset),
+            false,
+            address(targetOracle),
+            address(yieldOracle),
+            empty,
+            contraction
+        );
+        IPegKeeperV3 pegKeeper = IPegKeeperV3(deployed);
+
+        assertEq(pegKeeper.target_asset(), address(targetAsset));
+        assertEq(pegKeeper.backing_asset(), address(targetAsset));
+        assertEq(pegKeeper.yield_token(), address(targetAsset));
+        assertFalse(pegKeeper.yield_token_is_erc4626());
+        assertEq(pegKeeper.expansion_path_length(), 0);
+        assertEq(pegKeeper.contraction_path_length(), 1);
+    }
+
     function test_indicesIncreaseAndNamesUseFactoryAssignedIndex() public {
         (IPegKeeperV3.RouteStep[] memory expansion, IPegKeeperV3.RouteStep[] memory contraction) =
             _paths();
@@ -167,6 +199,7 @@ contract PegKeeperV3FactoryTest is Test {
         address first = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -175,6 +208,7 @@ contract PegKeeperV3FactoryTest is Test {
         address second = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -197,6 +231,7 @@ contract PegKeeperV3FactoryTest is Test {
         address first = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -216,6 +251,7 @@ contract PegKeeperV3FactoryTest is Test {
         address second = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -242,6 +278,7 @@ contract PegKeeperV3FactoryTest is Test {
         address deployed = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -273,6 +310,7 @@ contract PegKeeperV3FactoryTest is Test {
         factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -295,6 +333,7 @@ contract PegKeeperV3FactoryTest is Test {
         factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             empty,
@@ -309,6 +348,7 @@ contract PegKeeperV3FactoryTest is Test {
         address deployed = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -369,6 +409,7 @@ contract PegKeeperV3FactoryTest is Test {
         factory.deployPegKeeper(
             address(invalidTargetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -397,6 +438,7 @@ contract PegKeeperV3FactoryTest is Test {
         badFactory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -482,6 +524,7 @@ contract PegKeeperV3FactoryTest is Test {
         address deployed = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -501,6 +544,7 @@ contract PegKeeperV3FactoryTest is Test {
         address deployed = factory.deployPegKeeper(
             address(targetAmm),
             address(yieldToken),
+            true,
             address(targetOracle),
             address(yieldOracle),
             expansion,
@@ -533,6 +577,7 @@ contract PegKeeperV3FactoryTest is Test {
             factory.deployPegKeeper(
                 address(targetAmm),
                 address(yieldToken),
+                true,
                 address(targetOracle),
                 address(yieldOracle),
                 expansion,
@@ -561,6 +606,7 @@ contract PegKeeperV3FactoryTest is Test {
             factory.deployPegKeeper(
                 address(targetAmm),
                 address(yieldToken),
+                true,
                 address(targetOracle),
                 address(yieldOracle),
                 expansion,

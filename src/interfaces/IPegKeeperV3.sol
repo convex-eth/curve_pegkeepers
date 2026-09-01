@@ -110,6 +110,9 @@ interface IPegKeeperV3 {
     function target_asset() external view returns (address);
     function backing_asset() external view returns (address);
     function yield_token() external view returns (address);
+    function yield_token_is_erc4626() external view returns (bool);
+    function yield_token_assets(uint256 units) external view returns (uint256);
+    function yield_token_units(uint256 assets) external view returns (uint256);
     function target_oracle() external view returns (address);
     function yield_oracle() external view returns (address);
     function min_target_oracle_price() external view returns (uint256);

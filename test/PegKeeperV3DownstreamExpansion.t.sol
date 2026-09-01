@@ -391,7 +391,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertFalse(deployed);
     }
 
-    function test_expansionRoutesNewTargetToYieldAndPaysOneBackingReward() public {
+    function test_expansionRoutesNewTargetToYieldAndPaysOneFinalTokenReward() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
         vm.warp(1_800_000_000);
 
@@ -428,7 +428,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(yieldReceived, expectedYield);
         assertEq(reward, expectedReward);
         assertTrue(deployedToYield);
-        assertEq(backingAsset.balanceOf(keeper), expectedReward);
+        assertEq(yieldToken.balanceOf(keeper), expectedReward);
         assertEq(pegKeeper.accounted_yield_token_units(), expectedYield);
         assertEq(pegKeeper.undeployed_backing(), 0);
         assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
