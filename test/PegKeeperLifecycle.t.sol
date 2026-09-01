@@ -6,9 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IUSDT} from "../src/interfaces/IUSDT.sol";
-import {IPegKeeperOffboarding} from "../src/interfaces/IPegKeeperOffboarding.sol";
-import {IPegKeeperRegulator} from "../src/interfaces/IPegKeeperRegulator.sol";
-import {IPegKeeperV2} from "../src/interfaces/IPegKeeperV2.sol";
+import {IPegKeeperOffboarding} from "../src/v2/interfaces/IPegKeeperOffboarding.sol";
+import {IPegKeeperRegulator} from "../src/v2/interfaces/IPegKeeperRegulator.sol";
+import {IPegKeeperV2} from "../src/v2/interfaces/IPegKeeperV2.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 
 contract FixedPriceAggregator {
