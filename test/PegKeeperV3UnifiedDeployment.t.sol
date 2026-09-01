@@ -111,10 +111,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.emergencyAdmin, deployer.CURVE_EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
         assertEq(config.maxDeployedCrvUsd, 2_500_000e18);
-        assertEq(config.targetAmmExecutionBufferBps, 5);
+        assertEq(config.targetAmmExecutionBufferBps, 3);
         assertEq(config.minDownstreamAttemptGas, 1_500_000);
         assertEq(config.fallbackSettlementGasReserve, 300_000);
-        assertEq(config.expansionMaxRouteLossBps, 100);
+        assertEq(config.expansionMaxRouteLossBps, 5);
         assertEq(config.usdcUsdtPool, deployer.USDC_USDT_ORACLE_POOL());
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.frxUsdMaxDelay, 26 hours);

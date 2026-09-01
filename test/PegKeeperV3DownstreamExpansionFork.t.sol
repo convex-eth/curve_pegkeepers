@@ -65,6 +65,7 @@ contract PegKeeperV3DownstreamExpansionForkTest is Test {
         pegKeeper.set_expansion_config(0, 1_500_000, 300_000);
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
+        pegKeeper.set_direction_paused(1, false);
         vm.stopPrank();
 
         uint256 purchaseAmount = 10_000_000e6;

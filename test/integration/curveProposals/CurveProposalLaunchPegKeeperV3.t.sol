@@ -238,7 +238,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.SFRXUSD(),
             1,
             0,
-            5
+            3
         );
         _assertStep(
             frxUsdKeeper.contraction_path_step(0),
@@ -248,7 +248,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.FRXUSD(),
             0,
             1,
-            5
+            3
         );
         _assertStep(
             frxUsdKeeper.contraction_path_step(1),
@@ -258,7 +258,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.CRVUSD(),
             0,
             1,
-            5
+            3
         );
 
         _assertSusdsRoutes(IPegKeeperV3(expectedUsdcKeeper), proposal.USDC(), 1);
@@ -273,10 +273,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(defaults_.emergencyAdmin, proposal.CURVE_EMERGENCY_ADMIN());
         assertEq(defaults_.feeReceiver, proposal.FEE_SPLITTER());
         assertEq(defaults_.maxDeployedCrvUsd, USDT_CAP);
-        assertEq(defaults_.targetAmmExecutionBufferBps, 5);
+        assertEq(defaults_.targetAmmExecutionBufferBps, 3);
         assertEq(defaults_.minDownstreamAttemptGas, 1_500_000);
         assertEq(defaults_.fallbackSettlementGasReserve, 300_000);
-        assertEq(defaults_.expansionMaxRouteLossBps, 100);
+        assertEq(defaults_.expansionMaxRouteLossBps, 5);
 
         _assertPolicy(IPegKeeperV3(expectedFrxUsdKeeper), FRXUSD_CAP);
         _assertPolicy(IPegKeeperV3(expectedUsdcKeeper), USDC_CAP);
@@ -398,7 +398,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.DAI(),
             threePoolIndex,
             0,
-            5
+            3
         );
         _assertStep(
             keeper.expansion_path_step(1),
@@ -418,7 +418,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.SUSDS(),
             0,
             0,
-            5
+            1
         );
         _assertStep(
             keeper.contraction_path_step(0),
@@ -428,7 +428,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDS(),
             0,
             0,
-            5
+            1
         );
         _assertStep(
             keeper.contraction_path_step(1),
@@ -448,7 +448,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             targetAsset,
             0,
             threePoolIndex,
-            5
+            3
         );
         _assertStep(
             keeper.contraction_path_step(3),
@@ -458,7 +458,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.CRVUSD(),
             0,
             1,
-            5
+            3
         );
     }
 

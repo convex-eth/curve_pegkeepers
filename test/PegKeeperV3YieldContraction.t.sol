@@ -5,7 +5,12 @@ import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
-import {ExpansionFactory, ExpansionPool, ExpansionToken} from "./PegKeeperV3Expansion.t.sol";
+import {
+    ExpansionFactory,
+    ExpansionOracle,
+    ExpansionPool,
+    ExpansionToken
+} from "./PegKeeperV3Expansion.t.sol";
 import {
     ExecutionDaiUsds,
     ExecutionRoutePool,
@@ -230,19 +235,184 @@ contract PegKeeperV3YieldContractionTest is Test {
         yieldContraction.contractViaAmm(1_000e18);
     }
 
-    function test_rejectsZeroUnaccountedAndOverExposureAmounts() public {
+    function test_rejectsZeroAndOverExposureAmountsButAdoptsYieldDonations() public {
         vm.expectRevert();
         yieldContraction.previewKeeperBuyback(0);
 
-        uint256 unaccountedAmount = pegKeeper.accounted_yield_token_units() + 1;
-        yieldToken.mint(address(pegKeeper), 1_000e18);
-        vm.expectRevert();
-        yieldContraction.previewKeeperBuyback(unaccountedAmount);
+        uint256 inventoryBefore = pegKeeper.accounted_yield_token_units();
+        uint256 donation = 1_000e18;
+        yieldToken.mint(address(pegKeeper), donation);
+        assertEq(pegKeeper.accounted_yield_token_units(), inventoryBefore + donation);
+        yieldContraction.previewKeeperBuyback(donation);
 
         yieldToken.setRates(1_000_000, 1_000_000, 2_000_000);
-        uint256 fullAccountedAmount = pegKeeper.accounted_yield_token_units();
+        uint256 fullInventory = pegKeeper.accounted_yield_token_units();
         vm.expectRevert();
-        yieldContraction.previewKeeperBuyback(fullAccountedAmount);
+        yieldContraction.previewKeeperBuyback(fullInventory);
+    }
+
+    function test_pausedDownstreamDoesNotBlockEitherContractionExit() public {
+        _enableYieldContraction();
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(3, false);
+
+        targetAsset.mint(address(pegKeeper), 1_000e6);
+
+        uint256 targetInventory = pegKeeper.undeployed_backing();
+        uint256 yieldInventory = pegKeeper.accounted_yield_token_units();
+        assertGt(targetInventory, 0);
+        assertGt(yieldInventory, 0);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
+
+        (uint256 targetOut,,,) = yieldContraction.previewUndeployedContraction(targetInventory);
+        (uint256 yieldOut,,,) = yieldContraction.previewKeeperBuyback(1_000e18);
+        assertGt(targetOut, 0);
+        assertGt(yieldOut, 0);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractUndeployedBacking(targetInventory);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(1_000e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldInventory - 1_000e18);
+    }
+
+    function test_unpausedDownstreamDoesNotBlockEitherContractionExit() public {
+        _enableYieldContraction();
+        vm.startPrank(governance);
+        pegKeeper.set_direction_paused(3, false);
+        pegKeeper.set_direction_paused(1, false);
+        vm.stopPrank();
+
+        targetAsset.mint(address(pegKeeper), 1_000e6);
+
+        uint256 targetInventory = pegKeeper.undeployed_backing();
+        assertGt(targetInventory, 0);
+
+        (uint256 targetOut,,,) = yieldContraction.previewUndeployedContraction(targetInventory);
+        (uint256 yieldOut,,,) = yieldContraction.previewKeeperBuyback(1_000e18);
+        assertGt(targetOut, 0);
+        assertGt(yieldOut, 0);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(1_000e18);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractUndeployedBacking(targetInventory);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+    }
+
+    function test_unwindsYieldToTargetWithoutRewardOrContraction() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+
+        uint256 yieldAmount = 1_000e18;
+        uint256 yieldBefore = pegKeeper.accounted_yield_token_units();
+        uint256 targetBefore = pegKeeper.undeployed_backing();
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        uint256 expansionTime = pegKeeper.last_expansion_at();
+        uint256 callerCrvUsdBefore = crvUsd.balanceOf(contractionKeeper);
+
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.YieldBackingUnwound(contractionKeeper, yieldAmount, 1_000e6, 1_000e18, 0);
+        vm.prank(contractionKeeper);
+        (uint256 yieldSpent, uint256 targetReceived) =
+            yieldContraction.unwindYieldToTarget(yieldAmount);
+
+        assertEq(yieldSpent, yieldAmount);
+        assertEq(targetReceived, 1_000e6);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldBefore - yieldAmount);
+        assertEq(pegKeeper.undeployed_backing(), targetBefore + targetReceived);
+        assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
+        assertEq(pegKeeper.last_expansion_at(), expansionTime);
+        assertEq(crvUsd.balanceOf(contractionKeeper), callerCrvUsdBefore);
+        assertGe(pegKeeper.trusted_backing_value(), deployedBefore);
+        assertEq(yieldToken.allowance(address(pegKeeper), address(yieldToken)), 0);
+        assertEq(backingAsset.allowance(address(pegKeeper), address(daiUsds)), 0);
+        assertEq(dai.allowance(address(pegKeeper), address(targetToDaiPool)), 0);
+    }
+
+    function test_yieldUnwindRequiresDownstreamDeploymentPause() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, false);
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+    }
+
+    function test_yieldUnwindRequiresEnabledYieldContractionDirection() public {
+        _installPaths(_targetEndingContractionPath());
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+    }
+
+    function test_yieldUnwindRequiresGlobalExecution() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(5, true);
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+    }
+
+    function test_yieldUnwindRejectsPathThatDoesNotReachTargetBeforeCrvUsd() public {
+        _enableYieldContraction();
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+    }
+
+    function test_yieldUnwindCannotSpendMoreThanAvailableSurplus() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        targetToDaiPool.setPrices(999_000, 999_000);
+
+        uint256 yieldBefore = pegKeeper.accounted_yield_token_units();
+        uint256 targetBefore = pegKeeper.undeployed_backing();
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldBefore);
+        assertEq(pegKeeper.undeployed_backing(), targetBefore);
+    }
+
+    function test_yieldUnwindEnforcesRouteLossCap() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        targetAsset.mint(address(pegKeeper), 100e6);
+        targetToDaiPool.setPrices(989_000, 989_000);
+
+        uint256 yieldBefore = pegKeeper.accounted_yield_token_units();
+        uint256 targetBefore = pegKeeper.undeployed_backing();
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldBefore);
+        assertEq(pegKeeper.undeployed_backing(), targetBefore);
+    }
+
+    function test_yieldUnwindEnforcesAbsolutePerStepLossCap() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        targetAsset.mint(address(pegKeeper), 100e6);
+        targetToDaiPool.setPrices(999_000, 999_000);
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
+    }
+
+    function test_yieldUnwindRequiresHealthyTargetOracle() public {
+        _installPaths(_targetEndingContractionPath());
+        _enableYieldContraction();
+        ExpansionOracle(pegKeeper.target_oracle()).setPrice(pegKeeper.min_target_oracle_price() - 1);
+
+        vm.expectRevert();
+        yieldContraction.unwindYieldToTarget(1_000e18);
     }
 
     function test_yieldContractionRequiresEnabledDirection() public {
@@ -334,25 +504,22 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertEq(trustedRemoved, 2);
     }
 
-    function test_postRouteWholePositionValueControlsProfitAndReward() public {
+    function test_postRedeemWholePositionImpairmentIsChargedToContractionProfit() public {
         _enableYieldContraction();
         daiToCrvUsdPool.setPrices(1_920_000, 1_920_000);
         yieldToken.setPostRedeemAssetValue(900_000);
         uint256 amount = 1_000e18;
 
-        (,,, bool earlyExit) = yieldContraction.previewKeeperBuyback(amount);
-        uint256 trustedBefore = pegKeeper.trusted_backing_value();
-        vm.expectEmit(true, true, true, true, address(pegKeeper));
-        emit IPegKeeperV3.KeeperBuyback(
-            contractionKeeper, address(backingAsset), 0, amount, 1_920e18, 20e18, 6e18, earlyExit
-        );
+        uint256 yieldBefore = pegKeeper.accounted_yield_token_units();
+        uint256 yieldAssetsBefore = yieldToken.convertToAssets(yieldBefore);
         vm.prank(contractionKeeper);
-        (uint256 spent, uint256 received, uint256 reward) = yieldContraction.contractViaAmm(amount);
+        (, uint256 crvUsdReceived,) = yieldContraction.contractViaAmm(amount);
 
-        assertEq(spent, amount);
-        assertEq(received, 1_920e18);
-        assertEq(reward, 6e18);
-        assertEq(trustedBefore - pegKeeper.trusted_backing_value(), 1_900e18);
+        uint256 yieldAfter = pegKeeper.accounted_yield_token_units();
+        uint256 yieldAssetsAfter = yieldToken.convertToAssets(yieldAfter);
+        assertEq(yieldAfter, yieldBefore - amount);
+        assertGt(yieldAssetsBefore - yieldAssetsAfter, amount);
+        assertGt(crvUsdReceived, yieldAssetsBefore - yieldAssetsAfter);
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
@@ -443,7 +610,7 @@ contract PegKeeperV3YieldContractionTest is Test {
 
         assertEq(spent, 1_000e18);
         assertEq(received, 1_010e18);
-        assertEq(pegKeeper.accounted_yield_token_units(), EXPANSION_AMOUNT - 1_000e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldToken.balanceOf(address(pegKeeper)));
     }
 
     function _createYieldBacking() internal {
@@ -461,6 +628,8 @@ contract PegKeeperV3YieldContractionTest is Test {
         daiUsds.setOutputPpm(1_000_000);
         vm.prank(expansionKeeper);
         pegKeeper.deployUndeployedBacking(TARGET_TO_DEPLOY);
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
     }
 
     function _enableYieldContraction() internal {
@@ -500,6 +669,18 @@ contract PegKeeperV3YieldContractionTest is Test {
         path[0] = _vaultStep(ERC4626_REDEEM, address(yieldToken), address(backingAsset));
         path[1] = _converterStep(address(backingAsset), address(dai));
         path[2] = _curveStep(address(daiToCrvUsdPool), address(dai), address(crvUsd), 0, 1, 5);
+    }
+
+    function _targetEndingContractionPath()
+        internal
+        view
+        returns (IPegKeeperV3.RouteStep[] memory path)
+    {
+        path = new IPegKeeperV3.RouteStep[](4);
+        path[0] = _vaultStep(ERC4626_REDEEM, address(yieldToken), address(backingAsset));
+        path[1] = _converterStep(address(backingAsset), address(dai));
+        path[2] = _curveStep(address(targetToDaiPool), address(dai), address(targetAsset), 1, 0, 5);
+        path[3] = _curveStep(address(targetPool), address(targetAsset), address(crvUsd), 0, 1, 5);
     }
 
     function _converterStep(address tokenIn, address tokenOut)

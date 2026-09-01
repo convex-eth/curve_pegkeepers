@@ -56,6 +56,7 @@ interface PriceOracle:
 
 
 interface ERC4626Route:
+    def convertToAssets(_shares: uint256) -> uint256: view
     def previewDeposit(_assets: uint256) -> uint256: view
     def previewRedeem(_shares: uint256) -> uint256: view
 
@@ -65,10 +66,12 @@ interface PegKeeperV3:
     def target_amm() -> address: view
     def target_amm_target_index() -> uint256: view
     def target_amm_crvusd_index() -> uint256: view
+    def target_amm_execution_buffer_bps() -> uint256: view
     def target_asset() -> address: view
     def trusted_backing_value() -> uint256: view
     def keeper_profit_share_bps() -> uint256: view
     def accounted_yield_token_units() -> uint256: view
+    def backing_deployment_paused() -> bool: view
     def contraction_path_length() -> uint256: view
     def contraction_path_step(_index: uint256) -> RouteStep: view
     def deployed_crvusd() -> uint256: view
@@ -99,6 +102,7 @@ MAX_ROUTE_STEPS: constant(uint256) = 16
 STEP_CURVE_SWAP: constant(uint256) = 0
 STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
 STEP_ERC4626_DEPOSIT: constant(uint256) = 2
+STEP_ERC4626_REDEEM: constant(uint256) = 3
 STEP_FRXUSD_MINT: constant(uint256) = 4
 
 
@@ -118,6 +122,9 @@ def previewUndeployedContraction(
         _target_amount,
     )
     target_value: uint256 = self._normalize(_target_amount, keeper.target_asset())
+    assert expected_crv_usd >= target_value * (
+        BPS - keeper.target_amm_execution_buffer_bps()
+    ) / BPS
     trusted_backing_after: uint256 = keeper.trusted_backing_value() - target_value
     gross_profit: uint256 = self._realized_contraction_profit(
         keeper,
@@ -152,6 +159,7 @@ def previewKeeperBuyback(
         if i >= path_length:
             break
         expected_crv_usd = self._preview_route_step(
+            keeper,
             keeper.contraction_path_step(i),
             expected_crv_usd,
         )
@@ -208,6 +216,9 @@ def _preview_expansion(
         convert(keeper.target_amm_target_index(), int128),
         _crv_usd_amount,
     )
+    assert self._normalize(quote.target_out, keeper.target_asset()) >= _crv_usd_amount * (
+        BPS - keeper.target_amm_execution_buffer_bps()
+    ) / BPS
     route: ExpansionRoutePreview = self._preview_expansion_route(
         keeper,
         quote.target_out,
@@ -256,6 +267,8 @@ def _preview_expansion_route(
     _target_price: uint256,
 ) -> ExpansionRoutePreview:
     quote: ExpansionRoutePreview = empty(ExpansionRoutePreview)
+    if _keeper.backing_deployment_paused():
+        return quote
     path_length: uint256 = _keeper.expansion_path_length()
     assert path_length <= MAX_ROUTE_STEPS
     if path_length == 0:
@@ -289,7 +302,9 @@ def _preview_expansion_route(
             if quote.keeper_reward > quote.backing_asset_out:
                 return quote
             amount_out = quote.backing_asset_out - quote.keeper_reward
-        amount_out = self._preview_route_step(step, amount_out)
+        amount_out = self._preview_route_step(_keeper, step, amount_out)
+        if amount_out == 0:
+            return quote
 
     quote.yield_token_out = amount_out
     if quote.yield_token_out == 0:
@@ -330,18 +345,59 @@ def _backing_reward(
 
 @internal
 @view
-def _preview_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
+def _preview_route_step(
+    _keeper: PegKeeperV3,
+    _step: RouteStep,
+    _amount_in: uint256,
+) -> uint256:
+    amount_out: uint256 = 0
     if _step.kind == STEP_CURVE_SWAP:
-        return TwoCoinPool(_step.venue).get_dy(
+        amount_out = TwoCoinPool(_step.venue).get_dy(
             _step.pool_index_in,
             _step.pool_index_out,
             _amount_in,
         )
-    if _step.kind == STEP_DAI_USDS_CONVERTER:
-        return _amount_in
-    if _step.kind == STEP_ERC4626_DEPOSIT or _step.kind == STEP_FRXUSD_MINT:
-        return ERC4626Route(_step.venue).previewDeposit(_amount_in)
-    return ERC4626Route(_step.venue).previewRedeem(_amount_in)
+    elif _step.kind == STEP_DAI_USDS_CONVERTER:
+        amount_out = _amount_in
+    elif _step.kind == STEP_ERC4626_DEPOSIT or _step.kind == STEP_FRXUSD_MINT:
+        amount_out = ERC4626Route(_step.venue).previewDeposit(_amount_in)
+    else:
+        amount_out = ERC4626Route(_step.venue).previewRedeem(_amount_in)
+
+    input_value: uint256 = 0
+    output_value: uint256 = 0
+    accounted_yield: uint256 = _keeper.accounted_yield_token_units()
+    if _step.kind == STEP_ERC4626_DEPOSIT:
+        input_value = self._normalize(_amount_in, _step.token_in)
+        output_value = self._normalize(
+            ERC4626Route(_step.venue).convertToAssets(amount_out),
+            _step.token_in,
+        )
+    elif _step.kind == STEP_ERC4626_REDEEM:
+        input_value = self._normalize(
+            ERC4626Route(_step.venue).convertToAssets(_amount_in),
+            _step.token_out,
+        )
+        output_value = self._normalize(amount_out, _step.token_out)
+    elif _step.token_in == _keeper.yield_token():
+        assert _amount_in <= accounted_yield
+        input_value = self._trusted_yield_value(_keeper, accounted_yield) - self._trusted_yield_value(
+            _keeper,
+            accounted_yield - _amount_in,
+        )
+        output_value = self._normalize(amount_out, _step.token_out)
+    elif _step.token_out == _keeper.yield_token():
+        input_value = self._normalize(_amount_in, _step.token_in)
+        output_value = self._trusted_yield_value(
+            _keeper,
+            accounted_yield + amount_out,
+        ) - self._trusted_yield_value(_keeper, accounted_yield)
+    else:
+        input_value = self._normalize(_amount_in, _step.token_in)
+        output_value = self._normalize(amount_out, _step.token_out)
+    if output_value < input_value * (BPS - _step.execution_buffer_bps) / BPS:
+        return 0
+    return amount_out
 
 
 @internal

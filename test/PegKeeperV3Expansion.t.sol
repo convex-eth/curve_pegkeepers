@@ -346,6 +346,50 @@ contract PegKeeperV3ExpansionTest is Test {
         );
     }
 
+    function test_targetDonationSurplusRemainsTargetOracleGated() public {
+        uint256 donation = 100e6;
+        targetAsset.mint(address(pegKeeper), donation);
+        crvUsd.mint(address(pegKeeper), 100e18);
+        _enableExpansion(0);
+        assertTrue(pegKeeper.backing_deployment_paused());
+
+        targetOracle.setPrice(MIN_ORACLE_PRICE - 1);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.claimSurplus(type(uint256).max);
+
+        targetOracle.setPrice(1e18);
+        vm.prank(keeper);
+        uint256 claimed = pegKeeper.claimSurplus(type(uint256).max);
+
+        assertEq(claimed, 100e18);
+        assertEq(crvUsd.balanceOf(feeReceiver), 100e18);
+        assertEq(pegKeeper.deployed_crvusd(), 100e18);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_yieldDonationSurplusRemainsYieldOracleGated() public {
+        uint256 donation = 100e18;
+        yieldToken.mint(address(pegKeeper), donation);
+        crvUsd.mint(address(pegKeeper), donation);
+        _enableExpansion(0);
+        assertTrue(pegKeeper.backing_deployment_paused());
+
+        yieldOracle.setShouldRevert(true);
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.claimSurplus(type(uint256).max);
+
+        yieldOracle.setShouldRevert(false);
+        vm.prank(keeper);
+        uint256 claimed = pegKeeper.claimSurplus(type(uint256).max);
+
+        assertEq(claimed, donation);
+        assertEq(crvUsd.balanceOf(feeReceiver), donation);
+        assertEq(pegKeeper.deployed_crvusd(), donation);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
     function test_targetFallbackUsesOracleAdjustedMarginalValue() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
         targetOracle.setPrice(MIN_ORACLE_PRICE);
@@ -670,7 +714,7 @@ contract PegKeeperV3ExpansionTest is Test {
         assertEq(crvUsd.allowance(address(pegKeeper), address(pool)), 0);
     }
 
-    function test_expansionExcludesPreExistingTargetDonationFromAccounting() public {
+    function test_expansionUsesActionDeltaButAdoptsPreExistingTargetDonation() public {
         uint256 amount = MIN_EXPANSION;
         uint256 donation = 1_234e6;
         targetAsset.mint(address(pegKeeper), donation);
@@ -686,8 +730,10 @@ contract PegKeeperV3ExpansionTest is Test {
         pegKeeper.expand(amount);
 
         assertEq(targetAsset.balanceOf(address(pegKeeper)), donation + expectedRetained);
-        assertEq(pegKeeper.undeployed_backing(), expectedRetained);
-        assertEq(pegKeeper.trusted_backing_value(), expectedRetained * TARGET_MULTIPLIER);
+        assertEq(pegKeeper.undeployed_backing(), donation + expectedRetained);
+        assertEq(
+            pegKeeper.trusted_backing_value(), (donation + expectedRetained) * TARGET_MULTIPLIER
+        );
     }
 
     function test_expansionRoundsTargetRewardDownToNativeUnits() public {

@@ -17,8 +17,9 @@ interface IERC20Allowance {
     function allowance(address owner, address spender) external view returns (uint256);
 }
 
-/// @notice Current-state mainnet simulation. This script never broadcasts.
+/// @notice Pinned-block mainnet simulation. This script never broadcasts.
 contract PegKeeperV3ReleaseCanary is Script, StdCheats {
+    uint256 internal constant PINNED_MAINNET_BLOCK = 25_868_730;
     address internal constant FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
     address internal constant FACTORY_ADMIN = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -42,11 +43,15 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     uint256 internal constant DAI_USDS_CONVERTER = 1;
     uint256 internal constant ERC4626_DEPOSIT = 2;
     uint256 internal constant ERC4626_REDEEM = 3;
+    uint256 internal constant CURVE_EXECUTION_BUFFER_BPS = 3;
+    uint256 internal constant ERC4626_EXECUTION_BUFFER_BPS = 1;
     uint256 internal constant ALLOCATION = 2_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 100_000e18;
+    uint256 internal constant CONTRACTION_MARKET_TRADE = 11_000_000e18;
 
     function run() external {
         require(block.chainid == 1, "mainnet fork required");
+        require(block.number == PINNED_MAINNET_BLOCK, "pinned mainnet block required");
 
         IPegKeeperV3.RouteStep[] memory expansionPath = _expansionPath();
         IPegKeeperV3.RouteStep[] memory contractionPath = _contractionPath();
@@ -57,6 +62,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
         vm.startPrank(CANARY_ADMIN);
         pegKeeper.set_direction_paused(5, false);
+        pegKeeper.set_direction_paused(1, false);
         pegKeeper.set_direction_paused(0, false);
         vm.stopPrank();
 
@@ -97,6 +103,12 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             IERC20(SUSDS).balanceOf(address(pegKeeper)) == yieldTokenReceived, "yield accounting"
         );
 
+        deal(CRVUSD, CANARY_TRADER, CONTRACTION_MARKET_TRADE);
+        vm.startPrank(CANARY_TRADER);
+        IERC20(CRVUSD).approve(USDT_POOL, CONTRACTION_MARKET_TRADE);
+        IStableSwap2Pool(USDT_POOL).exchange(1, 0, CONTRACTION_MARKET_TRADE, 0);
+        vm.stopPrank();
+
         uint256 contractionQuoteAmount = yieldTokenReceived / 10;
         (uint256 expectedCrvUsd,,,) = pegKeeper.previewKeeperBuyback(contractionQuoteAmount);
         require(expectedCrvUsd > 0, "current contraction route returned zero crvUSD");
@@ -125,7 +137,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
         config.maxDeployedCrvUsd = ALLOCATION;
-        config.targetAmmExecutionBufferBps = 0;
+        config.targetAmmExecutionBufferBps = CURVE_EXECUTION_BUFFER_BPS;
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
 
         IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(deployment.factory);
@@ -152,7 +164,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     function _expansionPath() internal pure returns (IPegKeeperV3.RouteStep[] memory path) {
         path = new IPegKeeperV3.RouteStep[](3);
-        path[0] = _curveStep(THREE_POOL, USDT, DAI, 2, 0, 5);
+        path[0] = _curveStep(THREE_POOL, USDT, DAI, 2, 0, CURVE_EXECUTION_BUFFER_BPS);
         path[1] = _converterStep(DAI, USDS);
         path[2] = _vaultStep(ERC4626_DEPOSIT, USDS, SUSDS);
     }
@@ -161,8 +173,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         path = new IPegKeeperV3.RouteStep[](4);
         path[0] = _vaultStep(ERC4626_REDEEM, SUSDS, USDS);
         path[1] = _converterStep(USDS, DAI);
-        path[2] = _curveStep(THREE_POOL, DAI, USDT, 0, 2, 5);
-        path[3] = _curveStep(USDT_POOL, USDT, CRVUSD, 0, 1, 5);
+        path[2] = _curveStep(THREE_POOL, DAI, USDT, 0, 2, CURVE_EXECUTION_BUFFER_BPS);
+        path[3] = _curveStep(USDT_POOL, USDT, CRVUSD, 0, 1, CURVE_EXECUTION_BUFFER_BPS);
     }
 
     function _converterStep(address tokenIn, address tokenOut)
@@ -193,7 +205,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             tokenOut: tokenOut,
             poolIndexIn: 0,
             poolIndexOut: 0,
-            executionBufferBps: 5
+            executionBufferBps: ERC4626_EXECUTION_BUFFER_BPS
         });
     }
 

@@ -205,15 +205,15 @@ contract PegKeeperV3DirectBuybackTest is Test {
         assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
     }
 
-    function test_donationsDoNotChangeQuoteOrAccounting() public {
+    function test_yieldDonationBecomesBackingWithoutChangingActionQuote() public {
         _enableDirectBuyback();
         uint256 crvUsdAmount = 1_000e18;
         (uint256 expectedOut,,) = pegKeeper.previewBuyback(crvUsdAmount);
-        uint256 accountedBefore = pegKeeper.accounted_yield_token_units();
-        uint256 rawGapBefore = yieldToken.balanceOf(address(pegKeeper)) - accountedBefore;
+        uint256 inventoryBefore = pegKeeper.accounted_yield_token_units();
 
         yieldToken.mint(address(pegKeeper), 777e18);
         crvUsd.mint(address(pegKeeper), 333e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), inventoryBefore + 777e18);
         (uint256 quotedAfterDonation,,) = pegKeeper.previewBuyback(crvUsdAmount);
         assertEq(quotedAfterDonation, expectedOut);
         _fundBuyer(crvUsdAmount);
@@ -221,9 +221,7 @@ contract PegKeeperV3DirectBuybackTest is Test {
         vm.prank(buyer);
         pegKeeper.buyback(crvUsdAmount, expectedOut);
 
-        uint256 rawGapAfter =
-            yieldToken.balanceOf(address(pegKeeper)) - pegKeeper.accounted_yield_token_units();
-        assertEq(rawGapAfter, rawGapBefore + 777e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldToken.balanceOf(address(pegKeeper)));
         assertEq(crvUsd.balanceOf(address(pegKeeper)), 333e18 + crvUsdAmount);
     }
 

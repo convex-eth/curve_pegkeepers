@@ -84,6 +84,8 @@ contract PegKeeperV3YieldContractionForkTest is Test {
         pegKeeper.setPaths(_expansionPath(), 100, _contractionPath());
         vm.prank(keeper);
         pegKeeper.deployUndeployedBacking(TARGET_TO_DEPLOY);
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
 
         deal(CRVUSD, address(this), 45_000_000e18);
         IERC20(CRVUSD).approve(USDT_POOL, 45_000_000e18);

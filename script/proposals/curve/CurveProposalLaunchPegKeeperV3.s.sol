@@ -20,17 +20,19 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 21_298;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 21_330;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 23_169;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 23_201;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0x7fb0edd85971d51b9e069dd4c3d08c538c7b0197da7ebb7f0771cd98d1b45828;
+        0x9576821b9178ac6508667133e09b2306092e01bbb46bb9df18a0a9db84499465;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0x4522452266ef8341fd822456f78b2d8978fe2c89c730090ae7932fe822572324;
+        0x537dede13c944544f4e75539bfa086adbcb898c2e8289fb2da44663dff13d42b;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_DAI_USDS_CONVERTER = 1;
     uint256 public constant ROUTE_ERC4626_DEPOSIT = 2;
     uint256 public constant ROUTE_ERC4626_REDEEM = 3;
+    uint256 public constant CURVE_EXECUTION_BUFFER_BPS = 3;
+    uint256 public constant ERC4626_EXECUTION_BUFFER_BPS = 1;
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 1_000;
@@ -330,10 +332,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             emergencyAdmin: CURVE_EMERGENCY_ADMIN,
             feeReceiver: FEE_SPLITTER,
             maxDeployedCrvUsd: cap,
-            targetAmmExecutionBufferBps: 5,
+            targetAmmExecutionBufferBps: CURVE_EXECUTION_BUFFER_BPS,
             minDownstreamAttemptGas: 1_500_000,
             fallbackSettlementGasReserve: 300_000,
-            expansionMaxRouteLossBps: 100
+            expansionMaxRouteLossBps: 5
         });
     }
 
@@ -387,7 +389,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             tokenOut: tokenOut,
             poolIndexIn: poolIndexIn,
             poolIndexOut: poolIndexOut,
-            executionBufferBps: 5
+            executionBufferBps: CURVE_EXECUTION_BUFFER_BPS
         });
     }
 
@@ -419,7 +421,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             tokenOut: tokenOut,
             poolIndexIn: 0,
             poolIndexOut: 0,
-            executionBufferBps: 5
+            executionBufferBps: ERC4626_EXECUTION_BUFFER_BPS
         });
     }
 

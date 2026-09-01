@@ -88,6 +88,13 @@ interface IPegKeeperV3 {
         uint256 trustedValueReceived,
         uint256 conversionCost
     );
+    event YieldBackingUnwound(
+        address indexed caller,
+        uint256 yieldTokenSpent,
+        uint256 targetReceived,
+        uint256 trustedValueSpent,
+        uint256 conversionCost
+    );
 
     function version() external view returns (string memory);
     function name() external view returns (string memory);
@@ -254,6 +261,9 @@ interface IPegKeeperV3 {
     function deployUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 yieldTokenReceived);
+    function unwindYieldToTarget(uint256 yieldTokenAmount)
+        external
+        returns (uint256 yieldTokenSpent, uint256 targetReceived);
     function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     function execute(address target, uint256 value, bytes calldata data)
         external

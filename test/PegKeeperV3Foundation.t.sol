@@ -298,7 +298,7 @@ contract PegKeeperV3FoundationTest is Test {
         );
     }
 
-    function test_unsolicitedBackingTokensDoNotEnterAccounting() public {
+    function test_configuredTokenDonationsBecomeProtocolBacking() public {
         IPegKeeperV3 pegKeeper = _deploy(
             address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
         );
@@ -306,11 +306,33 @@ contract PegKeeperV3FoundationTest is Test {
         targetAsset.mint(address(pegKeeper), 1_000_000e6);
         yieldToken.mint(address(pegKeeper), 2_000_000e18);
 
-        assertEq(pegKeeper.undeployed_backing(), 0);
-        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(pegKeeper.undeployed_backing(), 1_000_000e6);
+        assertEq(pegKeeper.accounted_yield_token_units(), 2_000_000e18);
         assertEq(pegKeeper.deployed_crvusd(), 0);
-        assertEq(pegKeeper.trusted_backing_value(), 0);
-        assertEq(pegKeeper.protocol_surplus(), 0);
+        assertEq(pegKeeper.trusted_backing_value(), 3_000_000e18);
+        assertEq(pegKeeper.protocol_surplus(), 3_000_000e18);
+    }
+
+    function test_downstreamPauseAuthorizationAllowsDaoUnpauseAndEmergencyPauseOnly() public {
+        IPegKeeperV3 pegKeeper = _deploy(
+            address(targetAmm), address(targetAsset), address(backingAsset), address(yieldToken)
+        );
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, false);
+        assertFalse(pegKeeper.backing_deployment_paused());
+
+        vm.prank(emergencyAdmin);
+        pegKeeper.set_direction_paused(1, true);
+        assertTrue(pegKeeper.backing_deployment_paused());
+
+        vm.prank(emergencyAdmin);
+        vm.expectRevert();
+        pegKeeper.set_direction_paused(1, false);
+
+        vm.prank(makeAddr("keeper"));
+        vm.expectRevert();
+        pegKeeper.set_direction_paused(1, true);
     }
 
     function test_emergencyAdminCanPauseButCannotUnpause() public {

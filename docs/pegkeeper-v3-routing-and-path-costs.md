@@ -12,7 +12,10 @@ yield tokens:  sfrxUSD, sUSDS, sUSDe
 
 The measurements below are snapshots, not permanent limits or executable governance parameters.
 Every deployment still relies on same-transaction quotes, per-step execution minima, exact balance
-deltas, the configured full-route loss limit, and the final post-reward backing invariant.
+deltas, the configured full-route loss limit, and the final post-reward backing invariant. The selected
+launch proposal separately uses `3 bps` total-loss buffers for Curve swaps, `1 bps` for ERC-4626
+deposit/redeem integer rounding, `0 bps` for exact DaiUsds conversion, and `5 bps` for each complete
+downstream deployment or yield-to-target maintenance route.
 
 ## Measurement basis
 

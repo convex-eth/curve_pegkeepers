@@ -40,6 +40,8 @@ interface DaiUsds:
     def usdsToDai(_receiver: address, _amount: uint256): nonpayable
 
 interface ERC4626Route:
+    def asset() -> address: view
+    def convertToAssets(_shares: uint256) -> uint256: view
     def previewDeposit(_assets: uint256) -> uint256: view
     def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
     def previewRedeem(_shares: uint256) -> uint256: view
@@ -160,6 +162,13 @@ event UndeployedBackingDeployed:
     trusted_value_received: uint256
     conversion_cost: uint256
 
+event YieldBackingUnwound:
+    caller: indexed(address)
+    yield_token_spent: uint256
+    target_received: uint256
+    trusted_value_spent: uint256
+    conversion_cost: uint256
+
 
 version: public(constant(String[8])) = "3.0.0"
 name: public(String[88])
@@ -219,8 +228,6 @@ contraction_path: DynArray[RouteStep, 16]
 expansion_max_route_loss_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
-undeployed_backing: public(uint256)
-accounted_yield_token_units: public(uint256)
 last_expansion_at: public(uint256)
 _expansion_pressure: uint256
 last_expansion_pressure_update: public(uint256)
@@ -405,6 +412,30 @@ def yield_token() -> address:
     return self._yield_token.address
 
 
+@internal
+@view
+def _target_inventory() -> uint256:
+    return self._target_asset.balanceOf(self)
+
+
+@internal
+@view
+def _yield_inventory() -> uint256:
+    return self._yield_token.balanceOf(self)
+
+
+@external
+@view
+def undeployed_backing() -> uint256:
+    return self._target_inventory()
+
+
+@external
+@view
+def accounted_yield_token_units() -> uint256:
+    return self._yield_inventory()
+
+
 @external
 @view
 def coins(_index: uint256) -> address:
@@ -523,8 +554,8 @@ def _normalize_backing(_amount: uint256) -> uint256:
 @internal
 @view
 def _trusted_backing_value() -> uint256:
-    target_value: uint256 = self._normalize_target(self.undeployed_backing)
-    backing_amount: uint256 = self._yield_token.convertToAssets(self.accounted_yield_token_units)
+    target_value: uint256 = self._normalize_target(self._target_inventory())
+    backing_amount: uint256 = self._yield_token.convertToAssets(self._yield_inventory())
     return target_value + self._normalize_backing(backing_amount)
 
 
@@ -532,17 +563,19 @@ def _trusted_backing_value() -> uint256:
 @view
 def _oracle_backing_value() -> uint256:
     value: uint256 = 0
-    if self.undeployed_backing > 0:
+    target_inventory: uint256 = self._target_inventory()
+    yield_inventory: uint256 = self._yield_inventory()
+    if target_inventory > 0:
         value = self._oracle_value(
-            self._normalize_target(self.undeployed_backing), self._target_price()
+            self._normalize_target(target_inventory), self._target_price()
         )
-    if self.accounted_yield_token_units > 0:
+    if yield_inventory > 0:
         price: uint256 = 0
         healthy: bool = False
         price, healthy = self._yield_price()
         assert healthy
         value += self._oracle_value(
-            self._trusted_yield_value(self.accounted_yield_token_units), price
+            self._trusted_yield_value(yield_inventory), price
         )
     return value
 
@@ -668,6 +701,11 @@ def _target_amm_swap_exact_in(
     assert output_balance_after >= _output_balance_before
     amount_received: uint256 = output_balance_after - _output_balance_before
     assert amount_received >= minimum_output
+    input_value: uint256 = self._normalize_route_amount(_token_in.address, amount_spent)
+    output_value: uint256 = self._normalize_route_amount(_token_out.address, amount_received)
+    assert output_value >= input_value * (
+        BPS - self.target_amm_execution_buffer_bps
+    ) / BPS
     return amount_spent, amount_received
 
 
@@ -712,8 +750,7 @@ def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
     deployed_before: uint256 = self.deployed_crvusd
     assert _crv_usd_amount <= deployed_before
 
-    accounted_before: uint256 = self.accounted_yield_token_units
-    assert self._yield_token.balanceOf(self) >= accounted_before
+    accounted_before: uint256 = self._yield_inventory()
 
     early_exit: bool = self._is_early_exit()
     exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
@@ -771,7 +808,7 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
     expected_yield_token_out, ignored_exit_profit, early_exit = self._preview_buyback(_crv_usd_amount)
     assert expected_yield_token_out >= _min_yield_token_out
 
-    accounted_before: uint256 = self.accounted_yield_token_units
+    accounted_before: uint256 = self._yield_inventory()
     deployed_before: uint256 = self.deployed_crvusd
     trusted_yield_before: uint256 = self._trusted_yield_value(accounted_before)
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
@@ -815,7 +852,6 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
     assert crv_usd_received - trusted_value_removed >= required_exit_profit
 
     deployed_after: uint256 = deployed_before - crv_usd_received
-    self.accounted_yield_token_units = accounted_after
     self.deployed_crvusd = deployed_after
     assert self._trusted_backing_value() >= deployed_after
 
@@ -957,7 +993,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     downstream_succeeded: bool = False
     downstream_response: Bytes[128] = empty(Bytes[128])
     yield_balance_before_attempt: uint256 = self._yield_token.balanceOf(self)
-    if len(self.expansion_path) > 0:
+    if len(self.expansion_path) > 0 and not self.backing_deployment_paused:
         available_attempt_gas: uint256 = msg.gas
         assert available_attempt_gas >= self.min_downstream_attempt_gas
         forwarded_gas: uint256 = available_attempt_gas - self.fallback_settlement_gas_reserve
@@ -993,10 +1029,8 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         assert yield_token_received > 0
         assert yield_balance_after - yield_balance_before_attempt == yield_token_received
 
-        self.accounted_yield_token_units += yield_token_received
         self.deployed_crvusd = deployed_after
         self.last_expansion_at = block.timestamp
-        assert self._yield_token.balanceOf(self) >= self.accounted_yield_token_units
         assert self._trusted_backing_value() >= self.deployed_crvusd
 
         log Expanded(
@@ -1034,11 +1068,9 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         self._oracle_value(self._normalize_target(target_retained), target_price), crv_usd_sold
     )
 
-    self.undeployed_backing += target_retained
     self.deployed_crvusd = deployed_after
     self.last_expansion_at = block.timestamp
 
-    assert self._target_asset.balanceOf(self) >= self.undeployed_backing
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log Expanded(
@@ -1063,10 +1095,10 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     assert not self.all_execution_paused
     assert not self.undeployed_contraction_paused
     assert _target_amount > 0
-    assert _target_amount <= self.undeployed_backing
+    assert _target_amount <= self._target_inventory()
 
     target_before: uint256 = self._target_asset.balanceOf(self)
-    assert target_before >= self.undeployed_backing
+    trusted_backing_before: uint256 = self._trusted_backing_value()
 
     target_index: int128 = convert(self.target_amm_target_index, int128)
     crv_usd_index: int128 = convert(self.target_amm_crvusd_index, int128)
@@ -1084,8 +1116,9 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     )
     crv_usd_after_swap: uint256 = crv_usd_before + crv_usd_received
 
-    target_value: uint256 = self._normalize_target(target_spent)
-    trusted_backing_after: uint256 = self._trusted_backing_value() - target_value
+    trusted_backing_after: uint256 = self._trusted_backing_value()
+    assert trusted_backing_before >= trusted_backing_after
+    trusted_value_removed: uint256 = trusted_backing_before - trusted_backing_after
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
     early_exit: bool = False
@@ -1093,12 +1126,10 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
         crv_usd_before,
         crv_usd_after_swap,
         crv_usd_received,
-        target_value,
+        trusted_value_removed,
         trusted_backing_after,
     )
 
-    self.undeployed_backing -= target_spent
-    assert self._target_asset.balanceOf(self) >= self.undeployed_backing
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log KeeperBuyback(
@@ -1166,6 +1197,8 @@ def _validate_route_step(_step: RouteStep):
     assert _step.token_in != empty(address)
     assert _step.token_out != empty(address)
     assert _step.execution_buffer_bps <= BPS
+    assert ERC20(_step.token_in).decimals() <= 18
+    assert ERC20(_step.token_out).decimals() <= 18
 
     if _step.kind == STEP_CURVE_SWAP:
         assert _step.pool_index_in >= 0 and _step.pool_index_out >= 0
@@ -1275,11 +1308,22 @@ def contraction_path_step(_index: uint256) -> RouteStep:
 
 
 @internal
+@view
+def _normalize_route_amount(_token: address, _amount: uint256) -> uint256:
+    token_decimals: uint256 = ERC20(_token).decimals()
+    assert token_decimals <= 18
+    return _amount * 10 ** (18 - token_decimals)
+
+
+@internal
 def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
     token_in: ERC20 = ERC20(_step.token_in)
     token_out: ERC20 = ERC20(_step.token_out)
     input_balance_before: uint256 = token_in.balanceOf(self)
     output_balance_before: uint256 = token_out.balanceOf(self)
+    yield_value_before: uint256 = 0
+    if _step.token_in == self._yield_token.address or _step.token_out == self._yield_token.address:
+        yield_value_before = self._trusted_yield_value(self._yield_token.balanceOf(self))
     quoted_output: uint256 = 0
     minimum_output: uint256 = 0
 
@@ -1329,6 +1373,35 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
         assert amount_out == minimum_output
     else:
         assert amount_out >= minimum_output
+
+    input_value: uint256 = 0
+    output_value: uint256 = 0
+    if _step.kind == STEP_ERC4626_DEPOSIT:
+        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
+        output_value = self._normalize_route_amount(
+            _step.token_in,
+            ERC4626Route(_step.venue).convertToAssets(amount_out),
+        )
+    elif _step.kind == STEP_ERC4626_REDEEM:
+        input_value = self._normalize_route_amount(
+            _step.token_out,
+            ERC4626Route(_step.venue).convertToAssets(_amount_in),
+        )
+        output_value = self._normalize_route_amount(_step.token_out, amount_out)
+    elif _step.token_in == self._yield_token.address:
+        yield_value_after: uint256 = self._trusted_yield_value(input_balance_after)
+        assert yield_value_before >= yield_value_after
+        input_value = yield_value_before - yield_value_after
+        output_value = self._normalize_route_amount(_step.token_out, amount_out)
+    elif _step.token_out == self._yield_token.address:
+        yield_value_after: uint256 = self._trusted_yield_value(output_balance_after)
+        assert yield_value_after >= yield_value_before
+        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
+        output_value = yield_value_after - yield_value_before
+    else:
+        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
+        output_value = self._normalize_route_amount(_step.token_out, amount_out)
+    assert output_value >= input_value * (BPS - _step.execution_buffer_bps) / BPS
     return amount_out
 
 
@@ -1367,6 +1440,7 @@ def executeExpansionPath(
     _keeper: address,
 ) -> (uint256, uint256, uint256, uint256):
     assert msg.sender == self
+    assert not self.backing_deployment_paused
     assert len(self.expansion_path) > 0
     yield_price: uint256 = 0
     healthy: bool = False
@@ -1421,7 +1495,7 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
     assert not self.all_execution_paused
     assert not self.backing_deployment_paused
     assert _target_amount > 0
-    assert _target_amount <= self.undeployed_backing
+    assert _target_amount <= self._target_inventory()
     assert len(self.expansion_path) > 0
     yield_price: uint256 = 0
     healthy: bool = False
@@ -1435,7 +1509,6 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 
     target_balance_before: uint256 = self._target_asset.balanceOf(self)
     yield_balance_before: uint256 = self._yield_token.balanceOf(self)
-    assert target_balance_before >= self.undeployed_backing
 
     self._execute_route(_target_amount, True)
 
@@ -1459,10 +1532,6 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
     )
     assert conversion_cost <= available_deployment_surplus
 
-    self.undeployed_backing -= target_spent
-    self.accounted_yield_token_units += yield_token_received
-    assert self._target_asset.balanceOf(self) >= self.undeployed_backing
-    assert self._yield_token.balanceOf(self) >= self.accounted_yield_token_units
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log UndeployedBackingDeployed(
@@ -1477,14 +1546,78 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 
 @external
 @nonreentrant("lock")
+def unwindYieldToTarget(_yield_token_amount: uint256) -> (uint256, uint256):
+    assert not self.all_execution_paused
+    assert self.backing_deployment_paused
+    assert not self.yield_contraction_paused
+    assert _yield_token_amount > 0
+    assert _yield_token_amount <= self._yield_inventory()
+
+    path_length: uint256 = len(self.contraction_path)
+    assert path_length > 1
+    final_step: RouteStep = self.contraction_path[path_length - 1]
+    assert final_step.token_in == self._target_asset.address
+
+    trusted_backing_before: uint256 = self._trusted_backing_value()
+    available_surplus: uint256 = 0
+    if trusted_backing_before > self.deployed_crvusd:
+        available_surplus = trusted_backing_before - self.deployed_crvusd
+
+    yield_balance_before: uint256 = self._yield_token.balanceOf(self)
+    target_balance_before: uint256 = self._target_asset.balanceOf(self)
+    trusted_yield_before: uint256 = self._trusted_yield_value(yield_balance_before)
+
+    route_output: uint256 = _yield_token_amount
+    for i in range(MAX_ROUTE_STEPS):
+        if i >= path_length - 1:
+            break
+        route_output = self._execute_route_step(self.contraction_path[i], route_output)
+
+    yield_balance_after: uint256 = self._yield_token.balanceOf(self)
+    target_balance_after: uint256 = self._target_asset.balanceOf(self)
+    assert yield_balance_before >= yield_balance_after
+    yield_token_spent: uint256 = yield_balance_before - yield_balance_after
+    assert yield_token_spent == _yield_token_amount
+    assert target_balance_after >= target_balance_before
+    target_received: uint256 = target_balance_after - target_balance_before
+    assert target_received == route_output
+    assert target_received > 0
+
+    trusted_yield_after: uint256 = self._trusted_yield_value(yield_balance_after)
+    assert trusted_yield_before >= trusted_yield_after
+    trusted_value_spent: uint256 = trusted_yield_before - trusted_yield_after
+    target_price: uint256 = self._target_price()
+    target_value_received: uint256 = self._oracle_value(
+        self._normalize_target(target_received),
+        target_price,
+    )
+    conversion_cost: uint256 = self._checked_route_conversion_cost(
+        trusted_value_spent,
+        target_value_received,
+    )
+    assert conversion_cost <= available_surplus
+    assert self._trusted_backing_value() >= self.deployed_crvusd
+
+    log YieldBackingUnwound(
+        msg.sender,
+        yield_token_spent,
+        target_received,
+        trusted_value_spent,
+        conversion_cost,
+    )
+    return yield_token_spent, target_received
+
+
+@external
+@nonreentrant("lock")
 def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
     assert _yield_token_amount > 0
-    assert _yield_token_amount <= self.accounted_yield_token_units
+    assert _yield_token_amount <= self._yield_inventory()
     assert len(self.contraction_path) > 0
 
-    accounted_before: uint256 = self.accounted_yield_token_units
+    accounted_before: uint256 = self._yield_inventory()
     trusted_backing_before: uint256 = self._trusted_backing_value()
     trusted_value_before: uint256 = self._trusted_yield_value(accounted_before)
     quoted_value_after: uint256 = self._trusted_yield_value(
@@ -1495,7 +1628,6 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
 
     yield_balance_before: uint256 = self._yield_token.balanceOf(self)
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
-    assert yield_balance_before >= accounted_before
 
     route_output: uint256 = self._execute_route(_yield_token_amount, False)
 
@@ -1527,8 +1659,6 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         trusted_backing_after,
     )
 
-    self.accounted_yield_token_units = accounted_before - yield_token_spent
-    assert self._yield_token.balanceOf(self) >= self.accounted_yield_token_units
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log KeeperBuyback(

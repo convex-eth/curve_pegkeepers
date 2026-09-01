@@ -195,15 +195,20 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         contraction.contractUndeployedBacking(1_000e6);
     }
 
-    function test_contractionCannotSpendUnaccountedTargetDonation() public {
+    function test_targetDonationBecomesContractibleProtocolBacking() public {
         _createUndeployedBacking();
         _enableContraction();
-        uint256 accounted = pegKeeper.undeployed_backing();
-        targetAsset.mint(address(pegKeeper), 1_000e6);
+        uint256 donation = 1_000e6;
+        uint256 inventoryBefore = pegKeeper.undeployed_backing();
+        targetAsset.mint(address(pegKeeper), donation);
+
+        assertEq(pegKeeper.undeployed_backing(), inventoryBefore + donation);
 
         vm.prank(contractionKeeper);
-        vm.expectRevert();
-        contraction.contractUndeployedBacking(accounted + 1);
+        (uint256 spent,,) = contraction.contractUndeployedBacking(donation);
+
+        assertEq(spent, donation);
+        assertEq(pegKeeper.undeployed_backing(), inventoryBefore);
     }
 
     function test_fullContractionCapsExposureReductionAtCurrentDeployedAmount() public {
@@ -247,6 +252,17 @@ contract PegKeeperV3UndeployedContractionTest is Test {
 
     function test_contractionRequiresEnabledDirection() public {
         _createUndeployedBacking();
+
+        vm.prank(contractionKeeper);
+        vm.expectRevert();
+        contraction.contractUndeployedBacking(1_000e6);
+    }
+
+    function test_contractionRequiresGlobalExecution() public {
+        _createUndeployedBacking();
+        _enableContraction();
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(5, true);
 
         vm.prank(contractionKeeper);
         vm.expectRevert();

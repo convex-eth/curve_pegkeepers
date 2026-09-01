@@ -153,24 +153,25 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         pegKeeper.set_expansion_config(0, 1_000_000, 250_000);
         pegKeeper.set_direction_paused(5, false);
         pegKeeper.set_direction_paused(0, false);
+        pegKeeper.set_direction_paused(1, false);
         vm.stopPrank();
     }
 
-    function test_targetOracleHaircutPreservesPreviewExecutionBranchParity() public {
+    function test_absoluteStepLossPreservesPreviewExecutionBranchParity() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
         targetOracle.setPrice(MIN_ORACLE_PRICE);
         targetPool.setPrices(1_020_000, 1_020_000);
         targetToDaiPool.setPrices(989_900, 989_900);
 
         (,,,,, bool expectedToDeploy) = pegKeeper.previewExpansion(MIN_EXPANSION);
-        assertTrue(expectedToDeploy);
+        assertFalse(expectedToDeploy);
 
         vm.prank(keeper);
         (, uint256 retained, uint256 yieldReceived,, bool deployed) =
             pegKeeper.expand(MIN_EXPANSION);
-        assertTrue(deployed);
-        assertEq(retained, 0);
-        assertGt(yieldReceived, 0);
+        assertFalse(deployed);
+        assertGt(retained, 0);
+        assertEq(yieldReceived, 0);
     }
 
     function test_yieldOracleDepegFallsBackToHealthyTarget() public {
@@ -247,6 +248,61 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(keeperReward, expectedReward);
         assertEq(yieldOut, expectedYield);
         assertTrue(expectedToDeploy);
+    }
+
+    function test_oneBasisPointVaultBufferCoversDownwardRoundingBoundary() public {
+        yieldToken.setAssetValueRatio(1e36 - 1, 1e36);
+        IPegKeeperV3.RouteStep[] memory path = _expansionPath();
+        path[2].executionBufferBps = 0;
+        vm.prank(governance);
+        pegKeeper.setPaths(path, 100, _contractionPath());
+        yieldToken.mint(address(pegKeeper), 1);
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        (,,,,, bool zeroBufferDeploys) = pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertFalse(zeroBufferDeploys);
+
+        path[2].executionBufferBps = 1;
+        vm.prank(governance);
+        pegKeeper.setPaths(path, 100, _contractionPath());
+        (,,,, uint256 previewYield, bool oneBpsDeploys) = pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertTrue(oneBpsDeploys);
+
+        vm.prank(keeper);
+        (,, uint256 yieldReceived,, bool deployed) = pegKeeper.expand(MIN_EXPANSION);
+        assertTrue(deployed);
+        assertEq(yieldReceived, previewYield);
+    }
+
+    function test_intermediateVaultDonationsDoNotAffectPreviewOrExecution() public {
+        ExecutionYieldToken intermediateVault = new ExecutionYieldToken(backingAsset);
+        intermediateVault.setAssetValueRatio(1e36 - 1, 1e36);
+        uint256 donation = 77e18;
+        intermediateVault.mint(address(pegKeeper), donation);
+
+        IPegKeeperV3.RouteStep[] memory basePath = _expansionPath();
+        IPegKeeperV3.RouteStep[] memory path = new IPegKeeperV3.RouteStep[](5);
+        path[0] = basePath[0];
+        path[1] = basePath[1];
+        path[2] = _vaultStep(ERC4626_DEPOSIT, address(backingAsset), address(intermediateVault));
+        path[2].executionBufferBps = 1;
+        path[3] = _vaultStep(ERC4626_REDEEM, address(intermediateVault), address(backingAsset));
+        path[3].executionBufferBps = 1;
+        path[4] = basePath[2];
+
+        vm.prank(governance);
+        pegKeeper.setPaths(path, 100, _contractionPath());
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        (,,,, uint256 previewYield, bool expectedToDeploy) =
+            pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertTrue(expectedToDeploy);
+
+        vm.prank(keeper);
+        (,, uint256 yieldReceived,, bool deployed) = pegKeeper.expand(MIN_EXPANSION);
+        assertTrue(deployed);
+        assertEq(yieldReceived, previewYield);
+        assertEq(intermediateVault.balanceOf(address(pegKeeper)), donation);
     }
 
     function test_previewExpansionRejectsGloballyInsolventPostActionBacking() public {
@@ -426,7 +482,7 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         assertEq(pegKeeper.undeployed_backing(), expectedRetained);
     }
 
-    function test_successfulAttemptExcludesAllPreExistingTokenDonations() public {
+    function test_successfulAttemptUsesOnlyActionDeltasButAdoptsConfiguredTokenDonations() public {
         uint256 targetDonation = 123e6;
         uint256 daiDonation = 456e18;
         uint256 backingDonation = 789e18;
@@ -447,12 +503,15 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
 
         assertTrue(deployed);
         assertEq(yieldReceived, expectedYield);
-        assertEq(pegKeeper.accounted_yield_token_units(), expectedYield);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldDonation + expectedYield);
         assertEq(targetAsset.balanceOf(address(pegKeeper)), targetDonation);
         assertEq(dai.balanceOf(address(pegKeeper)), daiDonation);
         assertEq(backingAsset.balanceOf(address(pegKeeper)), backingDonation);
         assertEq(yieldToken.balanceOf(address(pegKeeper)), yieldDonation + expectedYield);
-        assertEq(pegKeeper.trusted_backing_value(), expectedYield);
+        assertEq(
+            pegKeeper.trusted_backing_value(),
+            targetDonation * TARGET_MULTIPLIER + yieldDonation + expectedYield
+        );
     }
 
     function test_newExpansionDoesNotCombineExistingUndeployedBacking() public {
@@ -544,6 +603,17 @@ contract PegKeeperV3DownstreamExpansionTest is Test {
         vm.prank(keeper);
         vm.expectRevert();
         IExpansionPathAttempt(address(pegKeeper)).executeExpansionPath(1, 1, keeper);
+    }
+
+    function test_backingPauseBlocksSelfOnlyExpansionPathReachedThroughDaoExecute() public {
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
+        bytes memory data =
+            abi.encodeCall(IExpansionPathAttempt.executeExpansionPath, (1, 1, keeper));
+
+        vm.prank(governance);
+        vm.expectRevert();
+        pegKeeper.execute(address(pegKeeper), 0, data);
     }
 
     function _fallbackAmounts(uint256 amount)

@@ -159,6 +159,7 @@ contract ExecutionYieldToken is ExpansionToken {
     uint256 public previewSharesPpm = 1_000_000;
     uint256 public executionSharesPpm = 1_000_000;
     uint256 public assetValuePpm = 1_000_000;
+    uint256 public assetValueScale = 1_000_000;
     uint256 public previewRedeemPpm = 1_000_000;
     uint256 public executionRedeemPpm = 1_000_000;
     uint256 public postRedeemAssetValuePpm;
@@ -176,6 +177,12 @@ contract ExecutionYieldToken is ExpansionToken {
         previewSharesPpm = previewPpm;
         executionSharesPpm = executionPpm;
         assetValuePpm = valuePpm;
+        assetValueScale = 1_000_000;
+    }
+
+    function setAssetValueRatio(uint256 numerator, uint256 denominator) external {
+        assetValuePpm = numerator;
+        assetValueScale = denominator;
     }
 
     function setRedeemRates(uint256 previewPpm, uint256 executionPpm) external {
@@ -224,11 +231,11 @@ contract ExecutionYieldToken is ExpansionToken {
     }
 
     function convertToAssets(uint256 shares) external view returns (uint256) {
-        return shares * assetValuePpm / 1_000_000;
+        return shares * assetValuePpm / assetValueScale;
     }
 
     function convertToShares(uint256 assets) external view returns (uint256) {
-        return assets * 1_000_000 / assetValuePpm;
+        return assets * assetValueScale / assetValuePpm;
     }
 }
 
@@ -308,17 +315,86 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         assertEq(backingAsset.allowance(address(pegKeeper), address(yieldToken)), 0);
     }
 
-    function test_preExistingYieldDonationIsNotAccounted() public {
+    function test_preExistingYieldDonationBecomesProtocolBackingWithoutChangingActionDelta()
+        public
+    {
         uint256 donation = 77e18;
         uint256 targetAmount = 100e6;
+        uint256 trustedBefore = pegKeeper.trusted_backing_value();
         yieldToken.mint(address(pegKeeper), donation);
+
+        assertEq(pegKeeper.accounted_yield_token_units(), donation);
+        assertEq(pegKeeper.trusted_backing_value(), trustedBefore + donation);
 
         vm.prank(caller);
         (, uint256 yieldReceived) = deployment.deployUndeployedBacking(targetAmount);
 
         assertEq(yieldReceived, 100e18);
-        assertEq(pegKeeper.accounted_yield_token_units(), 100e18);
+        assertEq(pegKeeper.accounted_yield_token_units(), donation + 100e18);
         assertEq(yieldToken.balanceOf(address(pegKeeper)), donation + 100e18);
+    }
+
+    function test_backingDeploymentPauseMakesPreviewAndExpansionRetainTarget() public {
+        uint256 targetBefore = targetAsset.balanceOf(address(pegKeeper));
+        uint256 yieldBefore = yieldToken.balanceOf(address(pegKeeper));
+        uint256 pathLength = pegKeeper.expansion_path_length();
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
+
+        (,,,, uint256 previewYield, bool previewDeploys) = pegKeeper.previewExpansion(MIN_EXPANSION);
+        assertEq(previewYield, 0);
+        assertFalse(previewDeploys);
+
+        vm.prank(keeper);
+        (, uint256 retained, uint256 yieldReceived,, bool deployedToYield) =
+            pegKeeper.expand(MIN_EXPANSION);
+
+        assertFalse(deployedToYield);
+        assertEq(yieldReceived, 0);
+        assertGt(retained, 0);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), targetBefore + retained);
+        assertEq(yieldToken.balanceOf(address(pegKeeper)), yieldBefore);
+        assertEq(pegKeeper.undeployed_backing(), targetBefore + retained);
+        assertEq(pegKeeper.expansion_path_length(), pathLength);
+    }
+
+    function test_unpauseDeploysRetainedBackingAndRestoresImmediateDownstreamRouting() public {
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, true);
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+
+        vm.prank(keeper);
+        (,,,, bool deployedWhilePaused) = pegKeeper.expand(MIN_EXPANSION);
+        assertFalse(deployedWhilePaused);
+        uint256 retainedInventory = pegKeeper.undeployed_backing();
+        assertGt(retainedInventory, 0);
+
+        vm.prank(governance);
+        pegKeeper.set_direction_paused(1, false);
+        vm.prank(caller);
+        (uint256 targetSpent, uint256 yieldReceived) =
+            pegKeeper.deployUndeployedBacking(retainedInventory);
+
+        assertEq(targetSpent, retainedInventory);
+        assertGt(yieldReceived, 0);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldReceived);
+
+        vm.prank(caller);
+        vm.expectRevert();
+        pegKeeper.deployUndeployedBacking(retainedInventory);
+
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        vm.prank(keeper);
+        (,, uint256 immediateYield,, bool deployedAfterUnpause) = pegKeeper.expand(MIN_EXPANSION);
+
+        assertTrue(deployedAfterUnpause);
+        assertGt(immediateYield, 0);
+        assertEq(pegKeeper.undeployed_backing(), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), yieldReceived + immediateYield);
+        assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
     function test_preExistingIntermediateDonationsAreNotRoutedOrAccounted() public {
@@ -395,15 +471,24 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         assertEq(backingAsset.allowance(address(pegKeeper), address(yieldToken)), 0);
     }
 
-    function test_frxUsdMintStepUsesFeeAdjustedPreview() public {
+    function test_frxUsdMintFeeConsumesAbsoluteStepLossBudget() public {
         frxUsdMinter.setRates(999_000, 999_000);
-        _installFrxUsdMintPath(20, 0);
+        _installFrxUsdMintPath(20, 10);
 
         vm.prank(caller);
         (, uint256 yieldReceived) = deployment.deployUndeployedBacking(100e6);
 
         assertEq(yieldReceived, 99.9e18);
         assertEq(pegKeeper.accounted_yield_token_units(), 99.9e18);
+    }
+
+    function test_frxUsdMintFeeAboveAbsoluteStepLossBudgetReverts() public {
+        frxUsdMinter.setRates(999_000, 999_000);
+        _installFrxUsdMintPath(20, 9);
+
+        vm.prank(caller);
+        vm.expectRevert();
+        deployment.deployUndeployedBacking(100e6);
     }
 
     function test_frxUsdMintStepExcludesPreExistingOutputDonation() public {
@@ -478,15 +563,15 @@ contract PegKeeperV3BackingDeploymentTest is Test {
         deployment.deployUndeployedBacking(100e6);
     }
 
-    function test_rejectsZeroOrUnaccountedTargetAmount() public {
+    function test_rejectsZeroOrOverInventoryTargetAmount() public {
         vm.prank(caller);
         vm.expectRevert();
         deployment.deployUndeployedBacking(0);
 
-        uint256 unaccountedAmount = pegKeeper.undeployed_backing() + 1;
+        uint256 overInventoryAmount = pegKeeper.undeployed_backing() + 1;
         vm.prank(caller);
         vm.expectRevert();
-        deployment.deployUndeployedBacking(unaccountedAmount);
+        deployment.deployUndeployedBacking(overInventoryAmount);
     }
 
     function test_enforcesCurveQuoteRelativeMinimum() public {

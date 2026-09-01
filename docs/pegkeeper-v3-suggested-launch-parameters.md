@@ -34,12 +34,12 @@ Each new V3 is added to `0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251`, used by th
 | `admin()` | Curve Ownership Agent — `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
 | `emergency_admin()` | Curve Emergency Admin — `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
 | `fee_receiver()` | crvUSD FeeSplitter — `0x2dFd89449faff8a532790667baB21cF733C064f2` |
-| `targetAmmExecutionBufferBps` | `5` bps |
+| `targetAmmExecutionBufferBps` | `3` bps |
 | `minDownstreamAttemptGas` | `1,500,000` gas |
 | `fallbackSettlementGasReserve` | `300,000` gas |
-| `expansionMaxRouteLossBps` | `100` bps |
+| `expansionMaxRouteLossBps` | `5` bps |
 
-The three role and receiver values are live factory policy. Existing V3 keepers created by this factory read them dynamically. Capacity and execution defaults are copied into each keeper at deployment.
+The three role and receiver values are live factory policy. Existing V3 keepers created by this factory read them dynamically. Capacity and execution defaults are copied into each keeper at deployment. Every configured Curve swap, including target-AMM legs, uses a `3 bps` total-loss step buffer. ERC-4626 deposit and redeem steps use `1 bps`: each is treated as a typed swap whose measured share side is converted to assets, and `1 bps` is the smallest nonzero allowance representable by the route ABI for downward integer rounding. Canonical DaiUsds conversion remains exact at `0 bps`. Every configured downstream deployment and yield-to-target maintenance route uses the `5 bps` complete-route loss limit. Monetary contraction instead remains subject to its stricter positive normal or early exit-profit floor.
 
 ## Common keeper policy
 
@@ -142,9 +142,9 @@ Each target AMM is fixed to its exact target/crvUSD pair:
 
 | Keeper | Expansion target-AMM leg | Target-AMM indices | Buffer |
 |---|---|---|---:|
-| frxUSD | crvUSD → frxUSD | `1 → 0` | `5` bps |
-| USDC | crvUSD → USDC | `1 → 0` | `5` bps |
-| USDT | crvUSD → USDT | `1 → 0` | `5` bps |
+| frxUSD | crvUSD → frxUSD | `1 → 0` | `3` bps |
+| USDC | crvUSD → USDC | `1 → 0` | `3` bps |
+| USDT | crvUSD → USDT | `1 → 0` | `3` bps |
 
 The target-AMM expansion leg is executed by `expand()` before the configured downstream expansion path. Yield contraction includes the final target → crvUSD target-AMM step in its configured contraction path.
 
@@ -162,7 +162,7 @@ yieldToken   = sfrxUSD
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | frxUSD | sfrxUSD | `1 → 0` | `5` bps |
+| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | frxUSD | sfrxUSD | `1 → 0` | `3` bps |
 
 Complete expansion:
 
@@ -175,8 +175,8 @@ frxUSD → sfrxUSD through the frxUSD/sfrxUSD pool
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | sfrxUSD | frxUSD | `0 → 1` | `5` bps |
-| 2 | `CURVE_SWAP` | frxUSD/crvUSD target AMM | frxUSD | crvUSD | `0 → 1` | `5` bps |
+| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | sfrxUSD | frxUSD | `0 → 1` | `3` bps |
+| 2 | `CURVE_SWAP` | frxUSD/crvUSD target AMM | frxUSD | crvUSD | `0 → 1` | `3` bps |
 
 ## USDC keeper routes
 
@@ -192,9 +192,9 @@ yieldToken   = sUSDS
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | Curve 3pool | USDC | DAI | `1 → 0` | `5` bps |
+| 1 | `CURVE_SWAP` | Curve 3pool | USDC | DAI | `1 → 0` | `3` bps |
 | 2 | `DAI_USDS_CONVERTER` | DaiUsds | DAI | USDS | `0 → 0` | `0` bps |
-| 3 | `ERC4626_DEPOSIT` | sUSDS | USDS | sUSDS | `0 → 0` | `5` bps |
+| 3 | `ERC4626_DEPOSIT` | sUSDS | USDS | sUSDS | `0 → 0` | `1` bps |
 
 Complete expansion:
 
@@ -207,10 +207,10 @@ USDC → DAI → USDS → sUSDS
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `5` bps |
+| 1 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `1` bps |
 | 2 | `DAI_USDS_CONVERTER` | DaiUsds | USDS | DAI | `0 → 0` | `0` bps |
-| 3 | `CURVE_SWAP` | Curve 3pool | DAI | USDC | `0 → 1` | `5` bps |
-| 4 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `5` bps |
+| 3 | `CURVE_SWAP` | Curve 3pool | DAI | USDC | `0 → 1` | `3` bps |
+| 4 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `3` bps |
 
 ## USDT keeper routes
 
@@ -226,9 +226,9 @@ yieldToken   = sUSDS
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | Curve 3pool | USDT | DAI | `2 → 0` | `5` bps |
+| 1 | `CURVE_SWAP` | Curve 3pool | USDT | DAI | `2 → 0` | `3` bps |
 | 2 | `DAI_USDS_CONVERTER` | DaiUsds | DAI | USDS | `0 → 0` | `0` bps |
-| 3 | `ERC4626_DEPOSIT` | sUSDS | USDS | sUSDS | `0 → 0` | `5` bps |
+| 3 | `ERC4626_DEPOSIT` | sUSDS | USDS | sUSDS | `0 → 0` | `1` bps |
 
 Complete expansion:
 
@@ -241,10 +241,10 @@ USDT → DAI → USDS → sUSDS
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `5` bps |
+| 1 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `1` bps |
 | 2 | `DAI_USDS_CONVERTER` | DaiUsds | USDS | DAI | `0 → 0` | `0` bps |
-| 3 | `CURVE_SWAP` | Curve 3pool | DAI | USDT | `0 → 2` | `5` bps |
-| 4 | `CURVE_SWAP` | USDT/crvUSD target AMM | USDT | crvUSD | `0 → 1` | `5` bps |
+| 3 | `CURVE_SWAP` | Curve 3pool | DAI | USDT | `0 → 2` | `3` bps |
+| 4 | `CURVE_SWAP` | USDT/crvUSD target AMM | USDT | crvUSD | `0 → 1` | `3` bps |
 
 ## Suggested activation sequence
 
@@ -288,8 +288,8 @@ Controller debt cap  = 100,000 crvUSD
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_MINT` | Frax USDC minter | USDC | frxUSD | `0 → 0` | `5` bps |
-| 2 | `CURVE_SWAP` | frxUSD/sfrxUSD | frxUSD | sfrxUSD | `1 → 0` | `5` bps |
+| 1 | `FRXUSD_MINT` | Frax USDC minter | USDC | frxUSD | `0 → 0` | `1` bps |
+| 2 | `CURVE_SWAP` | frxUSD/sfrxUSD | frxUSD | sfrxUSD | `1 → 0` | `3` bps |
 
 Complete expansion:
 
@@ -305,11 +305,11 @@ The Frax adapter is mint-only. Contraction must not assume USDC redemption from 
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | sfrxUSD | frxUSD | `0 → 1` | `5` bps |
-| 2 | `CURVE_SWAP` | frxUSD/sUSDS | frxUSD | sUSDS | `0 → 1` | `5` bps |
-| 3 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `5` bps |
+| 1 | `CURVE_SWAP` | frxUSD/sfrxUSD | sfrxUSD | frxUSD | `0 → 1` | `3` bps |
+| 2 | `CURVE_SWAP` | frxUSD/sUSDS | frxUSD | sUSDS | `0 → 1` | `3` bps |
+| 3 | `ERC4626_REDEEM` | sUSDS | sUSDS | USDS | `0 → 0` | `1` bps |
 | 4 | `DAI_USDS_CONVERTER` | DaiUsds | USDS | DAI | `0 → 0` | `0` bps |
-| 5 | `CURVE_SWAP` | Curve 3pool | DAI | USDC | `0 → 1` | `5` bps |
-| 6 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `5` bps |
+| 5 | `CURVE_SWAP` | Curve 3pool | DAI | USDC | `0 → 1` | `3` bps |
+| 6 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `3` bps |
 
 This optional deployment should remain fully paused until the exact mint state, reverse Curve path, route hashes, capacity, and both-direction fork canaries are approved.
