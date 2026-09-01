@@ -1,8 +1,8 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-01T04:13:50Z",
+  "generatedAtUtc": "2026-09-01T06:24:52Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "dc385d8495ea57eca7371f8669c07a3da6826e97",
+  "productionSourceCommit": "62b692314ce5aab561223fc0f3cb75289bb77acf",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -14,21 +14,21 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "8256d06a6041d840640759247b18ad424ebf154cab78953209d801de7f277f84"
+      "sha256": "d05d672f175626894ed1e0db3aea53abb7a84296c939a498699a7428a2de2a72"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 23323,
-      "compilerCreationKeccak256": "0xbf43875f53153e9c7d4145b483289a4b1a30f1e1c07d5d6e5d6ced4395fb5784",
-      "semanticCoreRuntimeBytes": 23169,
-      "semanticCoreRuntimeKeccak256": "0x9576821b9178ac6508667133e09b2306092e01bbb46bb9df18a0a9db84499465",
+      "compilerCreationBytes": 23355,
+      "compilerCreationKeccak256": "0x03e9211658c46a775ff647707faa8f72a8792ea46594e37cfbb0ce25926cd787",
+      "semanticCoreRuntimeBytes": 23201,
+      "semanticCoreRuntimeKeccak256": "0x55a15662a255b85d29d547da33d56ae4544552371a5887598ac1429fccda3bdd",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 23355,
+      "fullInitCodeBytes": 23387,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 25797,
-      "deployedRuntimeBytes": 23201,
+      "fullInitCodeMarginBytes": 25765,
+      "deployedRuntimeBytes": 23233,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 1375,
+      "deployedRuntimeMarginBytes": 1343,
       "abiFunctions": 77,
       "abiEvents": 13
     },
@@ -56,21 +56,21 @@
   "deploymentFactory": {
     "source": {
       "path": "src/vyper/PegKeeperV3Factory.vy",
-      "sha256": "ef605684752536ba479f76dd9ccdf508d1d8bc9c119f2ffc4bc94b6608fd21a7"
+      "sha256": "efe5e37ed12d291f3a1e1e7ecb991e86f42f0f5f12d419de37e54cc3f1705c78"
     },
     "artifact": {
       "path": "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
-      "compilerCreationBytes": 5024,
-      "compilerCreationKeccak256": "0x33357d46a4694778386d397eef30f1af6d202d08ab9b48d04538488d5f93a535",
-      "runtimeTemplateBytes": 3848,
-      "runtimeTemplateKeccak256": "0x9ef8e2c0545e1621ee2865ceb80282dcf8c77a2a178d1a9f621aeabadd6e155c",
+      "compilerCreationBytes": 5056,
+      "compilerCreationKeccak256": "0x9ae1af028c299794d776e5727517a4e7d8125b7c5d424babd3b182a6a4b2bba3",
+      "runtimeTemplateBytes": 3864,
+      "runtimeTemplateKeccak256": "0x4a2d078bc1a15b17f6a54f05e2874306d005aa3e102592675584bd82db5ec249",
       "constructorArgsBytes": 352,
-      "fullInitCodeBytes": 5376,
+      "fullInitCodeBytes": 5408,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 43776,
-      "deployedRuntimeBytes": 3912,
+      "fullInitCodeMarginBytes": 43744,
+      "deployedRuntimeBytes": 3928,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 20664,
+      "deployedRuntimeMarginBytes": 20648,
       "abiFunctions": 16,
       "abiEvents": 4
     },
@@ -247,7 +247,7 @@
     }
   },
   "verification": {
-    "testsPassed": 269,
+    "testsPassed": 278,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",

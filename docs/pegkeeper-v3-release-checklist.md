@@ -4,7 +4,7 @@ This checklist is for an **undeployed, non-upgradeable EIP-1167 release candidat
 
 ## 0. Frozen release state
 
-- [x] Production source commit: `dc385d8495ea57eca7371f8669c07a3da6826e97`.
+- [x] Production source commit: `62b692314ce5aab561223fc0f3cb75289bb77acf`.
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
 - [x] Vyper is pinned to `.venv/bin/vyper` version `0.3.10+commit.9136169` with `--optimize codesize`.
 - [x] Foundry uses Solidity `0.8.35` and EVM `shanghai`.
@@ -25,13 +25,13 @@ Canonical files:
 
 ### PegKeeper implementation
 
-- [x] Semantic-core runtime: `23,169` bytes.
-- [x] Semantic-core hash: `0x9576821b9178ac6508667133e09b2306092e01bbb46bb9df18a0a9db84499465`.
-- [x] Specialized deployed runtime: `23,201` bytes.
+- [x] Semantic-core runtime: `23,201` bytes.
+- [x] Semantic-core hash: `0x55a15662a255b85d29d547da33d56ae4544552371a5887598ac1429fccda3bdd`.
+- [x] Specialized deployed runtime: `23,233` bytes.
 - [x] Refactor regression budget: at most `24,000` bytes.
-- [x] EIP-170 headroom: `1,375` bytes.
-- [x] Full implementation initcode: `23,355` bytes.
-- [x] EIP-3860 headroom: `25,797` bytes.
+- [x] EIP-170 headroom: `1,343` bytes.
+- [x] Full implementation initcode: `23,387` bytes.
+- [x] EIP-3860 headroom: `25,765` bytes.
 - [x] Operational initialization is locked on the standalone implementation.
 - [x] Keeper ABI is exactly `77 functions / 13 events` and matches `IPegKeeperV3`.
 
@@ -48,8 +48,8 @@ Canonical files:
 
 ### Deployment factory
 
-- [x] Specialized runtime: `3,912` bytes.
-- [x] Full initcode: `5,376` bytes.
+- [x] Specialized runtime: `3,928` bytes.
+- [x] Full initcode: `5,408` bytes.
 - [x] Factory ABI is exactly `16 functions / 4 events` and matches `IPegKeeperV3Factory`.
 - [x] Factory implementation address is immutable after construction.
 - [x] No implementation setter or update event exists.
@@ -190,7 +190,7 @@ Launch rates:
 
 ## 5. Reproducible release gates
 
-All checked gates were run against production source commit `dc385d8495ea57eca7371f8669c07a3da6826e97`.
+All checked gates were run against production source commit `62b692314ce5aab561223fc0f3cb75289bb77acf`.
 
 ```bash
 forge fmt --check
@@ -231,7 +231,9 @@ Recorded outcomes:
 - [x] `git diff --check`: pass.
 - [x] `forge lint`: pass.
 - [x] `forge build --sizes`: pass.
-- [x] Complete suite: `269 passed, 0 failed, 0 skipped`.
+- [x] Complete suite: `278 passed, 0 failed, 0 skipped`.
+- [x] Stateful invariant campaign: `6` invariants at `256` runs × `500` calls, including a required successful path for every economic handler action.
+- [x] Target-AMM callback reentrancy regression: nested expansion rejected while the outer expansion completes.
 - [x] PegKeeperV3 fork tests: pass.
 - [x] Curve adapter unit/deployment/proposal coverage: pass.
 - [x] Chainlink adapter unit/deployment/live-proxy fork coverage: pass.
