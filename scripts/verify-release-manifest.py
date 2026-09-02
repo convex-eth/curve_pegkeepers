@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import tomllib
 from datetime import datetime
@@ -13,6 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
+CHECKLIST_PATH = ROOT / "docs/pegkeeper-v3-release-checklist.md"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
 REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 24_000
@@ -197,6 +199,7 @@ def main() -> None:
             "generatedAtUtc",
             "repository",
             "productionSourceCommit",
+            "productionSourceDiffSha256",
             "toolchain",
             "implementation",
             "previewModule",
@@ -222,24 +225,78 @@ def main() -> None:
     ).stdout.strip()
     fail("origin remote", remote, manifest["repository"])
     source_commit = manifest["productionSourceCommit"]
+    source_diff_sha256 = manifest["productionSourceDiffSha256"]
+    if re.fullmatch(r"[0-9a-f]{64}", source_diff_sha256) is None:
+        raise SystemExit(f"invalid production source diff SHA-256: {source_diff_sha256}")
     subprocess.run(
         ["git", "merge-base", "--is-ancestor", source_commit, "HEAD"],
         check=True,
         cwd=ROOT,
     )
-    expected_evidence_drift = [
-        "deployments/mainnet/PegKeeperV3-release.json",
-        "docs/pegkeeper-v3-release-checklist.md",
-        "scripts/verify-release-manifest.py",
-    ]
-    actual_drift = subprocess.run(
-        ["git", "diff", "--name-only", source_commit, "--"],
+    committed_source_diff = subprocess.run(
+        ["git", "diff", "--binary", f"{source_commit}^", source_commit],
         check=True,
         cwd=ROOT,
         capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    fail("tracked drift from production source commit", actual_drift, expected_evidence_drift)
+    ).stdout
+    fail(
+        "production source diff sha256",
+        hashlib.sha256(committed_source_diff).hexdigest(),
+        source_diff_sha256,
+    )
+    required_evidence_drift = {
+        "deployments/mainnet/PegKeeperV3-release.json",
+        "docs/pegkeeper-v3-release-checklist.md",
+    }
+    allowed_evidence_drift = required_evidence_drift | {
+        "scripts/verify-release-manifest.py",
+    }
+    actual_drift = set(
+        subprocess.run(
+            ["git", "diff", "--name-only", source_commit, "--"],
+            check=True,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    )
+    if not required_evidence_drift.issubset(actual_drift) or not actual_drift.issubset(
+        allowed_evidence_drift
+    ):
+        raise SystemExit(
+            "tracked drift from production source commit: "
+            f"required {sorted(required_evidence_drift)}, "
+            f"allowed {sorted(allowed_evidence_drift)}, got {sorted(actual_drift)}"
+        )
+
+    checklist = CHECKLIST_PATH.read_text()
+    checklist_source_commits = re.findall(
+        r"^- \[x\] Production source commit: `([0-9a-f]{40})`\.$",
+        checklist,
+        flags=re.MULTILINE,
+    )
+    fail("checklist production source commit", checklist_source_commits, [source_commit])
+    checklist_source_diffs = re.findall(
+        r"^- \[x\] Exact pre-commit staged source diff SHA-256: `([0-9a-f]{64})`\.$",
+        checklist,
+        flags=re.MULTILINE,
+    )
+    fail("checklist production source diff", checklist_source_diffs, [source_diff_sha256])
+    checklist_source_hashes = re.findall(
+        r"^- \[x\] Source SHA-256: `([0-9a-f]{64})`\.$",
+        checklist,
+        flags=re.MULTILINE,
+    )
+    expected_checklist_source_hashes = [
+        manifest["implementation"]["source"]["sha256"],
+        manifest["previewModule"]["source"]["sha256"],
+        manifest["deploymentFactory"]["source"]["sha256"],
+    ]
+    fail(
+        "checklist source hashes",
+        checklist_source_hashes,
+        expected_checklist_source_hashes,
+    )
     generated_at = datetime.fromisoformat(manifest["generatedAtUtc"].replace("Z", "+00:00"))
     source_commit_time = datetime.fromisoformat(
         subprocess.run(
@@ -844,6 +901,7 @@ def main() -> None:
             "independentSelectedChainlinkSemanticReview",
             "independentSelectedChainlinkDocumentationReview",
             "manifestMutationTests",
+            "independentCurrentNatSpecReview",
             "independentCurrentSourceSecurityReview",
             "independentCurrentLaunchPolicyReview",
             "independentCurrentSourcePackageReview",
@@ -875,6 +933,7 @@ def main() -> None:
         "independentSelectedChainlinkSemanticReview",
         "independentSelectedChainlinkDocumentationReview",
         "manifestMutationTests",
+        "independentCurrentNatSpecReview",
         "independentCurrentSourceSecurityReview",
         "independentCurrentLaunchPolicyReview",
         "independentCurrentSourcePackageReview",

@@ -5,8 +5,8 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 ## 0. Frozen source
 
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
-- [x] Production source commit: `202181a49450a07747ef5eaf1eb7914eb985a8d5`.
-- [x] Exact pre-commit staged source diff SHA-256: `776122efb715ce509fbb54326228f79ea17f379a57bbdcca5f87a687236fd014`.
+- [x] Production source commit: `24a18f89c13bc912b361f6db92327150e088efa8`.
+- [x] Exact pre-commit staged source diff SHA-256: `5a3521f759b4ddbb8f3ad334b1bb7310202dbf36e34b1f790f514034026d26e8`.
 - [x] Source commit is pushed to `origin/main`.
 - [x] Evidence is regenerated from the exact production source commit.
 - [x] Evidence drift is restricted to:
@@ -31,7 +31,7 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 ### PegKeeperV3 implementation
 
-- [x] Source SHA-256: `73ddb6880bff69d6ed89a1ef62681166a603cd423cd123a05e8533d75302b703`.
+- [x] Source SHA-256: `2e69fdbb01e8e0916adb23b6f7309bf1af1544483ed96217011c7d8d61e94dda`.
 - [x] Compiler creation code: `23,915` bytes.
 - [x] Compiler creation keccak: `0x8797ee4ac0b2e1fb4050314a7c3d5594223122a39114ae49a728ed023d9cc6c7`.
 - [x] Full initcode with constructor argument: `23,947` bytes; EIP-3860 margin `25,205` bytes.
@@ -43,7 +43,7 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 ### Preview module
 
-- [x] Source SHA-256: `f4273aefd5427a21f12b9a82a2cd5b5c6ff3c6c70e01976a07ba9c884e2c40aa`.
+- [x] Source SHA-256: `b569039101a69843e14c261802d938c819d22478dffd28046c85264aecf733e0`.
 - [x] Runtime: `8,185` bytes; EIP-170 margin `16,391` bytes.
 - [x] Runtime keccak: `0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c`.
 - [x] ABI parity: `3` functions and no events.
@@ -51,7 +51,7 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 ### Factory
 
-- [x] Source SHA-256: `72a3ec80dd49f2e64d8474287cc997fc31dc1cacff6144a2174204fbfb238dc5`.
+- [x] Source SHA-256: `2f3cafdf075556fc3c294c8a133c805c20205734f5d593c48c63bba939c53868`.
 - [x] Compiler creation code: `5,113` bytes.
 - [x] Full initcode with constructor arguments: `5,465` bytes.
 - [x] Deployed runtime with immutables: `3,985` bytes.
@@ -119,7 +119,9 @@ All keepers use plain frxUSD as final token and start fully paused.
   - contraction quote output: `9999492700894871027318` crvUSD;
   - expansion path hash: `0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d`;
   - contraction path hash: `0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1`.
-- [x] Independent bounded reviews found no protocol-level source blocker and no launch-policy/proposal-wiring blocker. Both source-package reviewers correctly blocked the stale committed manifest/checklist; this regenerated evidence package resolves that finding and is subject to the final exact staged-diff audit.
+- [x] Independent review confirmed the NatSpec source change is documentation-only, ABI-safe, accurate, and has no blocker.
+- [x] Independent bounded reviews found no protocol-level source blocker and no launch-policy/proposal-wiring blocker.
+- [x] This regenerated evidence package is subject to a final exact staged-diff audit.
 - [x] Manifest mutation tests rejected top-level schema drift, test-count drift, endpoint-mode drift, Frax redemption-buffer drift, adapter-count drift, deployed-state drift, canary-hash drift, and activation-blocker drift; byte-exact restoration passed.
 
 ## 7. Deployment package
@@ -152,7 +154,7 @@ The pinned-block custodian inventory observation is not an activation guarantee.
 
 ## 9. Operator sequence after explicit authorization
 
-1. Check out `202181a49450a07747ef5eaf1eb7914eb985a8d5` and verify the evidence commit changes only the three evidence files.
+1. Check out `24a18f89c13bc912b361f6db92327150e088efa8` and verify the evidence commit changes only the three evidence files.
 2. Run `make check` and the current-block no-broadcast canary.
 3. Run the unified deployer without broadcast from the intended deployment sender; inspect and remove the temporary deployment JSON if the run is rejected.
 4. Reconfirm all hardcoded addresses, code hashes, nonces, oracle health, Frax capacity, and policy/cap values.

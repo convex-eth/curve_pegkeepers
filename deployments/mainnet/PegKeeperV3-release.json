@@ -1,8 +1,9 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-01T11:11:27Z",
+  "generatedAtUtc": "2026-09-02T00:20:35Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "202181a49450a07747ef5eaf1eb7914eb985a8d5",
+  "productionSourceCommit": "24a18f89c13bc912b361f6db92327150e088efa8",
+  "productionSourceDiffSha256": "5a3521f759b4ddbb8f3ad334b1bb7310202dbf36e34b1f790f514034026d26e8",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -14,7 +15,7 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "73ddb6880bff69d6ed89a1ef62681166a603cd423cd123a05e8533d75302b703"
+      "sha256": "2e69fdbb01e8e0916adb23b6f7309bf1af1544483ed96217011c7d8d61e94dda"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
@@ -37,7 +38,7 @@
   "previewModule": {
     "source": {
       "path": "src/vyper/PegKeeperV3PreviewModule.vy",
-      "sha256": "f4273aefd5427a21f12b9a82a2cd5b5c6ff3c6c70e01976a07ba9c884e2c40aa"
+      "sha256": "b569039101a69843e14c261802d938c819d22478dffd28046c85264aecf733e0"
     },
     "artifact": {
       "path": "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
@@ -56,7 +57,7 @@
   "deploymentFactory": {
     "source": {
       "path": "src/vyper/PegKeeperV3Factory.vy",
-      "sha256": "72a3ec80dd49f2e64d8474287cc997fc31dc1cacff6144a2174204fbfb238dc5"
+      "sha256": "2f3cafdf075556fc3c294c8a133c805c20205734f5d593c48c63bba939c53868"
     },
     "artifact": {
       "path": "out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json",
@@ -107,7 +108,7 @@
     "curve": {
       "source": {
         "path": "src/vyper/CurveStablecoinOracle.vy",
-        "sha256": "f0f0e1faae6e9072532bdbedff94b0625dd77ac559d918acaa56da4e671a741b"
+        "sha256": "ddec7af34b207c68e1f205fe28d952fa768e916294af988324a44499d0896647"
       },
       "artifact": {
         "path": "out/CurveStablecoinOracle.vy/CurveStablecoinOracle.json",
@@ -139,7 +140,7 @@
     "chainlink": {
       "source": {
         "path": "src/vyper/ChainlinkStablecoinOracle.vy",
-        "sha256": "0196276671b4eef6bc3a922d12054869851081626704a07eeb3c6ab2affa0b7e"
+        "sha256": "8def8605295e518b3556212a2732f5f74487ec6e8f21ed81c720def3beef4eba"
       },
       "artifact": {
         "path": "out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json",
@@ -280,6 +281,7 @@
     "independentSelectedChainlinkSemanticReview": "pass",
     "independentSelectedChainlinkDocumentationReview": "pass",
     "manifestMutationTests": "pass",
+    "independentCurrentNatSpecReview": "pass",
     "independentCurrentSourceSecurityReview": "pass",
     "independentCurrentLaunchPolicyReview": "pass",
     "independentCurrentSourcePackageReview": "pass"
