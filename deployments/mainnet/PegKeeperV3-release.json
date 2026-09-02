@@ -1,9 +1,9 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-02T00:20:35Z",
+  "generatedAtUtc": "2026-09-02T06:02:05Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "24a18f89c13bc912b361f6db92327150e088efa8",
-  "productionSourceDiffSha256": "5a3521f759b4ddbb8f3ad334b1bb7310202dbf36e34b1f790f514034026d26e8",
+  "productionSourceCommit": "e80d6c10fece37bca3fdb2461071089ed6f69877",
+  "productionSourceDiffSha256": "7eb9c9cbc520c748a241d3e7624ba55334c10a54ffdc1dd106804178451fb964",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -15,21 +15,21 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "2e69fdbb01e8e0916adb23b6f7309bf1af1544483ed96217011c7d8d61e94dda"
+      "sha256": "37d33d5c9e9d58d884aa02004be92d58db60ad42243d63c1ecf5da6260ffa437"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 23915,
-      "compilerCreationKeccak256": "0x8797ee4ac0b2e1fb4050314a7c3d5594223122a39114ae49a728ed023d9cc6c7",
+      "compilerCreationBytes": 24423,
+      "compilerCreationKeccak256": "0x5cfab6e428df9226906745f853fa8cd2ae50db12f6f9a1f39c80dd93091d9e14",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 23947,
+      "fullInitCodeBytes": 24455,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 25205,
-      "semanticCoreRuntimeBytes": 23761,
-      "semanticCoreRuntimeKeccak256": "0x83d97e75622beff4a7f7bad21cb00cd2f9685b4e57eae25988caeb3834e62662",
-      "deployedRuntimeBytes": 23793,
+      "fullInitCodeMarginBytes": 24697,
+      "semanticCoreRuntimeBytes": 24269,
+      "semanticCoreRuntimeKeccak256": "0x04fa8470ec0c15b6b2aa86a587de9371d68f33c04cabb12b62b0a02ef2550dc9",
+      "deployedRuntimeBytes": 24301,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 783,
+      "deployedRuntimeMarginBytes": 275,
       "abiFunctions": 80,
       "abiEvents": 13
     },
@@ -38,16 +38,16 @@
   "previewModule": {
     "source": {
       "path": "src/vyper/PegKeeperV3PreviewModule.vy",
-      "sha256": "b569039101a69843e14c261802d938c819d22478dffd28046c85264aecf733e0"
+      "sha256": "be3f2ad2c60aed47810c888492d7f5844484058316186d7b8f65f311eda78151"
     },
     "artifact": {
       "path": "out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json",
-      "creationBytes": 8222,
-      "creationKeccak256": "0x2a93f925fe3bc5c7ea92843d0a7561303bac320d77cbd22352596860b2eddfd2",
-      "runtimeBytes": 8185,
-      "runtimeKeccak256": "0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c",
+      "creationBytes": 8286,
+      "creationKeccak256": "0xba23dabdbd962c1bbb85138af23be90501f5748d31640d1cd9563db537a11176",
+      "runtimeBytes": 8249,
+      "runtimeKeccak256": "0xc20424f3497c62e9b297e777379dd16a820f6b0960a8defe7bc1b76de01b82ce",
       "eip170LimitBytes": 24576,
-      "runtimeMarginBytes": 16391,
+      "runtimeMarginBytes": 16327,
       "abiFunctions": 3,
       "abiEvents": 0
     },
@@ -210,7 +210,7 @@
         "finalToken": "frxUSD",
         "endpointMode": "vanilla_erc20",
         "expansionPath": "FRXUSD_MINT",
-        "contractionPath": "FRXUSD_REDEEM -> CURVE_USDC_TO_CRVUSD",
+        "contractionPath": "FRAXNET_REDEEM -> CURVE_USDC_TO_CRVUSD",
         "maxDeployedCrvUsd": "2500000000000000000000000"
       },
       {
@@ -220,7 +220,7 @@
         "finalToken": "frxUSD",
         "endpointMode": "vanilla_erc20",
         "expansionPath": "CURVE_USDT_TO_USDC -> FRXUSD_MINT",
-        "contractionPath": "FRXUSD_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
+        "contractionPath": "FRAXNET_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
         "maxDeployedCrvUsd": "5000000000000000000000000"
       }
     ],
@@ -241,7 +241,6 @@
       "erc4626DepositBps": 1,
       "erc4626RedeemBps": 1,
       "frxUsdMintBps": 1,
-      "frxUsdRedeemBps": 1,
       "daiUsdsConverterBps": 0,
       "downstreamAndYieldToTargetRouteLossBps": 5,
       "monetaryContractionRouteLossAllowanceBps": null,
@@ -253,11 +252,12 @@
       "finalEndpointModesSupported": [
         "vanilla_erc20",
         "erc4626"
-      ]
+      ],
+      "fraxNetRedeemBps": 2
     }
   },
   "verification": {
-    "testsPassed": 289,
+    "testsPassed": 294,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
@@ -293,10 +293,14 @@
     "simulatedCrvUsdSold": "100000000000000000000000",
     "simulatedFrxUsdReceived": "100016620117244135933000",
     "simulatedContractionQuoteFrxUsd": "10001662011724413593300",
-    "simulatedContractionQuoteCrvUsd": "9999492700894871027318",
+    "simulatedContractionQuoteCrvUsd": "10031479301488711916782",
     "expansionPathHash": "0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d",
-    "contractionPathHash": "0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1",
-    "broadcast": false
+    "contractionPathHash": "0x1602a97a9de217a466169f46195f2ac971329883350aea19826b7a2a97c2ef9c",
+    "broadcast": false,
+    "simulatedContractionReceivedCrvUsd": "10030476151557962947554",
+    "rwaRouteExercised": true,
+    "fraxNetAccountCloneRequiredForShanghai": true,
+    "superstateTokenHarnessRequiredForShanghai": true
   },
   "operatorInputs": {
     "factoryOwner": "0x40907540D8A6c65c637785e8f8B742ae6b0b9968",
@@ -316,7 +320,9 @@
       "factory",
       "usdcTargetOracle",
       "usdtTargetOracle",
-      "frxUsdUsdOracle"
+      "frxUsdUsdOracle",
+      "usdcFraxNetDeposit",
+      "usdtFraxNetDeposit"
     ],
     "previewModuleAddress": null,
     "implementationAddress": null,
@@ -326,12 +332,15 @@
     "transactionHashes": [],
     "verified": false,
     "registered": false,
-    "activated": false
+    "activated": false,
+    "fraxNetFactory": "0xA3D62f83C433e2A56Af392E08a705A52DEd63696",
+    "fraxNetAccountAddresses": []
   },
   "activationBlockers": [
     "Governance must independently reconfirm the canonical frxUSD/USD Chainlink proxy, 8-decimal metadata, live positive completed round, and provisional 93,600-second maxDelay.",
     "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
-    "Before enabling a Frax-redemption route, governance must reconfirm the custodian endpoints, fees, limits, authorization model, preview behavior, and live USDC inventory, then execute an inventory-bounded fork canary.",
+    "Before enabling a FraxNet redemption route, governance must reconfirm the mint custodian, FraxNet factory/account identities, account recipients, beacon implementation, pause state, configured RWA redeemer, fees, limits, and authorization.",
+    "Governance must measure direct atomic USDC and atomically reachable RWA-route USDC separately, exclude raw downstream balances and delayed settlement, and execute bounded canaries through both redemption branches.",
     "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
     "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
     "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none."

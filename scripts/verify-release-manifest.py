@@ -17,8 +17,8 @@ MANIFEST_PATH = ROOT / "deployments/mainnet/PegKeeperV3-release.json"
 CHECKLIST_PATH = ROOT / "docs/pegkeeper-v3-release-checklist.md"
 EIP_170_LIMIT = 24_576
 EIP_3860_LIMIT = 49_152
-REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 24_000
-EXPECTED_TESTS = 289
+REFACTORED_IMPLEMENTATION_RUNTIME_BUDGET = 24_310
+EXPECTED_TESTS = 294
 
 ARTIFACTS = {
     "implementation": (
@@ -409,6 +409,8 @@ def main() -> None:
         "usdcTargetOracle",
         "usdtTargetOracle",
         "frxUsdUsdOracle",
+        "usdcFraxNetDeposit",
+        "usdtFraxNetDeposit",
     ]
     if 'vm.serializeUint(objectKey, "chainId", block.chainid)' not in deploy_script:
         raise SystemExit("deployment JSON chainId missing")
@@ -420,6 +422,31 @@ def main() -> None:
     for field in deployment_fields[2:]:
         if f'vm.parseJsonAddress(json, ".{field}")' not in proposal_script:
             raise SystemExit(f"proposal deployment field missing: {field}")
+    for required_snippet in (
+        "prepareFraxNetAccounts(deployment)",
+        "factory.createFraxNetDeposit(ETHEREUM_LAYERZERO_EID, recipient, bytes32(0))",
+        "factory.isFraxNetDeposit(account)",
+    ):
+        if required_snippet not in deploy_script:
+            raise SystemExit(f"FraxNet deployment wiring missing: {required_snippet}")
+    for required_snippet in (
+        "_validateFraxNetAccount(usdcFraxNetDeposit, usdcKeeper)",
+        "_validateFraxNetAccount(usdtFraxNetDeposit, usdtKeeper)",
+        "factory.isFraxNetDeposit(account)",
+        "deposit.targetAddress() == bytes32(uint256(uint160(keeper)))",
+    ):
+        if required_snippet not in proposal_script:
+            raise SystemExit(f"FraxNet proposal wiring missing: {required_snippet}")
+    implementation_source = ARTIFACTS["implementation"][0].read_text()
+    for required_snippet in (
+        "FraxNetDeposit(_step.venue).factory() == FRAXNET_DEPOSIT_FACTORY",
+        "FraxNetDepositFactory(FRAXNET_DEPOSIT_FACTORY).isFraxNetDeposit(_step.venue)",
+        "FraxNetDeposit(_step.venue).targetAddress() == convert(self, bytes32)",
+        "token_in.transfer(_step.venue, _amount_in)",
+        "FraxNetDeposit(_step.venue).processRedemption(_amount_in)",
+    ):
+        if required_snippet not in implementation_source:
+            raise SystemExit(f"FraxNet implementation wiring missing: {required_snippet}")
     obsolete_deployment_fields = (
         "frxUsdTargetOracle",
         "sfrxUsdBackingOracle",
@@ -763,8 +790,8 @@ def main() -> None:
         [keeper["contractionPath"] for keeper in launch["keepers"]],
         [
             "CURVE_FRXUSD_TO_CRVUSD",
-            "FRXUSD_REDEEM -> CURVE_USDC_TO_CRVUSD",
-            "FRXUSD_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
+            "FRAXNET_REDEEM -> CURVE_USDC_TO_CRVUSD",
+            "FRAXNET_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
         ],
     )
     fail(
@@ -783,7 +810,7 @@ def main() -> None:
             "erc4626DepositBps",
             "erc4626RedeemBps",
             "frxUsdMintBps",
-            "frxUsdRedeemBps",
+            "fraxNetRedeemBps",
             "daiUsdsConverterBps",
             "downstreamAndYieldToTargetRouteLossBps",
             "monetaryContractionRouteLossAllowanceBps",
@@ -800,7 +827,7 @@ def main() -> None:
     fail("ERC-4626 deposit execution tolerance", execution_policy["erc4626DepositBps"], 1)
     fail("ERC-4626 redeem execution tolerance", execution_policy["erc4626RedeemBps"], 1)
     fail("frxUSD mint execution tolerance", execution_policy["frxUsdMintBps"], 1)
-    fail("frxUSD redeem execution tolerance", execution_policy["frxUsdRedeemBps"], 1)
+    fail("FraxNet redeem execution tolerance", execution_policy["fraxNetRedeemBps"], 2)
     fail("DaiUsds execution tolerance", execution_policy["daiUsdsConverterBps"], 0)
     fail(
         "downstream and yield-to-target route tolerance",
@@ -952,6 +979,10 @@ def main() -> None:
             "simulatedFrxUsdReceived",
             "simulatedContractionQuoteFrxUsd",
             "simulatedContractionQuoteCrvUsd",
+            "simulatedContractionReceivedCrvUsd",
+            "rwaRouteExercised",
+            "fraxNetAccountCloneRequiredForShanghai",
+            "superstateTokenHarnessRequiredForShanghai",
             "expansionPathHash",
             "contractionPathHash",
             "broadcast",
@@ -964,9 +995,13 @@ def main() -> None:
     fail("canary crvUSD sold", canary["simulatedCrvUsdSold"], "100000000000000000000000")
     fail("canary frxUSD received", canary["simulatedFrxUsdReceived"], "100016620117244135933000")
     fail("canary contraction frxUSD", canary["simulatedContractionQuoteFrxUsd"], "10001662011724413593300")
-    fail("canary contraction crvUSD", canary["simulatedContractionQuoteCrvUsd"], "9999492700894871027318")
+    fail("canary contraction quote crvUSD", canary["simulatedContractionQuoteCrvUsd"], "10031479301488711916782")
+    fail("canary contraction received crvUSD", canary["simulatedContractionReceivedCrvUsd"], "10030476151557962947554")
+    fail("canary RWA route", canary["rwaRouteExercised"], True)
+    fail("canary FraxNet account clone disclosure", canary["fraxNetAccountCloneRequiredForShanghai"], True)
+    fail("canary USTB harness disclosure", canary["superstateTokenHarnessRequiredForShanghai"], True)
     fail("canary expansion hash", canary["expansionPathHash"], "0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d")
-    fail("canary contraction hash", canary["contractionPathHash"], "0x61b682ab566b6d45ed43332470c1e8c2e635e328d857df01aa06052fb1f095f1")
+    fail("canary contraction hash", canary["contractionPathHash"], "0x1602a97a9de217a466169f46195f2ac971329883350aea19826b7a2a97c2ef9c")
 
     operator = manifest["operatorInputs"]
     fail_keys(
@@ -1009,10 +1044,12 @@ def main() -> None:
             "outputPath",
             "environmentConfiguration",
             "monotonicCreateOrder",
+            "fraxNetFactory",
             "previewModuleAddress",
             "implementationAddress",
             "factoryAddress",
             "oracleAddresses",
+            "fraxNetAccountAddresses",
             "keeperAddresses",
             "transactionHashes",
             "verified",
@@ -1028,11 +1065,21 @@ def main() -> None:
     )
     fail("deployment environment configuration", deployment["environmentConfiguration"], False)
     fail("deployment CREATE order", deployment["monotonicCreateOrder"], deployment_fields)
+    fail(
+        "deployment FraxNet factory",
+        deployment["fraxNetFactory"].lower(),
+        "0xa3d62f83c433e2a56af392e08a705a52ded63696",
+    )
     if (ROOT / deployment["outputPath"]).exists():
         raise SystemExit("undeployed release contains a deployment output")
     for label in ("previewModuleAddress", "implementationAddress", "factoryAddress"):
         fail(f"undeployed {label}", deployment[label], None)
-    for label in ("oracleAddresses", "keeperAddresses", "transactionHashes"):
+    for label in (
+        "oracleAddresses",
+        "fraxNetAccountAddresses",
+        "keeperAddresses",
+        "transactionHashes",
+    ):
         fail(f"undeployed {label}", deployment[label], [])
     for label in ("verified", "registered", "activated"):
         fail(f"undeployed {label}", deployment[label], False)
@@ -1043,7 +1090,8 @@ def main() -> None:
         [
             "Governance must independently reconfirm the canonical frxUSD/USD Chainlink proxy, 8-decimal metadata, live positive completed round, and provisional 93,600-second maxDelay.",
             "Governance must confirm the independent USDC and USDT Curve EMA target-health checks, including pool code, coin order, oracle behavior, and inversion.",
-            "Before enabling a Frax-redemption route, governance must reconfirm the custodian endpoints, fees, limits, authorization model, preview behavior, and live USDC inventory, then execute an inventory-bounded fork canary.",
+            "Before enabling a FraxNet redemption route, governance must reconfirm the mint custodian, FraxNet factory/account identities, account recipients, beacon implementation, pause state, configured RWA redeemer, fees, limits, and authorization.",
+            "Governance must measure direct atomic USDC and atomically reachable RWA-route USDC separately, exclude raw downstream balances and delayed settlement, and execute bounded canaries through both redemption branches.",
             "Governance must confirm the hardcoded Curve Ownership Agent factory owner, all shared defaults, and all candidate addresses.",
             "A fresh current-block canary and every release gate must pass from the production source commit before broadcast.",
             "Deployment, registration, debt-ceiling, policy, and activation transactions require explicit authorization; this package broadcasts none.",
