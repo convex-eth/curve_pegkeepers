@@ -199,6 +199,7 @@ STEP_ERC4626_DEPOSIT: constant(uint256) = 2
 STEP_ERC4626_REDEEM: constant(uint256) = 3
 STEP_FRXUSD_MINT: constant(uint256) = 4
 STEP_FRXUSD_REDEEM: constant(uint256) = 5
+FRAXNET_DEPOSIT_FACTORY: constant(address) = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_BACKING_DEPLOYMENT: constant(uint256) = 1
@@ -1396,9 +1397,8 @@ def _validate_route_step(_step: RouteStep):
         assert FraxNetDeposit(_step.venue).asset() == _step.token_in
         assert FraxNetDeposit(_step.venue).frxUSD() == _step.token_in
         assert FraxNetDeposit(_step.venue).USDC() == _step.token_out
-        frax_net_factory: address = FraxNetDeposit(_step.venue).factory()
-        assert frax_net_factory != empty(address)
-        assert FraxNetDepositFactory(frax_net_factory).isFraxNetDeposit(_step.venue)
+        assert FraxNetDeposit(_step.venue).factory() == FRAXNET_DEPOSIT_FACTORY
+        assert FraxNetDepositFactory(FRAXNET_DEPOSIT_FACTORY).isFraxNetDeposit(_step.venue)
         assert FraxNetDeposit(_step.venue).targetEid() == 30_101
         assert FraxNetDeposit(_step.venue).targetAddress() == convert(self, bytes32)
     else:

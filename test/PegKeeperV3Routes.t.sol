@@ -90,6 +90,7 @@ contract PegKeeperV3RoutesTest is Test {
     uint256 internal constant ERC4626_REDEEM = 3;
     uint256 internal constant FRXUSD_MINT = 4;
     uint256 internal constant FRXUSD_REDEEM = 5;
+    address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
 
     address internal governance = makeAddr("governance");
     address internal emergencyAdmin = makeAddr("emergencyAdmin");
@@ -426,6 +427,26 @@ contract PegKeeperV3RoutesTest is Test {
         plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
     }
 
+    function test_frxUsdRedeemStepRejectsRecognizedAccountFromNonCanonicalFactory() public {
+        IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
+        RouteFraxNetFactory fakeFactory = new RouteFraxNetFactory(true);
+        address account = address(
+            new RouteFraxNetDeposit(
+                address(backingAsset),
+                address(backingAsset),
+                address(targetAsset),
+                address(fakeFactory),
+                30_101,
+                bytes32(uint256(uint160(address(plainRoutes))))
+            )
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
+    }
+
     function test_frxUsdRedeemStepRejectsNonEthereumRecipient() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
         address account = _fraxNetAccount(
@@ -619,9 +640,10 @@ contract PegKeeperV3RoutesTest is Test {
         bool recognized
     ) internal returns (address) {
         RouteFraxNetFactory fraxNetFactory = new RouteFraxNetFactory(recognized);
+        vm.etch(FRAXNET_DEPOSIT_FACTORY, address(fraxNetFactory).code);
         return address(
             new RouteFraxNetDeposit(
-                asset, frxUsd, usdc, address(fraxNetFactory), targetEid, targetAddress
+                asset, frxUsd, usdc, FRAXNET_DEPOSIT_FACTORY, targetEid, targetAddress
             )
         );
     }

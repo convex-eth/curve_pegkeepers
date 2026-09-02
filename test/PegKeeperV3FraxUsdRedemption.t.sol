@@ -68,6 +68,7 @@ contract ExecutionFrxUsdExternalShare {
 contract ExecutionFraxNetDeposit {
     uint256 internal constant PPM = 1_000_000;
     uint256 internal constant SCALE = 1e12;
+    address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
 
     ExpansionToken public immutable frxUsdToken;
     ExpansionToken public immutable usdcToken;
@@ -92,12 +93,8 @@ contract ExecutionFraxNetDeposit {
         return address(usdcToken);
     }
 
-    function factory() external view returns (address) {
-        return address(this);
-    }
-
-    function isFraxNetDeposit(address account) external view returns (bool) {
-        return account == address(this);
+    function factory() external pure returns (address) {
+        return FRAXNET_DEPOSIT_FACTORY;
     }
 
     function targetEid() external pure returns (uint32) {
@@ -116,6 +113,12 @@ contract ExecutionFraxNetDeposit {
         require(frxUsdToken.balanceOf(address(this)) >= amount, "frxUSD transfer");
         usdcOut = amount * executionRedeemPpm / PPM / SCALE;
         usdcToken.mint(recipient, usdcOut);
+    }
+}
+
+contract ExecutionFraxNetFactory {
+    function isFraxNetDeposit(address) external pure returns (bool) {
+        return true;
     }
 }
 
@@ -164,6 +167,8 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
             address(yieldOracle)
         );
         fraxNetDeposit = new ExecutionFraxNetDeposit(frxUsd, usdc, address(pegKeeper));
+        ExecutionFraxNetFactory fraxNetFactory = new ExecutionFraxNetFactory();
+        vm.etch(0xA3D62f83C433e2A56Af392E08a705A52DEd63696, address(fraxNetFactory).code);
     }
 
     function test_fraxRedemptionRoutePreviewsAndExecutesThroughFraxNetAggregator() public {
