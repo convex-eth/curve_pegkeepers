@@ -79,6 +79,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     address internal constant USDT_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address internal constant THREE_POOL = 0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7;
     address internal constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
+    address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
     address internal constant RWA_CUSTODIAN = 0x5fbAa3A3B489199338fbD85F7E3D444dc0504F33;
     address internal constant SUPERSTATE_TOKEN = 0x43415eB6ff9DB7E26A15b704e7A3eDCe97d31C4e;
     address internal constant RWA_USDC_REDEEMER = 0x4c21B7577C8FE8b0B0669165ee7C8f67fa1454Cf;
@@ -219,6 +220,13 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(deployment.factory);
         address expectedKeeper = _computeCreateAddress(deployment.factory, 1);
         fraxNetDeposit = _cloneFraxNetAccount(expectedKeeper);
+        // The clone cannot be present in the live factory's deployment registry; mock only that
+        // membership read so V3's onchain route validation is exercised before live routing.
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY,
+            abi.encodeWithSignature("isFraxNetDeposit(address)", fraxNetDeposit),
+            abi.encode(true)
+        );
         IPegKeeperV3.RouteStep[] memory expansionPath = _expansionPath();
         IPegKeeperV3.RouteStep[] memory contractionPath = _contractionPath(fraxNetDeposit);
         vm.prank(CANARY_FACTORY_OWNER);

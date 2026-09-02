@@ -70,6 +70,18 @@ contract RouteFraxNetDeposit {
     }
 }
 
+contract RouteFraxNetFactory {
+    bool public immutable recognized;
+
+    constructor(bool recognized_) {
+        recognized = recognized_;
+    }
+
+    function isFraxNetDeposit(address) external view returns (bool) {
+        return recognized;
+    }
+}
+
 contract PegKeeperV3RoutesTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant CURVE_SWAP = 0;
@@ -397,6 +409,23 @@ contract PegKeeperV3RoutesTest is Test {
         plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
     }
 
+    function test_frxUsdRedeemStepRejectsUnrecognizedFraxNetAccount() public {
+        IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
+        address account = _fraxNetAccountWithRecognition(
+            address(backingAsset),
+            address(backingAsset),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes)))),
+            false
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
+    }
+
     function test_frxUsdRedeemStepRejectsNonEthereumRecipient() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
         address account = _fraxNetAccount(
@@ -578,8 +607,22 @@ contract PegKeeperV3RoutesTest is Test {
         uint32 targetEid,
         bytes32 targetAddress
     ) internal returns (address) {
+        return _fraxNetAccountWithRecognition(asset, frxUsd, usdc, targetEid, targetAddress, true);
+    }
+
+    function _fraxNetAccountWithRecognition(
+        address asset,
+        address frxUsd,
+        address usdc,
+        uint32 targetEid,
+        bytes32 targetAddress,
+        bool recognized
+    ) internal returns (address) {
+        RouteFraxNetFactory fraxNetFactory = new RouteFraxNetFactory(recognized);
         return address(
-            new RouteFraxNetDeposit(asset, frxUsd, usdc, address(this), targetEid, targetAddress)
+            new RouteFraxNetDeposit(
+                asset, frxUsd, usdc, address(fraxNetFactory), targetEid, targetAddress
+            )
         );
     }
 

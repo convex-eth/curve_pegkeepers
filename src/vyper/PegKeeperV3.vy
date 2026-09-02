@@ -62,6 +62,9 @@ interface FraxNetDeposit:
     def targetAddress() -> bytes32: view
     def processRedemption(_amount: uint256) -> uint256: nonpayable
 
+interface FraxNetDepositFactory:
+    def isFraxNetDeposit(_account: address) -> bool: view
+
 interface YieldToken:
     def asset() -> address: view
     def balanceOf(_owner: address) -> uint256: view
@@ -1393,7 +1396,9 @@ def _validate_route_step(_step: RouteStep):
         assert FraxNetDeposit(_step.venue).asset() == _step.token_in
         assert FraxNetDeposit(_step.venue).frxUSD() == _step.token_in
         assert FraxNetDeposit(_step.venue).USDC() == _step.token_out
-        assert FraxNetDeposit(_step.venue).factory() != empty(address)
+        frax_net_factory: address = FraxNetDeposit(_step.venue).factory()
+        assert frax_net_factory != empty(address)
+        assert FraxNetDepositFactory(frax_net_factory).isFraxNetDeposit(_step.venue)
         assert FraxNetDeposit(_step.venue).targetEid() == 30_101
         assert FraxNetDeposit(_step.venue).targetAddress() == convert(self, bytes32)
     else:

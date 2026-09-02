@@ -96,6 +96,10 @@ contract ExecutionFraxNetDeposit {
         return address(this);
     }
 
+    function isFraxNetDeposit(address account) external view returns (bool) {
+        return account == address(this);
+    }
+
     function targetEid() external pure returns (uint32) {
         return 30_101;
     }
