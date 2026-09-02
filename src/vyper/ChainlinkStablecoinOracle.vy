@@ -2,8 +2,8 @@
 """
 @title Chainlink Stablecoin Oracle Adapter
 @license MIT
-@notice Normalizes one immutable canonical Chainlink proxy feed to 1e18 pricing.
-@dev Rejects non-positive, incomplete, stale, future-dated, and malformed rounds.
+@notice Reads one Chainlink price source and returns prices in a standard format.
+@dev Rejects missing, invalid, old, or future-dated updates.
 """
 
 interface ChainlinkFeed:
@@ -23,6 +23,9 @@ def __init__(
     _feed: ChainlinkFeed,
     _max_delay: uint256,
 ):
+    """
+    @notice Sets the price source and the maximum accepted update age.
+    """
     assert _feed.address != empty(address)
     assert _feed.address.codesize > 0
     assert _max_delay > 0
@@ -38,24 +41,36 @@ def __init__(
 @external
 @pure
 def feed() -> address:
+    """
+    @notice Returns the Chainlink price source.
+    """
     return FEED.address
 
 
 @external
 @pure
 def feed_decimals() -> uint256:
+    """
+    @notice Returns the number of decimal places used by the price source.
+    """
     return FEED_DECIMALS
 
 
 @external
 @pure
 def max_delay() -> uint256:
+    """
+    @notice Returns the maximum accepted age of a price update.
+    """
     return MAX_DELAY
 
 
 @external
 @view
 def price() -> uint256:
+    """
+    @notice Returns the latest valid price in a standard 18-decimal format.
+    """
     round_id: uint80 = 0
     answer: int256 = 0
     started_at: uint256 = 0

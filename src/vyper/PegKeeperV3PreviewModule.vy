@@ -2,8 +2,8 @@
 """
 @title PegKeeper V3 Preview Module
 @license MIT
-@notice Shared stateless quote engine for PegKeeperV3 minimal proxies
-@dev Keepers preserve their public preview selectors and forward view computation here.
+@notice Calculates expected results for PegKeeperV3 actions without making trades.
+@dev Each keeper sends its preview requests here.
 """
 
 
@@ -112,6 +112,9 @@ def previewUndeployedContraction(
     _keeper: address,
     _target_amount: uint256,
 ) -> (uint256, uint256, uint256, bool):
+    """
+    @notice Estimates selling the calling keeper's target tokens from current data; actual results may differ.
+    """
     assert _keeper == msg.sender
     keeper: PegKeeperV3 = PegKeeperV3(_keeper)
     assert _target_amount > 0 and _target_amount <= keeper.undeployed_backing()
@@ -142,6 +145,9 @@ def previewKeeperBuyback(
     _keeper: address,
     _yield_token_amount: uint256,
 ) -> (uint256, uint256, uint256, bool):
+    """
+    @notice Estimates selling the calling keeper's final tokens from current data; actual results may differ.
+    """
     assert _keeper == msg.sender
     keeper: PegKeeperV3 = PegKeeperV3(_keeper)
     accounted: uint256 = keeper.accounted_yield_token_units()
@@ -181,6 +187,9 @@ def previewExpansion(
     _keeper: address,
     _crv_usd_amount: uint256,
 ) -> (uint256, uint256, uint256, uint256, uint256, bool):
+    """
+    @notice Estimates an expansion for the calling keeper; actual results may differ.
+    """
     assert _keeper == msg.sender
     quote: ExpansionPreview = self._preview_expansion(_keeper, _crv_usd_amount)
     return (

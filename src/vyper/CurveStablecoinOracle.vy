@@ -2,8 +2,8 @@
 """
 @title Curve Stablecoin Oracle Adapter
 @license MIT
-@notice Normalizes a two-coin Curve StableSwap-NG EMA to asset/reference 1e18 pricing.
-@dev Curve price_oracle(0) is coin[1] quoted in coin[0], with configured rate providers applied.
+@notice Reads a smoothed price from a two-token Curve pool.
+@dev Returns the chosen token price in terms of the reference token.
 """
 
 interface CurvePool:
@@ -21,6 +21,9 @@ INVERTED: immutable(bool)
 
 @external
 def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
+    """
+    @notice Sets the pool, priced token, and token used as the price reference.
+    """
     assert _pool.address != empty(address)
     assert _pool.address.codesize > 0
     assert _asset != empty(address)
@@ -47,30 +50,45 @@ def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
 @external
 @pure
 def pool() -> address:
+    """
+    @notice Returns the Curve pool used for prices.
+    """
     return POOL.address
 
 
 @external
 @pure
 def asset() -> address:
+    """
+    @notice Returns the token being priced.
+    """
     return ASSET
 
 
 @external
 @pure
 def reference_asset() -> address:
+    """
+    @notice Returns the token used as the price reference.
+    """
     return REFERENCE_ASSET
 
 
 @external
 @pure
 def inverted() -> bool:
+    """
+    @notice Returns whether the pool price must be reversed.
+    """
     return INVERTED
 
 
 @external
 @view
 def price() -> uint256:
+    """
+    @notice Returns the latest smoothed pool price in a standard 18-decimal format.
+    """
     oracle_price: uint256 = POOL.price_oracle(0)
     assert oracle_price > 0
     if INVERTED:

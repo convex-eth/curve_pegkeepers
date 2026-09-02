@@ -2,8 +2,8 @@
 """
 @title PegKeeper V3
 @license MIT
-@notice Asymmetric inventory-backed crvUSD PegKeeper
-@dev Incremental implementation: core accounting/actions plus bounded typed route execution.
+@notice Buys and sells approved assets to help keep crvUSD near its target price.
+@dev Tracks backing, limits trades, and follows token paths chosen by the admin.
 """
 
 interface ERC20:
@@ -246,6 +246,9 @@ all_execution_paused: public(bool)
 
 @external
 def __init__(_preview_module: PreviewModule):
+    """
+    @notice Sets the preview contract and prevents the base contract from being set up as a keeper.
+    """
     assert _preview_module.address != empty(address)
     assert _preview_module.address.codesize > 0
     PREVIEW_MODULE = _preview_module
@@ -270,6 +273,9 @@ def initialize(
     _target_oracle: PriceOracle,
     _yield_oracle: PriceOracle,
 ):
+    """
+    @notice Sets up a new keeper with its pool, tokens, limits, and price sources.
+    """
     assert not self.initialized
     self.initialized = True
     assert msg.sender.codesize > 0
@@ -350,30 +356,45 @@ def initialize(
 @external
 @view
 def factory() -> address:
+    """
+    @notice Returns the factory that created this keeper.
+    """
     return self._factory.address
 
 
 @external
 @view
 def controller_factory() -> address:
+    """
+    @notice Returns the shared contract that provides crvUSD and debt limits.
+    """
     return self._controller_factory.address
 
 
 @external
 @view
 def admin() -> address:
+    """
+    @notice Returns the account allowed to change keeper settings.
+    """
     return self._factory.admin()
 
 
 @external
 @view
 def emergency_admin() -> address:
+    """
+    @notice Returns the account allowed to pause keeper actions.
+    """
     return self._factory.emergency_admin()
 
 
 @external
 @view
 def fee_receiver() -> address:
+    """
+    @notice Returns the account that receives claimed crvUSD surplus.
+    """
     return self._factory.fee_receiver()
 
 
@@ -392,30 +413,45 @@ def _is_admin_or_factory(_account: address) -> bool:
 @external
 @view
 def crv_usd() -> address:
+    """
+    @notice Returns the crvUSD token address.
+    """
     return self._crv_usd.address
 
 
 @external
 @pure
 def preview_module() -> address:
+    """
+    @notice Returns the contract used to calculate action estimates.
+    """
     return PREVIEW_MODULE.address
 
 
 @external
 @view
 def target_asset() -> address:
+    """
+    @notice Returns the token paired with crvUSD in the main swap pool.
+    """
     return self._target_asset.address
 
 
 @external
 @view
 def backing_asset() -> address:
+    """
+    @notice Returns the asset represented by the final token.
+    """
     return self._backing_asset.address
 
 
 @external
 @view
 def yield_token() -> address:
+    """
+    @notice Returns the final token held after the configured token path.
+    """
     return self._yield_token.address
 
 
@@ -438,12 +474,18 @@ def _yield_token_units(_assets: uint256) -> uint256:
 @external
 @view
 def yield_token_assets(_units: uint256) -> uint256:
+    """
+    @notice Returns the backing-asset amount represented by a final-token amount.
+    """
     return self._yield_token_assets(_units)
 
 
 @external
 @view
 def yield_token_units(_assets: uint256) -> uint256:
+    """
+    @notice Returns the final-token amount represented by a backing-asset amount.
+    """
     return self._yield_token_units(_assets)
 
 
@@ -462,18 +504,27 @@ def _yield_inventory() -> uint256:
 @external
 @view
 def undeployed_backing() -> uint256:
+    """
+    @notice Returns the keeper's current balance of the target token.
+    """
     return self._target_inventory()
 
 
 @external
 @view
 def accounted_yield_token_units() -> uint256:
+    """
+    @notice Returns the keeper's current balance of the final token.
+    """
     return self._yield_inventory()
 
 
 @external
 @view
 def coins(_index: uint256) -> address:
+    """
+    @notice Returns crvUSD for index 0 and the final token for index 1.
+    """
     if _index == 0:
         return self._crv_usd.address
     assert _index == 1
@@ -558,12 +609,18 @@ def _consume_velocity(_amount: uint256):
 @external
 @view
 def expansion_pressure() -> uint256:
+    """
+    @notice Returns how much of the recent expansion allowance is still in use.
+    """
     return self._current_pressure()
 
 
 @external
 @view
 def available_expansion_velocity() -> uint256:
+    """
+    @notice Returns how much can be expanded now under the short-term rate limit.
+    """
     return self._available_velocity()
 
 
@@ -626,12 +683,18 @@ def _trusted_yield_value(_yield_token_units: uint256) -> uint256:
 @external
 @view
 def trusted_backing_value() -> uint256:
+    """
+    @notice Returns the total backing value, treating target and backing assets as worth one dollar each.
+    """
     return self._trusted_backing_value()
 
 
 @external
 @view
 def protocol_surplus() -> uint256:
+    """
+    @notice Returns backing value above the crvUSD amount this keeper must cover.
+    """
     trusted_value: uint256 = self._trusted_backing_value()
     if trusted_value > self.deployed_crvusd:
         return trusted_value - self.deployed_crvusd
@@ -641,6 +704,9 @@ def protocol_surplus() -> uint256:
 @external
 @view
 def debt() -> uint256:
+    """
+    @notice Returns the recorded crvUSD amount for compatibility with existing tools.
+    """
     return self.deployed_crvusd
 
 
@@ -661,6 +727,9 @@ def _remaining_exposure_capacity() -> uint256:
 @external
 @view
 def available_expansion() -> uint256:
+    """
+    @notice Returns the most crvUSD that can be used for an expansion now.
+    """
     return min(
         self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
@@ -830,12 +899,18 @@ def _preview_buyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
 @external
 @view
 def previewBuyback(_crv_usd_amount: uint256) -> (uint256, uint256, bool):
+    """
+    @notice Estimates the final tokens paid for a direct crvUSD buyback from current data; actual results may differ.
+    """
     return self._preview_buyback(_crv_usd_amount)
 
 
 @external
 @nonreentrant("lock")
 def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
+    """
+    @notice Lets a caller pay crvUSD to buy final tokens from the keeper.
+    """
     assert not self.all_execution_paused
     assert not self.direct_buyback_paused
 
@@ -899,23 +974,35 @@ def buyback(_crv_usd_amount: uint256, _min_yield_token_out: uint256) -> uint256:
 @external
 @view
 def previewUndeployedContraction(_amount: uint256) -> (uint256, uint256, uint256, bool):
+    """
+    @notice Estimates selling held target tokens back to crvUSD from current data; actual results may differ.
+    """
     return PREVIEW_MODULE.previewUndeployedContraction(self, _amount)
 
 
 @external
 @view
 def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256, bool):
+    """
+    @notice Estimates selling final tokens back to crvUSD from current data; actual results may differ.
+    """
     return PREVIEW_MODULE.previewKeeperBuyback(self, _amount)
 
 
 @external
 @view
 def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256, uint256, bool):
+    """
+    @notice Estimates an expansion from current data; actual results may differ.
+    """
     return PREVIEW_MODULE.previewExpansion(self, _amount)
 
 
 @external
 def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256):
+    """
+    @notice Changes the main crvUSD swap pool and the largest allowed drop below its quote.
+    """
     assert self._is_admin(msg.sender)
     assert _new_target_amm.address != empty(address)
     assert _execution_buffer_bps <= BPS
@@ -954,6 +1041,9 @@ def set_oracles(
     _min_target_price: uint256,
     _min_yield_price: uint256,
 ):
+    """
+    @notice Changes the price sources and the lowest accepted prices.
+    """
     assert self._is_admin(msg.sender)
     assert _target_oracle.address != empty(address)
     assert _yield_oracle.address != empty(address)
@@ -980,6 +1070,9 @@ def set_expansion_config(
     _min_downstream_attempt_gas: uint256,
     _fallback_settlement_gas_reserve: uint256,
 ):
+    """
+    @notice Changes the allowed quote drop and gas limits used during expansion.
+    """
     assert self._is_admin_or_factory(msg.sender)
     assert _target_amm_execution_buffer_bps <= BPS
     assert _fallback_settlement_gas_reserve > 0
@@ -999,6 +1092,9 @@ def set_expansion_config(
 @external
 @nonreentrant("lock")
 def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, bool):
+    """
+    @notice Uses crvUSD to buy backing and pays the caller a share of any profit.
+    """
     assert not self.all_execution_paused
     assert not self.expansion_paused
     assert _crv_usd_amount >= self.min_expansion_amount
@@ -1139,6 +1235,9 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 @external
 @nonreentrant("lock")
 def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uint256):
+    """
+    @notice Swaps held target tokens back to crvUSD and pays the caller a share of any profit.
+    """
     assert not self.all_execution_paused
     assert not self.undeployed_contraction_paused
     assert _target_amount > 0
@@ -1196,6 +1295,9 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
 @external
 @nonreentrant("lock")
 def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
+    """
+    @notice Sends available crvUSD to the fee receiver when extra backing covers it, up to the caller's limit.
+    """
     assert not self.all_execution_paused
     assert not self.expansion_paused
 
@@ -1304,6 +1406,9 @@ def setPaths(
     _expansion_max_route_loss_bps: uint256,
     _contraction_steps: DynArray[RouteStep, 16],
 ):
+    """
+    @notice Replaces the token paths used after expansion and on the way back to crvUSD.
+    """
     assert self._is_admin_or_factory(msg.sender)
     assert _expansion_max_route_loss_bps <= BPS
 
@@ -1335,18 +1440,27 @@ def setPaths(
 @external
 @view
 def expansion_path_length() -> uint256:
+    """
+    @notice Returns the number of steps in the post-expansion token path.
+    """
     return len(self.expansion_path)
 
 
 @external
 @view
 def contraction_path_length() -> uint256:
+    """
+    @notice Returns the number of steps in the token path back to crvUSD.
+    """
     return len(self.contraction_path)
 
 
 @external
 @view
 def expansion_path_step(_index: uint256) -> RouteStep:
+    """
+    @notice Returns one step from the post-expansion token path.
+    """
     assert _index < len(self.expansion_path)
     return self.expansion_path[_index]
 
@@ -1354,6 +1468,9 @@ def expansion_path_step(_index: uint256) -> RouteStep:
 @external
 @view
 def contraction_path_step(_index: uint256) -> RouteStep:
+    """
+    @notice Returns one step from the token path back to crvUSD.
+    """
     assert _index < len(self.contraction_path)
     return self.contraction_path[_index]
 
@@ -1494,6 +1611,9 @@ def executeExpansionPath(
     _crv_usd_sold: uint256,
     _keeper: address,
 ) -> (uint256, uint256, uint256, uint256):
+    """
+    @notice Runs the post-expansion token path when the keeper calls itself and pays the original caller's reward.
+    """
     assert msg.sender == self
     assert not self.backing_deployment_paused
     assert len(self.expansion_path) > 0
@@ -1544,6 +1664,9 @@ def executeExpansionPath(
 @external
 @nonreentrant("lock")
 def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
+    """
+    @notice Moves held target tokens through the set token path into the final token.
+    """
     assert not self.all_execution_paused
     assert not self.backing_deployment_paused
     assert _target_amount > 0
@@ -1599,6 +1722,9 @@ def deployUndeployedBacking(_target_amount: uint256) -> (uint256, uint256):
 @external
 @nonreentrant("lock")
 def unwindYieldToTarget(_yield_token_amount: uint256) -> (uint256, uint256):
+    """
+    @notice Moves final tokens back into target tokens without selling them for crvUSD.
+    """
     assert not self.all_execution_paused
     assert self.backing_deployment_paused
     assert not self.yield_contraction_paused
@@ -1663,6 +1789,9 @@ def unwindYieldToTarget(_yield_token_amount: uint256) -> (uint256, uint256):
 @external
 @nonreentrant("lock")
 def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
+    """
+    @notice Sells final tokens for crvUSD through the set token path and pays the caller a share of any profit.
+    """
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
     assert _yield_token_amount > 0
@@ -1730,6 +1859,9 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
 @payable
 @nonreentrant("lock")
 def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[65535]:
+    """
+    @notice Lets the admin call another address and returns any response.
+    """
     assert self._is_admin(msg.sender)
     assert _target != empty(address)
 
@@ -1756,6 +1888,9 @@ def set_policy(
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
+    """
+    @notice Changes profit, reward, timing, minimum trade, and crvUSD limits.
+    """
     assert self._is_admin(msg.sender)
     assert _early_exit_min_profit_ppm <= PPM
     assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm
@@ -1785,6 +1920,9 @@ def set_policy(
 
 @external
 def set_direction_paused(_direction: uint256, _paused: bool):
+    """
+    @notice Pauses or resumes one keeper action.
+    """
     admin: address = self._factory.admin()
     emergency_admin: address = self._factory.emergency_admin()
     assert msg.sender == admin or msg.sender == emergency_admin
@@ -1815,4 +1953,7 @@ def set_direction_paused(_direction: uint256, _paused: bool):
 @external
 @payable
 def __default__():
+    """
+    @notice Accepts ETH sent without call data and rejects unknown calls.
+    """
     assert len(msg.data) == 0

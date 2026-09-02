@@ -2,8 +2,8 @@
 """
 @title PegKeeperV3Factory
 @license MIT
-@notice Owner-gated deployment registry for non-upgradeable PegKeeperV3 minimal proxies.
-@dev Each proxy pins the implementation in its 45-byte EIP-1167 runtime and is initialized atomically.
+@notice Deploys and records PegKeeperV3 contracts using settings chosen by the owner.
+@dev Each new keeper is fixed to one base contract and starts paused.
 """
 
 
@@ -122,6 +122,9 @@ def __init__(
     _implementation: address,
     _defaults: DeploymentDefaults,
 ):
+    """
+    @notice Sets the owner, controller factory, base keeper code, and starting defaults.
+    """
     if _initialOwner == empty(address) or _controllerFactory == empty(address):
         raw_revert(method_id("InvalidOwner()"))
 
@@ -138,36 +141,54 @@ def __init__(
 @external
 @pure
 def controllerFactory() -> address:
+    """
+    @notice Returns the controller factory used by every keeper.
+    """
     return CONTROLLER_FACTORY
 
 
 @external
 @pure
 def implementation() -> address:
+    """
+    @notice Returns the base keeper code used for new keepers.
+    """
     return IMPLEMENTATION
 
 
 @external
 @view
 def defaults() -> DeploymentDefaults:
+    """
+    @notice Returns the current settings used when a keeper is created.
+    """
     return self._defaults
 
 
 @external
 @view
 def admin() -> address:
+    """
+    @notice Returns the admin shared by the factory's keepers.
+    """
     return self._defaults.admin
 
 
 @external
 @view
 def emergency_admin() -> address:
+    """
+    @notice Returns the emergency account shared by the factory's keepers.
+    """
     return self._defaults.emergencyAdmin
 
 
 @external
 @view
 def fee_receiver() -> address:
+    """
+    @notice Returns the fee receiver shared by the factory's keepers.
+    """
     return self._defaults.feeReceiver
 
 
@@ -181,6 +202,9 @@ def deployPegKeeper(
     _expansionSteps: DynArray[RouteStep, 16],
     _contractionSteps: DynArray[RouteStep, 16],
 ) -> address:
+    """
+    @notice Lets the owner deploy a paused keeper, set its token paths, and record it.
+    """
     self._check_owner()
 
     target_asset: address = empty(address)
@@ -228,12 +252,18 @@ def deployPegKeeper(
 
 @external
 def setDefaults(_newDefaults: DeploymentDefaults):
+    """
+    @notice Lets the owner change shared roles and defaults used for future keepers.
+    """
     self._check_owner()
     self._set_defaults(_newDefaults)
 
 
 @external
 def transferOwnership(_newOwner: address):
+    """
+    @notice Names the account that may accept factory ownership.
+    """
     self._check_owner()
     if _newOwner == empty(address) or _newOwner == self.owner:
         raw_revert(method_id("InvalidOwner()"))
@@ -244,6 +274,9 @@ def transferOwnership(_newOwner: address):
 
 @external
 def acceptOwnership():
+    """
+    @notice Accepts factory ownership for the pending owner.
+    """
     if msg.sender != self.pendingOwner:
         raw_revert(method_id("NotPendingOwner()"))
 
@@ -255,6 +288,9 @@ def acceptOwnership():
 
 @external
 def __default__() -> address:
+    """
+    @notice Creates a new keeper copy only when called by this factory.
+    """
     # Keep checked proxy creation inside a self-call so any CREATE failure can be
     # translated into the legacy DeploymentFailed() selector.
     if msg.sender != self or len(msg.data) != CLONE_DEPLOY_CALLDATA_BYTES:
