@@ -123,10 +123,14 @@ Pressure is shared across callers and calls. Splitting cannot bypass it; contrac
 | USDC/crvUSD target AMM | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | `USDC[0], crvUSD[1]` |
 | USDT/crvUSD target AMM | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | `USDT[0], crvUSD[1]` |
 | Curve 3pool | `0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7` | `DAI[0], USDC[1], USDT[2]` |
-| Frax frxUSD custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC → frxUSD mint; frxUSD external-share redemption → USDC |
+| Frax frxUSD mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC → frxUSD mint |
+| FraxNet deposit factory | `0xA3D62f83C433e2A56Af392E08a705A52DEd63696` | creates keeper-specific Ethereum redemption accounts |
+| Current factory-configured RWA redeemer | `0x19D7Df1387e7722FcCcE2aab4B7FfC72e6592934` | downstream observation only; not stored in V3 route calldata |
 | USDC/USDT oracle pool | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | `USDC[0], USDT[1]` |
 
-The Frax custodian is an inventory-backed primary-market venue, not a guaranteed two-way swap. Minting and redemption are separate typed route kinds. Redemption capacity depends on live custodian USDC inventory and any active Frax limits or fees. A successful fork quote does not prove durable capacity.
+Minting and redemption remain separate typed route kinds. Minting calls the direct custodian. Redemption calls one factory-recognized FraxNet account per keeper, with Ethereum endpoint `30101` and the keeper fixed as the USDC recipient. That account checks the factory at execution time, uses direct custodian USDC first, and sends any remainder through the factory's configured RWA redeemer. V3 therefore follows future factory routing changes instead of hard-coding the current RWA coordinator.
+
+The FraxNet step uses decimal-normalized par as its advisory quote because `processRedemption()` exposes no preview. Execution transfers the exact frxUSD amount, measures the USDC balance delta, and enforces a `2` bps floor. Current immediate capacity remains bounded by direct USDC plus atomically reachable downstream USDC after fees, caps, prices, rounding, authorization, and settlement rules. Raw downstream balances and delayed offchain RWA settlement are not immediate liquidity.
 
 ## Target-AMM configuration
 
@@ -194,7 +198,7 @@ USDC → frxUSD through the Frax custodian
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_REDEEM` | Frax custodian | frxUSD | USDC | `0 → 0` | `1` bps |
+| 1 | `FRXUSD_REDEEM` | keeper-specific FraxNet account | frxUSD | USDC | `0 → 0` | `2` bps |
 | 2 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `3` bps |
 
 ## USDT keeper routes
@@ -227,7 +231,7 @@ USDC → frxUSD through the Frax custodian
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_REDEEM` | Frax custodian | frxUSD | USDC | `0 → 0` | `1` bps |
+| 1 | `FRXUSD_REDEEM` | keeper-specific FraxNet account | frxUSD | USDC | `0 → 0` | `2` bps |
 | 2 | `CURVE_SWAP` | Curve 3pool | USDC | USDT | `1 → 2` | `3` bps |
 | 3 | `CURVE_SWAP` | USDT/crvUSD target AMM | USDT | crvUSD | `0 → 1` | `3` bps |
 
@@ -236,8 +240,8 @@ USDC → frxUSD through the Frax custodian
 Every keeper is deployed fully paused.
 
 1. Verify the implementation core hash, preview-module hash, 45-byte proxy runtime and embedded target, factory, ControllerFactory, oracle pool/orientation, aggregate monetary-policy membership, target AMM, explicit final-token mode, fixed endpoints, path hashes, role getters, fee receiver, local capacity, zero launch pressure, and ControllerFactory debt ceiling.
-2. Reconfirm the Frax custodian's `asset()`, external frxUSD share token, `previewDeposit()`, `previewRedeem()`, fees, limits, authorization model, and live USDC redemption inventory at the intended execution block.
-3. Run a fork canary for each exact keeper configuration and both route directions. Redemption tests must use an amount within demonstrated live custodian capacity.
+2. Reconfirm the Frax mint custodian and FraxNet factory/account identities, account recipients, beacon implementation, direct custodian, configured RWA redeemer, fees, limits, and pause state at the intended execution block.
+3. Separate immediate direct USDC, atomically reachable RWA-route USDC, and delayed/offchain RWA capacity. Run bounded fork execution through both the direct and RWA branches; a quote alone is insufficient.
 4. While global execution remains paused, unpause backing deployment, direct buyback, undeployed-backing contraction, and yield contraction.
 5. Unpause global execution.
 6. Confirm live previews and execute bounded contraction/maintenance canaries.

@@ -45,6 +45,31 @@ contract RouteFrxUsdMinter {
     }
 }
 
+contract RouteFraxNetDeposit {
+    address public immutable asset;
+    address public immutable frxUSD;
+    address public immutable USDC;
+    address public immutable factory;
+    uint32 public immutable targetEid;
+    bytes32 public immutable targetAddress;
+
+    constructor(
+        address asset_,
+        address frxUsd_,
+        address usdc_,
+        address factory_,
+        uint32 targetEid_,
+        bytes32 targetAddress_
+    ) {
+        asset = asset_;
+        frxUSD = frxUsd_;
+        USDC = usdc_;
+        factory = factory_;
+        targetEid = targetEid_;
+        targetAddress = targetAddress_;
+    }
+}
+
 contract PegKeeperV3RoutesTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant CURVE_SWAP = 0;
@@ -291,9 +316,16 @@ contract PegKeeperV3RoutesTest is Test {
         routes.setPaths(expansion, 25, _contractionPath());
     }
 
-    function test_frxUsdRedeemStepAcceptsExternalShareCustodian() public {
+    function test_frxUsdRedeemStepAcceptsFraxNetAggregatorForKeeper() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
-        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath();
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(backingAsset),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
 
         vm.prank(governance);
         plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
@@ -303,8 +335,14 @@ contract PegKeeperV3RoutesTest is Test {
 
     function test_frxUsdRedeemStepRejectsWrongAssetEndpoint() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
-        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath();
-        contraction[0].venue = address(new RouteFrxUsdMinter(address(dai), address(backingAsset)));
+        address account = _fraxNetAccount(
+            address(dai),
+            address(backingAsset),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
 
         vm.prank(governance);
         vm.expectRevert();
@@ -313,8 +351,62 @@ contract PegKeeperV3RoutesTest is Test {
 
     function test_frxUsdRedeemStepRejectsWrongFrxUsdEndpoint() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
-        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath();
-        contraction[0].venue = address(new RouteFrxUsdMinter(address(backingAsset), address(dai)));
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(dai),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
+    }
+
+    function test_frxUsdRedeemStepRejectsWrongUsdcEndpoint() public {
+        IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(backingAsset),
+            address(dai),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
+    }
+
+    function test_frxUsdRedeemStepRejectsWrongRecipient() public {
+        IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(backingAsset),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(keeper)))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        plainRoutes.setPaths(_plainFrxUsdMintExpansionPath(), 25, contraction);
+    }
+
+    function test_frxUsdRedeemStepRejectsNonEthereumRecipient() public {
+        IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(backingAsset),
+            address(targetAsset),
+            30_184,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
 
         vm.prank(governance);
         vm.expectRevert();
@@ -323,7 +415,14 @@ contract PegKeeperV3RoutesTest is Test {
 
     function test_frxUsdRedeemStepRejectsPoolIndices() public {
         IPegKeeperV3 plainRoutes = _deployPlainFrxUsdEndpoint();
-        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath();
+        address account = _fraxNetAccount(
+            address(backingAsset),
+            address(backingAsset),
+            address(targetAsset),
+            30_101,
+            bytes32(uint256(uint160(address(plainRoutes))))
+        );
+        IPegKeeperV3.RouteStep[] memory contraction = _frxUsdRedeemContractionPath(account);
         contraction[0].poolIndexOut = 1;
 
         vm.prank(governance);
@@ -454,7 +553,7 @@ contract PegKeeperV3RoutesTest is Test {
         });
     }
 
-    function _frxUsdRedeemContractionPath()
+    function _frxUsdRedeemContractionPath(address account)
         internal
         view
         returns (IPegKeeperV3.RouteStep[] memory path)
@@ -462,7 +561,7 @@ contract PegKeeperV3RoutesTest is Test {
         path = new IPegKeeperV3.RouteStep[](2);
         path[0] = IPegKeeperV3.RouteStep({
             kind: FRXUSD_REDEEM,
-            venue: address(frxUsdMinter),
+            venue: account,
             tokenIn: address(backingAsset),
             tokenOut: address(targetAsset),
             poolIndexIn: 0,
@@ -470,6 +569,18 @@ contract PegKeeperV3RoutesTest is Test {
             executionBufferBps: 5
         });
         path[1] = _curveStep(address(targetPool), address(targetAsset), address(crvUsd), 0, 1, 5);
+    }
+
+    function _fraxNetAccount(
+        address asset,
+        address frxUsd,
+        address usdc,
+        uint32 targetEid,
+        bytes32 targetAddress
+    ) internal returns (address) {
+        return address(
+            new RouteFraxNetDeposit(asset, frxUsd, usdc, address(this), targetEid, targetAddress)
+        );
     }
 
     function _plainFrxUsdMintExpansionPath()

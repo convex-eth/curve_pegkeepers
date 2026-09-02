@@ -655,10 +655,16 @@ interface IFrxUsdMinter {
     function frxUSD() external view returns (address);
     function previewDeposit(uint256 assets) external view returns (uint256);
     function deposit(uint256 assets, address receiver) external returns (uint256);
-    function previewRedeem(uint256 shares) external view returns (uint256);
-    function redeem(uint256 shares, address receiver, address owner)
-        external
-        returns (uint256);
+}
+
+interface IFraxNetDeposit {
+    function asset() external view returns (address);
+    function frxUSD() external view returns (address);
+    function USDC() external view returns (address);
+    function factory() external view returns (address);
+    function targetEid() external view returns (uint32);
+    function targetAddress() external view returns (bytes32);
+    function processRedemption(uint256 amount) external;
 }
 
 interface IDaiUsds {
@@ -701,7 +707,11 @@ For a DAI-to-USDS step, V3:
 
 The USDS-to-DAI direction performs the symmetric checks and calls `usdsToDai(address(this), amountIn)`. The converter pulls exactly `amountIn` from the caller and exits the same `wad` to the hardcoded receiver; it returns no amount.[14] Both canonical tokens use 18-decimal units, so the protocol quote is `quotedOut = amountIn`, `executionBufferBps` must be zero, and measured output must equal `amountIn`. A mismatched getter, nonzero buffer, failed transfer, or non-1:1 balance delta reverts the route step.
 
-`FrxUsdMint` and `FrxUsdRedeem` are separate typed adapters for Frax's external-share USDC custodian. They exist because the custodian exposes ERC-4626-like methods but mints and burns a separate frxUSD token rather than making the venue itself the share token. Mint validates `asset() == tokenIn` and `frxUSD() == tokenOut`, quotes `previewDeposit()`, and measures deposited USDC and received frxUSD. Redemption validates the reverse endpoints, quotes `previewRedeem()`, calls `redeem(amountIn, V3, V3)`, and measures burned frxUSD and received USDC. Both require zero pool indices, exact temporary approvals, quote-relative output, and absolute normalized-value retention. Preview quotes do not prove redemption inventory; activation must separately confirm live custodian USDC capacity, fees, limits, and authorization.
+`FrxUsdMint` and `FrxUsdRedeem` are separate typed adapters. Mint uses Frax's external-share USDC custodian: it validates `asset() == tokenIn` and `frxUSD() == tokenOut`, quotes `previewDeposit()`, and measures deposited USDC and received frxUSD. Redemption instead uses a keeper-specific FraxNet account. It validates frxUSD as both `asset()` and `frxUSD()`, validates `USDC() == tokenOut`, requires Ethereum LayerZero endpoint `30101`, and requires the account's fixed `targetAddress` to be V3. Execution transfers the exact frxUSD input to that account, calls `processRedemption(amountIn)`, and measures received USDC.
+
+FraxNet exposes no redemption preview. V3 therefore uses decimal-normalized par as the advisory step quote and applies the configured buffer to the measured USDC output. The selected release uses `2` bps: the current RWA path charges `1` bp and introduces integer rounding. This is an execution floor, not a capacity claim. The FraxNet account dynamically reads its factory's direct USDC custodian and configured RWA redeemer, so V3 does not bind itself to the current downstream RWA coordinator. The deployment package creates one factory-recognized account per keeper recipient, and the proposal revalidates factory membership, token endpoints, endpoint ID, factory identity, and recipient before using it.
+
+Both Frax route kinds require zero pool indices, measured exact input consumption, quote-relative output, and absolute normalized-value retention. Preview output does not prove direct USDC inventory, RWA liquidity, downstream limits, fees, authorization, or atomic settlement capacity; activation must verify those separately.
 
 No normal route step accepts arbitrary calldata. Additional venue types require a code change or a separately audited typed adapter. This restriction applies to permissionless execution paths, not the governance owner's separate `execute()` escape hatch.
 
@@ -922,7 +932,7 @@ stepMinOut = floor(
 actualStepOut >= stepMinOut
 ```
 
-Examples are Curve `get_dy()`, the canonical DaiUsds converter's fixed `amountIn` quote, ERC-4626 previews, and Frax `previewDeposit()` / `previewRedeem()`. Actual output is always measured by balance delta. Governance configures `executionBufferBps` per step, bounded by `10_000`; the separately stored target-AMM configuration uses the same quote/minimum equation.
+Examples are Curve `get_dy()`, the canonical DaiUsds converter's fixed `amountIn` quote, ERC-4626 previews, Frax `previewDeposit()`, and FraxNet's decimal-normalized par quote. Actual output is always measured by balance delta. Governance configures `executionBufferBps` per step, bounded by `10_000`; the separately stored target-AMM configuration uses the same quote/minimum equation.
 
 After all steps, V3 independently enforces:
 
@@ -1507,7 +1517,7 @@ The code and fixed route representation are complete. Governance still must appr
 - initial downstream-path `maxRouteLossBps` plus target-AMM and per-step `executionBufferBps` values, calibrated against the implemented venues;
 - initial benchmarked numeric `minDownstreamAttemptGas` and `fallbackSettlementGasReserve` for the implemented downstream attempt;
 - initial local maximum deployment capacity and Factory debt ceiling/allocation;
-- live Frax custodian USDC redemption inventory, fees, limits, endpoint identity, and authorization at the intended activation block. A successful preview or bounded canary quote is not durable capacity evidence.
+- live FraxNet factory/account identity, direct-custodian inventory, configured RWA route, downstream atomic USDC capacity, fees, limits, and authorization at the intended activation block. A successful preview or bounded canary is not durable capacity evidence, and offchain settlement capacity is not immediate liquidity.
 
 The initial release does not register a Curve-router adapter for the fixed `crvUSD`/`yieldToken` buyback edge. Direct buyback remains available only through the explicit `buyback()` interface, which returns the fixed yield token and preserves measured accounting. Router compatibility may be proposed later without expanding the initial release surface.
 

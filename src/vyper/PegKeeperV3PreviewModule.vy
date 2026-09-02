@@ -362,8 +362,12 @@ def _preview_route_step(
         amount_out = _amount_in
     elif _step.kind == STEP_ERC4626_DEPOSIT or _step.kind == STEP_FRXUSD_MINT:
         amount_out = ERC4626Route(_step.venue).previewDeposit(_amount_in)
-    elif _step.kind == STEP_ERC4626_REDEEM or _step.kind == STEP_FRXUSD_REDEEM:
+    elif _step.kind == STEP_ERC4626_REDEEM:
         amount_out = ERC4626Route(_step.venue).previewRedeem(_amount_in)
+    elif _step.kind == STEP_FRXUSD_REDEEM:
+        amount_out = self._normalize(_amount_in, _step.token_in) / self._multiplier(
+            _step.token_out
+        )
     else:
         return 0
 

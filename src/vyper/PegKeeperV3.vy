@@ -52,8 +52,15 @@ interface FrxUsdMinter:
     def frxUSD() -> address: view
     def previewDeposit(_assets: uint256) -> uint256: view
     def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
-    def previewRedeem(_shares: uint256) -> uint256: view
-    def redeem(_shares: uint256, _receiver: address, _owner: address) -> uint256: nonpayable
+
+interface FraxNetDeposit:
+    def asset() -> address: view
+    def frxUSD() -> address: view
+    def USDC() -> address: view
+    def factory() -> address: view
+    def targetEid() -> uint32: view
+    def targetAddress() -> bytes32: view
+    def processRedemption(_amount: uint256) -> uint256: nonpayable
 
 interface YieldToken:
     def asset() -> address: view
@@ -1383,8 +1390,12 @@ def _validate_route_step(_step: RouteStep):
         assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_out
     elif _step.kind == STEP_FRXUSD_REDEEM:
         assert _step.pool_index_in == 0 and _step.pool_index_out == 0
-        assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_in
-        assert FrxUsdMinter(_step.venue).asset() == _step.token_out
+        assert FraxNetDeposit(_step.venue).asset() == _step.token_in
+        assert FraxNetDeposit(_step.venue).frxUSD() == _step.token_in
+        assert FraxNetDeposit(_step.venue).USDC() == _step.token_out
+        assert FraxNetDeposit(_step.venue).factory() != empty(address)
+        assert FraxNetDeposit(_step.venue).targetEid() == 30_101
+        assert FraxNetDeposit(_step.venue).targetAddress() == convert(self, bytes32)
     else:
         raise
 
@@ -1526,9 +1537,12 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
         FrxUsdMinter(_step.venue).deposit(_amount_in, self)
     elif _step.kind == STEP_FRXUSD_REDEEM:
-        quoted_output = FrxUsdMinter(_step.venue).previewRedeem(_amount_in)
+        quoted_output = self._normalize_route_amount(_step.token_in, _amount_in) / 10 ** (
+            18 - ERC20(_step.token_out).decimals()
+        )
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
-        FrxUsdMinter(_step.venue).redeem(_amount_in, self, self)
+        token_in.transfer(_step.venue, _amount_in)
+        FraxNetDeposit(_step.venue).processRedemption(_amount_in)
     else:
         quoted_output = ERC4626Route(_step.venue).previewRedeem(_amount_in)
         minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS

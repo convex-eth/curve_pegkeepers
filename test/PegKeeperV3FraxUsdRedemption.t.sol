@@ -65,6 +65,56 @@ contract ExecutionFrxUsdExternalShare {
     }
 }
 
+contract ExecutionFraxNetDeposit {
+    uint256 internal constant PPM = 1_000_000;
+    uint256 internal constant SCALE = 1e12;
+
+    ExpansionToken public immutable frxUsdToken;
+    ExpansionToken public immutable usdcToken;
+    address public immutable recipient;
+    uint256 public executionRedeemPpm = 999_900;
+
+    constructor(ExpansionToken frxUsd_, ExpansionToken usdc_, address recipient_) {
+        frxUsdToken = frxUsd_;
+        usdcToken = usdc_;
+        recipient = recipient_;
+    }
+
+    function asset() external view returns (address) {
+        return address(frxUsdToken);
+    }
+
+    function frxUSD() external view returns (address) {
+        return address(frxUsdToken);
+    }
+
+    function USDC() external view returns (address) {
+        return address(usdcToken);
+    }
+
+    function factory() external view returns (address) {
+        return address(this);
+    }
+
+    function targetEid() external pure returns (uint32) {
+        return 30_101;
+    }
+
+    function targetAddress() external view returns (bytes32) {
+        return bytes32(uint256(uint160(recipient)));
+    }
+
+    function setExecutionRedeemRate(uint256 executionPpm_) external {
+        executionRedeemPpm = executionPpm_;
+    }
+
+    function processRedemption(uint256 amount) external returns (uint256 usdcOut) {
+        require(frxUsdToken.balanceOf(address(this)) >= amount, "frxUSD transfer");
+        usdcOut = amount * executionRedeemPpm / PPM / SCALE;
+        usdcToken.mint(recipient, usdcOut);
+    }
+}
+
 contract PegKeeperV3FraxUsdRedemptionTest is Test {
     uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 10_000e18;
@@ -85,6 +135,7 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
     ExpansionOracle internal targetOracle;
     ExpansionOracle internal yieldOracle;
     ExecutionFrxUsdExternalShare internal frax;
+    ExecutionFraxNetDeposit internal fraxNetDeposit;
     IPegKeeperV3 internal pegKeeper;
 
     function setUp() public {
@@ -108,9 +159,10 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
             address(targetOracle),
             address(yieldOracle)
         );
+        fraxNetDeposit = new ExecutionFraxNetDeposit(frxUsd, usdc, address(pegKeeper));
     }
 
-    function test_fraxRedemptionRoutePreviewsAndExecutesWithPlainFrxUsdEndpoint() public {
+    function test_fraxRedemptionRoutePreviewsAndExecutesThroughFraxNetAggregator() public {
         _installPathsAndExpand();
         _enableYieldContraction();
 
@@ -128,12 +180,15 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
         (uint256 spent, uint256 received, uint256 reward) = pegKeeper.contractViaAmm(frxUsdAmount);
 
         assertEq(spent, frxUsdAmount);
-        assertEq(received, previewOut);
-        assertEq(reward, previewReward);
+        assertGe(received, previewOut * 9_999 / 10_000);
+        assertLe(received, previewOut);
+        assertGt(reward, 0);
+        assertLe(reward, previewReward);
         assertEq(crvUsd.balanceOf(contractionKeeper), reward);
         assertEq(pegKeeper.accounted_yield_token_units(), accountedBefore - frxUsdAmount);
         assertEq(pegKeeper.deployed_crvusd(), deployedBefore - (received - reward));
-        assertEq(frxUsd.allowance(address(pegKeeper), address(frax)), 0);
+        assertEq(frxUsd.allowance(address(pegKeeper), address(fraxNetDeposit)), 0);
+        assertEq(frxUsd.balanceOf(address(fraxNetDeposit)), frxUsdAmount);
         assertEq(usdc.allowance(address(pegKeeper), address(targetPool)), 0);
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
@@ -149,7 +204,7 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
         uint256 accountedBefore = pegKeeper.accounted_yield_token_units();
         uint256 deployedBefore = pegKeeper.deployed_crvusd();
         uint256 frxBalanceBefore = frxUsd.balanceOf(address(pegKeeper));
-        frax.setRedeemRates(999_900, 990_000);
+        fraxNetDeposit.setExecutionRedeemRate(990_000);
 
         vm.prank(contractionKeeper);
         vm.expectRevert();
@@ -158,7 +213,7 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
         assertEq(pegKeeper.accounted_yield_token_units(), accountedBefore);
         assertEq(pegKeeper.deployed_crvusd(), deployedBefore);
         assertEq(frxUsd.balanceOf(address(pegKeeper)), frxBalanceBefore);
-        assertEq(frxUsd.allowance(address(pegKeeper), address(frax)), 0);
+        assertEq(frxUsd.allowance(address(pegKeeper), address(fraxNetDeposit)), 0);
     }
 
     function _installPathsAndExpand() internal {
@@ -196,7 +251,7 @@ contract PegKeeperV3FraxUsdRedemptionTest is Test {
         path = new IPegKeeperV3.RouteStep[](2);
         path[0] = IPegKeeperV3.RouteStep({
             kind: FRXUSD_REDEEM,
-            venue: address(frax),
+            venue: address(fraxNetDeposit),
             tokenIn: address(frxUsd),
             tokenOut: address(usdc),
             poolIndexIn: 0,

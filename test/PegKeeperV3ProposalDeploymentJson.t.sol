@@ -20,7 +20,9 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
             factory: makeAddr("factory"),
             usdcTargetOracle: makeAddr("usdcTargetOracle"),
             usdtTargetOracle: makeAddr("usdtTargetOracle"),
-            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle")
+            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
+            usdcFraxNetDeposit: makeAddr("usdcFraxNetDeposit"),
+            usdtFraxNetDeposit: makeAddr("usdtFraxNetDeposit")
         });
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
 
@@ -32,6 +34,8 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         assertEq(proposal.frxUsdBackingOracle(), deployment.frxUsdUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcTargetOracle);
         assertEq(proposal.usdtOracle(), deployment.usdtTargetOracle);
+        assertEq(proposal.usdcFraxNetDeposit(), deployment.usdcFraxNetDeposit);
+        assertEq(proposal.usdtFraxNetDeposit(), deployment.usdtFraxNetDeposit);
 
         vm.removeFile(TEST_OUTPUT);
     }
@@ -40,7 +44,7 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment;
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
-        vm.writeJson("1", TEST_OUTPUT, ".chainId");
+        vm.writeJson(vm.toString(block.chainid + 1), TEST_OUTPUT, ".chainId");
 
         CurveProposalLaunchPegKeeperV3 proposal = new CurveProposalLaunchPegKeeperV3();
         vm.expectRevert(bytes("deployment chain"));

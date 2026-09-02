@@ -123,17 +123,14 @@ small, but inventory exhaustion dominates at larger amounts.
 | USDe/USDC | `0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72` | USDe, USDC | 1.0 bp | 50% | 5x |
 | GHO/USDe | `0x670a72e6D22b0956C0D2573288F82DCc5d6E3a61` | GHO, USDe | 0.5 bp | 50% | 8x |
 | DaiUsds | `0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A` | DAI <-> USDS | exact 1:1 typed conversion | n/a | n/a |
-| Frax frxUSD custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC -> external frxUSD mint; external frxUSD -> USDC redeem | `mintFee() = 0`, `redeemFee() = 0` | n/a | 6-to-18 decimal conversion |
+| Frax frxUSD mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC -> external frxUSD mint | `mintFee() = 0` at the research block | n/a | 6-to-18 decimal conversion |
+| FraxNet deposit factory | `0xA3D62f83C433e2A56Af392E08a705A52DEd63696` | keeper-specific frxUSD -> USDC aggregation | current direct custodian plus factory-configured RWA redeemer | n/a | Ethereum endpoint `30101` |
 
-### Frax USDC/frxUSD primary-market adapter
+### Frax USDC/frxUSD primary-market adapters
 
-The Frax custodian above is a permissionless, upgradeable external-share minter. It is not a standard
-ERC-4626 vault because the venue is not the output share token: `asset()` is USDC while `frxUSD()` is
-the separately deployed frxUSD token. V3 therefore represents the two directions as distinct typed
-steps: `FrxUsdMint` for USDC -> frxUSD and `FrxUsdRedeem` for frxUSD -> USDC. It does not add a generic
-ERC-4626 exception or arbitrary call adapter.
+The mint custodian is a permissionless, upgradeable external-share minter. It is not a standard ERC-4626 vault because the venue is not the output share token: `asset()` is USDC while `frxUSD()` is the separately deployed frxUSD token. `FrxUsdMint` validates those getters, quotes `previewDeposit()`, pulls the exact USDC input, and measures received frxUSD. It does not add a generic ERC-4626 exception or arbitrary-call adapter.
 
-Pinned contract state:
+Pinned mint-custodian state:
 
 ```text
 proxy:              0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c
@@ -141,27 +138,18 @@ implementation:     0x0A2D27A86a2eA07bcc34e457c65AECA7631c0f10
 asset:              USDC (6 decimals)
 output:             frxUSD (18 decimals)
 mintFee:            0 / 1e18
-redeemFee:          0 / 1e18
 mintCap:            400,000,000 frxUSD
 frxUSDMinted:       255,359,360.150313908124343598 frxUSD
 maxDeposit:         144,640,639.849687 USDC
-immediate USDC:     15,382.926751 USDC
 ```
 
-`previewDeposit()` applies the current governance-configurable `mintFee` and scales native USDC units
-to frxUSD units; `deposit()` pulls the exact USDC input and mints frxUSD to V3. The custodian has no
-separate user allowlist or mint pause flag. The owner can change fees and the cap, and the proxy can be
-upgraded. Cap exhaustion, an adverse fee change, a proxy/interface change, or a deposit revert makes
-the route step fail atomically. V3 quotes immediately before execution, enforces the configured
-quote-relative minimum on its measured frxUSD balance delta, and resets its USDC allowance to zero.
+`previewDeposit()` applies the current governance-configurable `mintFee` and scales native USDC units to frxUSD units; `deposit()` pulls the exact USDC input and mints frxUSD to V3. The custodian has no separate user allowlist or mint pause flag. The owner can change fees and the cap, and the proxy can be upgraded. Cap exhaustion, an adverse fee change, a proxy/interface change, or a deposit revert makes the route step fail atomically. V3 quotes immediately before execution, enforces the configured quote-relative minimum on its measured frxUSD balance delta, and resets its USDC allowance to zero.
 
-`previewRedeem()` reports fee-adjusted unit conversion but does not enforce the custodian's live USDC
-inventory. `FrxUsdRedeem` therefore measures the actual USDC balance delta and reverts atomically on
-under-delivery, but that does not make redemption capacity durable. The canary block `25,868,730` held
-only `345.903530 USDC`; a later live probe held `119,416.458394 USDC`, with zero mint and redeem fees in
-both probes. Neither amount supports the proposed multi-million-crvUSD caps. Any route using redemption
-must remain paused until a fresh inventory-, limit-, fee-, and authorization-bounded execution canary
-passes at the intended activation block.
+Redemption does not call this custodian directly. `FrxUsdRedeem` transfers frxUSD to a keeper-specific FraxNet account created by `0xA3D6...3696` and calls `processRedemption()`. The account is fixed to LayerZero endpoint `30101` and to the keeper as its USDC recipient. It reads the factory's `frxUSDCustodian()` and `rwaRedeemer()` at execution time, consumes direct USDC inventory first, and routes any remainder through the configured RWA coordinator. The release therefore follows factory configuration instead of storing the current coordinator in V3 calldata.
+
+At research block `25,886,131`, the configured coordinator was `0x19D7...934`, linked to the USTB custodian and its USDC redemption contract. A funded fork execution demonstrated roughly `9.474 million USDC` of combined atomic output at that block, while only `486.876733 USDC` was direct custodian inventory. The larger number was bounded by downstream prefunded USDC, fees, oracle conversion, rounding, limits, and authorization; it was not the USTB custodian's full marked value. Delayed or offchain RWA settlement remains a separate capacity bucket.
+
+FraxNet exposes no preview method. V3's advisory quote is decimal-normalized par, while execution measures the actual USDC balance delta. The selected `2` bps buffer covers the current `1` bp RWA redemption fee plus observed integer rounding; a worse result reverts atomically. None of this makes capacity durable. Before activation, governance must revalidate the account recipient, factory membership, beacon implementation, factory pause state, direct inventory, current RWA graph, downstream USDC, fees, caps, oracle freshness, and bounded execution.
 
 ### Selected launch override
 

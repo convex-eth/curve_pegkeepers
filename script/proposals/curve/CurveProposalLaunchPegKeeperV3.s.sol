@@ -8,6 +8,8 @@ import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
 import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
+import {IFraxNetDeposit} from "../../../src/interfaces/IFraxNetDeposit.sol";
+import {IFraxNetDepositFactory} from "../../../src/interfaces/IFraxNetDepositFactory.sol";
 
 /// @title CurveProposalLaunchPegKeeperV3
 /// @notice Deploy and register three initially paused PegKeeperV3 instances for frxUSD, USDC, and USDT.
@@ -20,18 +22,19 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 23_761;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 23_793;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 24_154;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 24_186;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0x83d97e75622beff4a7f7bad21cb00cd2f9685b4e57eae25988caeb3834e62662;
+        0x5736c5cc1d0c99380a1a68e8aebdf17756906e5eb310dcb9387eed58fab53754;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0xc694c013b8b5e80960fe97a258244d8a14d22db89a1f481e16cf9eeaa245240c;
+        0xc20424f3497c62e9b297e777379dd16a820f6b0960a8defe7bc1b76de01b82ce;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_FRXUSD_MINT = 4;
     uint256 public constant ROUTE_FRXUSD_REDEEM = 5;
     uint256 public constant CURVE_EXECUTION_BUFFER_BPS = 3;
-    uint256 public constant FRXUSD_EXECUTION_BUFFER_BPS = 1;
+    uint256 public constant FRXUSD_MINT_EXECUTION_BUFFER_BPS = 1;
+    uint256 public constant FRAXNET_REDEMPTION_EXECUTION_BUFFER_BPS = 2;
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 1_000;
@@ -65,12 +68,16 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     address public constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address public constant THREE_POOL = 0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7;
     address public constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
+    address public constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
+    uint32 public constant ETHEREUM_LAYERZERO_EID = 30_101;
 
     address public deploymentFactory;
     address public frxUsdOracle;
     address public frxUsdBackingOracle;
     address public usdcOracle;
     address public usdtOracle;
+    address public usdcFraxNetDeposit;
+    address public usdtFraxNetDeposit;
 
     function run() external returns (uint256 proposalId) {
         loadDeployment(DEPLOYMENT_INPUT_PATH);
@@ -91,6 +98,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         frxUsdBackingOracle = frxUsdOracle;
         usdcOracle = vm.parseJsonAddress(json, ".usdcTargetOracle");
         usdtOracle = vm.parseJsonAddress(json, ".usdtTargetOracle");
+        usdcFraxNetDeposit = vm.parseJsonAddress(json, ".usdcFraxNetDeposit");
+        usdtFraxNetDeposit = vm.parseJsonAddress(json, ".usdtFraxNetDeposit");
     }
 
     function setDeploymentFactory(address factory) external {
@@ -112,6 +121,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         usdtOracle = usdtOracle_;
     }
 
+    function setFraxNetDeposits(address usdcAccount, address usdtAccount) external {
+        require(usdcAccount != address(0) && usdtAccount != address(0), "zero FraxNet account");
+        usdcFraxNetDeposit = usdcAccount;
+        usdtFraxNetDeposit = usdtAccount;
+    }
+
     function expectedKeeper(uint256 keeperNumber) public view returns (address) {
         require(deploymentFactory != address(0), "factory not set");
         require(keeperNumber > 0 && keeperNumber <= 3, "keeper number");
@@ -130,6 +145,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         address frxUsdKeeper = expectedKeeper(1);
         address usdcKeeper = expectedKeeper(2);
         address usdtKeeper = expectedKeeper(3);
+        _validateFraxNetAccount(usdcFraxNetDeposit, usdcKeeper);
+        _validateFraxNetAccount(usdtFraxNetDeposit, usdtKeeper);
         actions = new Action[](17);
 
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
@@ -154,7 +171,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             usdcOracle,
             frxUsdBackingOracle,
             _frxUsdExpansion(USDC, 1),
-            _frxUsdContraction(USDC, 1)
+            _frxUsdContraction(USDC, 1, usdcFraxNetDeposit)
         );
         actions[7] = _setPolicyAction(usdcKeeper, USDC_CAP);
         actions[8] = _debtCeilingAction(usdcKeeper, USDC_CAP);
@@ -169,7 +186,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             usdtOracle,
             frxUsdBackingOracle,
             _frxUsdExpansion(USDT, 2),
-            _frxUsdContraction(USDT, 2)
+            _frxUsdContraction(USDT, 2, usdtFraxNetDeposit)
         );
         actions[13] = _setPolicyAction(usdtKeeper, USDT_CAP);
         actions[14] = _debtCeilingAction(usdtKeeper, USDT_CAP);
@@ -235,6 +252,22 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     function _validateMonetaryPolicies() internal view {
         _validateMonetaryPolicy(CRVUSD_MONETARY_POLICY);
         _validateMonetaryPolicy(CRVUSD_LEGACY_MONETARY_POLICY);
+    }
+
+    function _validateFraxNetAccount(address account, address keeper) internal view {
+        require(account.code.length > 0, "FraxNet account code");
+        IFraxNetDepositFactory factory = IFraxNetDepositFactory(FRAXNET_DEPOSIT_FACTORY);
+        require(!factory.isPaused(), "FraxNet factory paused");
+        require(factory.isFraxNetDeposit(account), "unknown FraxNet account");
+        require(factory.frxUSDCustodian() == FRXUSD_CUSTODIAN, "FraxNet custodian");
+        require(factory.rwaRedeemer() != address(0), "FraxNet RWA route");
+        IFraxNetDeposit deposit = IFraxNetDeposit(account);
+        require(deposit.asset() == FRXUSD, "FraxNet asset");
+        require(deposit.frxUSD() == FRXUSD, "FraxNet frxUSD");
+        require(deposit.USDC() == USDC, "FraxNet USDC");
+        require(deposit.factory() == FRAXNET_DEPOSIT_FACTORY, "FraxNet factory");
+        require(deposit.targetEid() == ETHEREUM_LAYERZERO_EID, "FraxNet EID");
+        require(deposit.targetAddress() == bytes32(uint256(uint160(keeper))), "FraxNet recipient");
     }
 
     function _validateMonetaryPolicy(address policy) internal view {
@@ -354,14 +387,14 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         route[mintIndex] = _frxUsd(ROUTE_FRXUSD_MINT, USDC, FRXUSD);
     }
 
-    function _frxUsdContraction(address targetAsset, int128 targetIndex)
+    function _frxUsdContraction(address targetAsset, int128 targetIndex, address fraxNetAccount)
         internal
         pure
         returns (IPegKeeperV3.RouteStep[] memory route)
     {
         bool isUsdt = targetAsset == USDT;
         route = new IPegKeeperV3.RouteStep[](isUsdt ? 3 : 2);
-        route[0] = _frxUsd(ROUTE_FRXUSD_REDEEM, FRXUSD, USDC);
+        route[0] = _frxUsdRedeem(fraxNetAccount);
         uint256 targetAmmIndex = 1;
         if (isUsdt) {
             route[1] = _curve(THREE_POOL, USDC, USDT, 1, targetIndex);
@@ -401,7 +434,23 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             tokenOut: tokenOut,
             poolIndexIn: 0,
             poolIndexOut: 0,
-            executionBufferBps: FRXUSD_EXECUTION_BUFFER_BPS
+            executionBufferBps: FRXUSD_MINT_EXECUTION_BUFFER_BPS
+        });
+    }
+
+    function _frxUsdRedeem(address fraxNetAccount)
+        internal
+        pure
+        returns (IPegKeeperV3.RouteStep memory)
+    {
+        return IPegKeeperV3.RouteStep({
+            kind: ROUTE_FRXUSD_REDEEM,
+            venue: fraxNetAccount,
+            tokenIn: FRXUSD,
+            tokenOut: USDC,
+            poolIndexIn: 0,
+            poolIndexOut: 0,
+            executionBufferBps: FRAXNET_REDEMPTION_EXECUTION_BUFFER_BPS
         });
     }
 

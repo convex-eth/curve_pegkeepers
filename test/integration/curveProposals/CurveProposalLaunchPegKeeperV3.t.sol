@@ -17,6 +17,32 @@ import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.s
 import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
 
+interface IFraxNetDepositView {
+    function asset() external view returns (address);
+    function frxUSD() external view returns (address);
+    function USDC() external view returns (address);
+    function factory() external view returns (address);
+    function targetEid() external view returns (uint32);
+    function targetAddress() external view returns (bytes32);
+}
+
+contract FraxNetDepositHarness {
+    address public immutable asset;
+    address public immutable frxUSD;
+    address public immutable USDC;
+    address public immutable factory;
+    uint32 public constant targetEid = 30_101;
+    bytes32 public immutable targetAddress;
+
+    constructor(address frxUsd, address usdc, address factory_, address recipient) {
+        asset = frxUsd;
+        frxUSD = frxUsd;
+        USDC = usdc;
+        factory = factory_;
+        targetAddress = bytes32(uint256(uint160(recipient)));
+    }
+}
+
 contract CurveEDAOProxyHarness {
     function execute(address target, bytes calldata data)
         external
@@ -44,6 +70,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant CONVEX_VOTEPROXY = 0x989AEb4d175e16225E39E87d0D97A3360524AD80;
     address internal constant YEARN_VOTEPROXY = 0xF147b8125d2ef93FB6965Db97D6746952a133934;
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
+    address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
 
     uint256 internal constant FRXUSD_CAP = 2_500_000e18;
     uint256 internal constant USDC_CAP = 2_500_000e18;
@@ -59,7 +86,9 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal expectedUsdtKeeper;
 
     function setUp() public {
-        vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co")));
+        vm.createSelectFork(
+            vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co")), 25_868_730
+        );
         // This repository targets Shanghai bytecode. The live eDAO proxy now executes an opcode
         // from a later fork after forwarding the call, so use an ABI-equivalent forwarding harness
         // while retaining the real proxy address and ControllerFactory authorization boundary.
@@ -79,6 +108,41 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);
         expectedUsdcKeeper = proposal.expectedKeeper(2);
         expectedUsdtKeeper = proposal.expectedKeeper(3);
+
+        address usdcAccount = address(
+            new FraxNetDepositHarness(
+                proposal.FRXUSD(), proposal.USDC(), FRAXNET_DEPOSIT_FACTORY, expectedUsdcKeeper
+            )
+        );
+        address usdtAccount = address(
+            new FraxNetDepositHarness(
+                proposal.FRXUSD(), proposal.USDC(), FRAXNET_DEPOSIT_FACTORY, expectedUsdtKeeper
+            )
+        );
+        proposal.setFraxNetDeposits(usdcAccount, usdtAccount);
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY, abi.encodeWithSignature("isPaused()"), abi.encode(false)
+        );
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY,
+            abi.encodeWithSignature("isFraxNetDeposit(address)", usdcAccount),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY,
+            abi.encodeWithSignature("isFraxNetDeposit(address)", usdtAccount),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY,
+            abi.encodeWithSignature("frxUSDCustodian()"),
+            abi.encode(proposal.FRXUSD_CUSTODIAN())
+        );
+        vm.mockCall(
+            FRAXNET_DEPOSIT_FACTORY,
+            abi.encodeWithSignature("rwaRedeemer()"),
+            abi.encode(address(0x19D7))
+        );
     }
 
     function test_ProposalActionsOnlyConfigureNewV3Keepers() public view {
@@ -390,16 +454,25 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             0,
             1
         );
+        address fraxNetAccount =
+            isUsdt ? proposal.usdtFraxNetDeposit() : proposal.usdcFraxNetDeposit();
         _assertStep(
             keeper.contraction_path_step(0),
             5,
-            proposal.FRXUSD_CUSTODIAN(),
+            fraxNetAccount,
             proposal.FRXUSD(),
             proposal.USDC(),
             0,
             0,
-            1
+            2
         );
+        IFraxNetDepositView deposit = IFraxNetDepositView(fraxNetAccount);
+        assertEq(deposit.asset(), proposal.FRXUSD());
+        assertEq(deposit.frxUSD(), proposal.FRXUSD());
+        assertEq(deposit.USDC(), proposal.USDC());
+        assertEq(deposit.factory(), FRAXNET_DEPOSIT_FACTORY);
+        assertEq(deposit.targetEid(), 30_101);
+        assertEq(deposit.targetAddress(), bytes32(uint256(uint160(address(keeper)))));
         uint256 targetAmmIndex = 1;
         if (isUsdt) {
             _assertStep(

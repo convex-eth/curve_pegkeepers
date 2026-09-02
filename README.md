@@ -63,10 +63,10 @@ frxUSD: expansion []
         contraction frxUSD -> crvUSD through the frxUSD target AMM
 
 USDC:   expansion USDC -> frxUSD through Frax mint
-        contraction frxUSD -> USDC through Frax redemption -> crvUSD
+        contraction frxUSD -> USDC through a keeper-specific FraxNet account -> crvUSD
 
 USDT:   expansion USDT -> USDC through 3pool -> frxUSD through Frax mint
-        contraction frxUSD -> USDC through Frax redemption
+        contraction frxUSD -> USDC through a keeper-specific FraxNet account
                     -> USDT through 3pool -> crvUSD
 ```
 
@@ -74,7 +74,7 @@ Final-token accounting mode is explicit at factory deployment. In vanilla mode, 
 
 Undeployed target backing is an intentional terminal state; intermediate route assets remain transient. The invariant counts the complete live target balance plus the configured final-token value. When `targetAsset == yieldToken`, the shared balance is counted once. Donations of either configured token become protocol backing immediately, but never inflate action-local route output.
 
-Expansion and contraction paths are separately updatable through atomic governance execution. Routes use typed Curve-swap, canonical DaiUsds-converter, ERC-4626 deposit/redeem, Frax mint, and Frax redemption steps rather than arbitrary calldata. Frax mint and redemption are distinct route kinds because the external-share custodian is not a conventional ERC-4626 vault. An expansion path may be empty only when `targetAsset == yieldToken`; contraction remains independently nonempty and must end in crvUSD. Each directional path permits at most `16` steps.
+Expansion and contraction paths are separately updatable through atomic governance execution. Routes use typed Curve-swap, canonical DaiUsds-converter, ERC-4626 deposit/redeem, Frax mint, and FraxNet redemption steps rather than arbitrary calldata. Minting calls the external-share USDC custodian. Redemption transfers frxUSD to a keeper-specific FraxNet account, which dynamically uses its factory's direct custodian and configured RWA redeemer and returns USDC only to that keeper. An expansion path may be empty only when `targetAsset == yieldToken`; contraction remains independently nonempty and must end in crvUSD. Each directional path permits at most `16` steps.
 
 Configured paths remain exact-input and use protocol-calculated minimum outputs. The target AMM and every typed step enforce both a same-transaction quote-consistency floor and an absolute normalized-value floor using the configured buffer. The final trusted-value profit floor and downstream `maxRouteLossBps` remain independent checks. Direct buyback transfers only the configured final token: vanilla mode uses identity unit conversion, while ERC-4626 mode uses conservative `convertToShares()` sizing and whole-position `convertToAssets()` valuation.
 
@@ -126,8 +126,8 @@ The factory stores the shared PegKeeper admin, distinct emergency admin, fee rec
 
 V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
 
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): one explicit, environment-free six-CREATE mainnet deployment of the stateless preview module, locked implementation, immutable EIP-1167 factory, two Curve USDC/USDT target adapters, and one canonical frxUSD/USD Chainlink adapter; it writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`;
-- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet simulation of the selected USDT keeper's USDT → USDC → frxUSD expansion and frxUSD → USDC → USDT → crvUSD contraction preview;
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): one explicit, environment-free mainnet deployment of the stateless preview module, locked implementation, immutable EIP-1167 factory, two Curve USDC/USDT target adapters, one canonical frxUSD/USD Chainlink adapter, and two canonical FraxNet accounts bound to the predicted USDC and USDT keepers; it writes every address to `deployments/mainnet/PegKeeperV3-deployment.json`;
+- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet simulation of the selected USDT keeper's USDT → USDC → frxUSD expansion and an executed frxUSD → FraxNet RWA redemption → USDC → USDT → crvUSD contraction;
 - [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
 - [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
 - [`docs/pegkeeper-v3-suggested-launch-parameters.md`](docs/pegkeeper-v3-suggested-launch-parameters.md): focused initial deployment caps, shared defaults, exact frxUSD/USDC/USDT routes, and activation order;
