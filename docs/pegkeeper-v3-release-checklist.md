@@ -5,8 +5,8 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 ## 0. Frozen source
 
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
-- [x] Production source commit: `92c5b80815c6c64adaf92db1e52ad82c88138bc4`.
-- [x] Exact pre-commit staged source diff SHA-256: `26ee913662c89e163cd192bd5bcc2ede4ffa299a66f17f1d469ed87f4eee8c77`.
+- [x] Production source commit: `f9c553411a895d5cc4258fe9788ccc064aa81a14`.
+- [x] Exact pre-commit staged source diff SHA-256: `e5064faf3a99b179a2ea524ddb544b75a72a8ff70a5d28807e22441e3aee0723`.
 - [x] Source commit is pushed to `origin/main`.
 - [x] Evidence is regenerated from the exact production source commit.
 - [x] Evidence drift is restricted to:
@@ -31,13 +31,13 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 ### PegKeeperV3 implementation
 
-- [x] Source SHA-256: `c87e79b5b4a07567ac01bd99ea7418eefe0ea3728f3131aef0b464cc34e9b786`.
-- [x] Compiler creation code: `24,563` bytes.
-- [x] Compiler creation keccak: `0xed1dd27180ae338081cae7fbffc19a8369e66ba0882f4728cd5b98ac4b2160e2`.
-- [x] Full initcode with constructor argument: `24,595` bytes; EIP-3860 margin `24,557` bytes.
-- [x] Semantic runtime core: `24,409` bytes.
-- [x] Semantic runtime keccak: `0x7142ae105ea472f77b3fd6d5a3568c32f82c68134d61a3db7be95ae74be128b5`.
-- [x] Deployed runtime with immutable preview address: `24,441` bytes; EIP-170 margin `135` bytes.
+- [x] Source SHA-256: `5d8a4e1c86b8389e40f5499939410d6f537dee29f1d37ec18bcd20aeb8a879e0`.
+- [x] Compiler creation code: `24,530` bytes.
+- [x] Compiler creation keccak: `0x56e71c01f1a99a3a7c054d8f80a0e19ccf63e8d21dc1dae2933ca035b2aa26cc`.
+- [x] Full initcode with constructor argument: `24,562` bytes; EIP-3860 margin `24,590` bytes.
+- [x] Semantic runtime core: `24,376` bytes.
+- [x] Semantic runtime keccak: `0x27f9f30c748e811ab392215a748350f63e923cc2fa1ff6ddcdd457b89e4b5f35`.
+- [x] Deployed runtime with immutable preview address: `24,408` bytes; EIP-170 margin `168` bytes.
 - [x] ABI parity: `81` functions and `14` events.
 - [x] Locked implementation cannot be operationally initialized.
 
@@ -107,7 +107,7 @@ All keepers use plain frxUSD as final token and start fully paused.
 
 ## 6. Verification evidence
 
-- [x] Full forced suite: `298 passed`, `0 failed`, `0 skipped`.
+- [x] Full forced suite: `300 passed`, `0 failed`, `0 skipped`.
 - [x] Stateful invariants: all six campaigns passed at `256` runs × `500` calls.
 - [x] All focused endpoint, Frax redemption, deployment, proposal, fork, and rollback suites passed.
 - [x] ABI parity passed for implementation, Factory, preview module, Curve oracle, and Chainlink oracle.
@@ -123,7 +123,7 @@ All keepers use plain frxUSD as final token and start fully paused.
   - the Shanghai canary discloses its cloned live FraxNet beacon proxy and ABI-equivalent USTB token harness; the live Frax coordinator, cap/price logic, USDC redeemer, and USDC inventory remained in-path;
   - expansion path hash: `0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d`;
   - contraction path hash: `0x1602a97a9de217a466169f46195f2ac971329883350aea19826b7a2a97c2ef9c`.
-- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path, release wiring, and admin debt-reduction changes.
+- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path, release wiring, admin debt-reduction, and terminal contraction-profit changes.
 - [x] This regenerated evidence package is subject to a final exact staged-diff audit.
 - [x] Manifest mutation tests rejected top-level schema drift, test-count drift, endpoint-mode drift, Frax redemption-buffer drift, adapter-count drift, deployed-state drift, canary-hash drift, and activation-blocker drift; byte-exact restoration passed.
 
@@ -160,7 +160,7 @@ The pinned-block atomic-liquidity observation is not an activation guarantee. Th
 
 ## 9. Operator sequence after explicit authorization
 
-1. Check out `92c5b80815c6c64adaf92db1e52ad82c88138bc4` and verify the evidence commit changes only the three evidence files.
+1. Check out `f9c553411a895d5cc4258fe9788ccc064aa81a14` and verify the evidence commit changes only the three evidence files.
 2. Run `make check` and the current-block no-broadcast canary.
 3. Run the unified deployer without broadcast from the intended deployment sender; inspect and remove the temporary deployment JSON if the run is rejected.
 4. Reconfirm all hardcoded addresses, code hashes, nonces, oracle health, Frax capacity, and policy/cap values.

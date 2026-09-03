@@ -1,9 +1,9 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-03T02:20:49Z",
+  "generatedAtUtc": "2026-09-03T04:57:32Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "92c5b80815c6c64adaf92db1e52ad82c88138bc4",
-  "productionSourceDiffSha256": "26ee913662c89e163cd192bd5bcc2ede4ffa299a66f17f1d469ed87f4eee8c77",
+  "productionSourceCommit": "f9c553411a895d5cc4258fe9788ccc064aa81a14",
+  "productionSourceDiffSha256": "e5064faf3a99b179a2ea524ddb544b75a72a8ff70a5d28807e22441e3aee0723",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -15,21 +15,21 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "c87e79b5b4a07567ac01bd99ea7418eefe0ea3728f3131aef0b464cc34e9b786"
+      "sha256": "5d8a4e1c86b8389e40f5499939410d6f537dee29f1d37ec18bcd20aeb8a879e0"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 24563,
-      "compilerCreationKeccak256": "0xed1dd27180ae338081cae7fbffc19a8369e66ba0882f4728cd5b98ac4b2160e2",
+      "compilerCreationBytes": 24530,
+      "compilerCreationKeccak256": "0x56e71c01f1a99a3a7c054d8f80a0e19ccf63e8d21dc1dae2933ca035b2aa26cc",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 24595,
+      "fullInitCodeBytes": 24562,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 24557,
-      "semanticCoreRuntimeBytes": 24409,
-      "semanticCoreRuntimeKeccak256": "0x7142ae105ea472f77b3fd6d5a3568c32f82c68134d61a3db7be95ae74be128b5",
-      "deployedRuntimeBytes": 24441,
+      "fullInitCodeMarginBytes": 24590,
+      "semanticCoreRuntimeBytes": 24376,
+      "semanticCoreRuntimeKeccak256": "0x27f9f30c748e811ab392215a748350f63e923cc2fa1ff6ddcdd457b89e4b5f35",
+      "deployedRuntimeBytes": 24408,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 135,
+      "deployedRuntimeMarginBytes": 168,
       "abiFunctions": 81,
       "abiEvents": 14
     },
@@ -257,7 +257,7 @@
     }
   },
   "verification": {
-    "testsPassed": 298,
+    "testsPassed": 300,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
