@@ -782,9 +782,7 @@ def _transfer_exact_to(_token: ERC20, _recipient: address, _amount: uint256):
     if _amount > 0:
         recipient_balance_before: uint256 = _token.balanceOf(_recipient)
         _token.transfer(_recipient, _amount)
-        recipient_balance_after: uint256 = _token.balanceOf(_recipient)
-        assert recipient_balance_after >= recipient_balance_before
-        assert recipient_balance_after - recipient_balance_before == _amount
+        assert _token.balanceOf(_recipient) - recipient_balance_before == _amount
 
 
 @internal
@@ -816,12 +814,10 @@ def _target_amm_swap_exact_in(
     _token_in.approve(self.target_amm.address, 0)
 
     input_balance_after: uint256 = _token_in.balanceOf(self)
-    assert _input_balance_before >= input_balance_after
     amount_spent: uint256 = _input_balance_before - input_balance_after
     assert amount_spent == _amount_in
 
     output_balance_after: uint256 = _token_out.balanceOf(self)
-    assert output_balance_after >= _output_balance_before
     amount_received: uint256 = output_balance_after - _output_balance_before
     assert amount_received >= minimum_output
     input_value: uint256 = self._normalize_route_amount(_token_in.address, amount_spent)
@@ -849,9 +845,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
 
     crv_usd_after_reward: uint256 = self._crv_usd.balanceOf(self)
-    assert _crv_usd_after_swap >= crv_usd_after_reward
     assert _crv_usd_after_swap - crv_usd_after_reward == keeper_reward
-    assert crv_usd_after_reward >= _crv_usd_before
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
     early_exit: bool = self._is_early_exit()
@@ -861,8 +855,16 @@ def _settle_keeper_contraction_and_reduce_exposure(
     exit_margin: uint256 = _trusted_value_removed * exit_margin_ppm / PPM
     assert net_crv_usd >= _trusted_value_removed + exit_margin
 
-    exposure_reduction: uint256 = min(net_crv_usd, self.deployed_crvusd)
-    self.deployed_crvusd -= exposure_reduction
+    deployed_crv_usd: uint256 = self.deployed_crvusd
+    if net_crv_usd > deployed_crv_usd:
+        self.deployed_crvusd = 0
+        self._transfer_exact_to(
+            self._crv_usd,
+            self._factory.fee_receiver(),
+            net_crv_usd - deployed_crv_usd,
+        )
+    else:
+        self.deployed_crvusd = deployed_crv_usd - net_crv_usd
     return gross_profit, keeper_reward, early_exit
 
 
@@ -1253,7 +1255,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 @nonreentrant("lock")
 def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uint256):
     """
-    @notice Swaps held target tokens back to crvUSD and pays the caller a share of any profit.
+    @notice Swaps held target tokens back to crvUSD, pays the caller, and sends terminal profit to the fee receiver.
     """
     assert not self.all_execution_paused
     assert not self.undeployed_contraction_paused
@@ -1280,7 +1282,6 @@ def contractUndeployedBacking(_target_amount: uint256) -> (uint256, uint256, uin
     crv_usd_after_swap: uint256 = crv_usd_before + crv_usd_received
 
     trusted_backing_after: uint256 = self._trusted_backing_value()
-    assert trusted_backing_before >= trusted_backing_after
     trusted_value_removed: uint256 = trusted_backing_before - trusted_backing_after
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
@@ -1562,9 +1563,7 @@ def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
     token_in.approve(_step.venue, 0)
     input_balance_after: uint256 = token_in.balanceOf(self)
     output_balance_after: uint256 = token_out.balanceOf(self)
-    assert input_balance_before >= input_balance_after
     assert input_balance_before - input_balance_after == _amount_in
-    assert output_balance_after >= output_balance_before
     amount_out: uint256 = output_balance_after - output_balance_before
     if _step.kind == STEP_DAI_USDS_CONVERTER:
         assert amount_out == minimum_output
@@ -1815,7 +1814,7 @@ def unwindYieldToTarget(_yield_token_amount: uint256) -> (uint256, uint256):
 @nonreentrant("lock")
 def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
     """
-    @notice Sells final tokens for crvUSD through the set token path and pays the caller a share of any profit.
+    @notice Sells final tokens for crvUSD, pays the caller, and sends terminal profit to the fee receiver.
     """
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
@@ -1839,17 +1838,14 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
 
     yield_balance_after: uint256 = self._yield_token.balanceOf(self)
     crv_usd_after_swap: uint256 = self._crv_usd.balanceOf(self)
-    assert yield_balance_before >= yield_balance_after
     yield_token_spent: uint256 = yield_balance_before - yield_balance_after
     assert yield_token_spent == _yield_token_amount
-    assert crv_usd_after_swap >= crv_usd_before
     crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
     assert crv_usd_received == route_output
 
     trusted_value_after: uint256 = self._trusted_yield_value(
         accounted_before - yield_token_spent
     )
-    assert trusted_value_before >= trusted_value_after
     trusted_value_removed: uint256 = trusted_value_before - trusted_value_after
     assert trusted_value_removed <= self.deployed_crvusd
 

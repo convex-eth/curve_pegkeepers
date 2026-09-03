@@ -115,6 +115,7 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertEq(reward, expectedReward);
         assertEq(crvUsd.balanceOf(contractionKeeper), expectedReward);
         assertEq(crvUsd.balanceOf(address(pegKeeper)), expectedNet);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
         assertEq(pegKeeper.accounted_yield_token_units(), accountedBefore - yieldAmount);
         assertEq(pegKeeper.deployed_crvusd(), deployedBefore - expectedNet);
         assertEq(pegKeeper.last_expansion_at(), expansionTime);
@@ -148,7 +149,8 @@ contract PegKeeperV3YieldContractionTest is Test {
         vm.prank(contractionKeeper);
         yieldContraction.contractViaAmm(accounted);
         assertEq(pegKeeper.deployed_crvusd(), 0);
-        assertGt(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+        assertGt(crvUsd.balanceOf(feeReceiver), 0);
 
         vm.prank(expansionKeeper);
         pegKeeper.expand(EXPANSION_AMOUNT);
@@ -523,18 +525,80 @@ contract PegKeeperV3YieldContractionTest is Test {
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
-    function test_fullYieldContractionCapsExposureReduction() public {
+    function test_fullYieldContractionPaysTerminalProfitToCurrentFeeReceiver() public {
         _enableYieldContraction();
+        address currentFeeReceiver = makeAddr("currentFeeReceiver");
+        factory.setGovernance(governance, emergencyAdmin, currentFeeReceiver);
         uint256 amount = pegKeeper.accounted_yield_token_units();
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        uint256 idleDonation = 77e18;
+        crvUsd.mint(address(pegKeeper), idleDonation);
         (uint256 expectedOut,, uint256 expectedReward) = _expected(amount);
+        uint256 expectedNet = expectedOut - expectedReward;
+        uint256 expectedTerminalProfit = expectedNet - deployedBefore;
 
         vm.prank(contractionKeeper);
         yieldContraction.contractViaAmm(amount);
 
         assertEq(pegKeeper.accounted_yield_token_units(), 0);
         assertEq(pegKeeper.deployed_crvusd(), 0);
-        assertEq(crvUsd.balanceOf(address(pegKeeper)), expectedOut - expectedReward);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
+        assertEq(crvUsd.balanceOf(currentFeeReceiver), expectedTerminalProfit);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), idleDonation + deployedBefore);
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
+    }
+
+    function test_terminalContractionLeavesRemainingYieldForSurplusClaim() public {
+        _enableYieldContraction();
+        daiToCrvUsdPool.setPrices(2_000_000, 2_000_000);
+        uint256 accountedBefore = pegKeeper.accounted_yield_token_units();
+        uint256 amount = accountedBefore * 3 / 4;
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        (uint256 expectedOut,, uint256 expectedReward) = _expected(amount);
+        uint256 expectedTerminalProfit = expectedOut - expectedReward - deployedBefore;
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(amount);
+
+        uint256 remainingYield = accountedBefore - amount;
+        uint256 remainingSurplus = pegKeeper.protocol_surplus();
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), remainingYield);
+        assertEq(crvUsd.balanceOf(feeReceiver), expectedTerminalProfit);
+        assertGt(remainingSurplus, 0);
+
+        uint256 feeBalanceBeforeClaim = crvUsd.balanceOf(feeReceiver);
+        uint256 claimed = pegKeeper.claimSurplus(type(uint256).max);
+
+        assertEq(claimed, remainingSurplus);
+        assertEq(pegKeeper.deployed_crvusd(), remainingSurplus);
+        assertEq(pegKeeper.accounted_yield_token_units(), remainingYield);
+        assertEq(crvUsd.balanceOf(feeReceiver), feeBalanceBeforeClaim + claimed);
+        assertEq(pegKeeper.protocol_surplus(), 0);
+    }
+
+    function test_exactDebtReceiptZerosDebtWithoutTerminalProfit() public {
+        _enableYieldContraction();
+        yieldToken.setRates(1_000_000, 1_000_000, 800_000);
+        daiToCrvUsdPool.setPrices(1_000_000, 1_000_000);
+        vm.prank(governance);
+        pegKeeper.set_policy(10, 1_000, 5_000, 0, 2 days, 10_000e18, MAX_DEPLOYED);
+        uint256 accounted = pegKeeper.accounted_yield_token_units();
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
+        (uint256 expectedOut, uint256 expectedGrossProfit, uint256 expectedReward, bool earlyExit) =
+            yieldContraction.previewKeeperBuyback(accounted);
+        assertEq(expectedOut, deployedBefore);
+        assertGt(expectedGrossProfit, 0);
+        assertEq(expectedReward, 0);
+        assertTrue(earlyExit);
+
+        vm.prank(contractionKeeper);
+        yieldContraction.contractViaAmm(accounted);
+
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.accounted_yield_token_units(), 0);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), deployedBefore);
     }
 
     function testFuzz_yieldContractionPreservesPrincipalAcrossAmountsAndRates(

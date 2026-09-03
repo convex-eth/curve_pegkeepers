@@ -336,11 +336,11 @@ interface IPegKeeperV3 {
             uint256 expectedKeeperReward,
             bool earlyExit
         );
-    /// @notice Swaps held target tokens back to crvUSD and pays the caller a share of any profit.
+    /// @notice Swaps held target tokens back to crvUSD, pays the caller, and sends terminal profit to the fee receiver.
     function contractUndeployedBacking(uint256 targetAmount)
         external
         returns (uint256 targetSpent, uint256 crvUsdReceived, uint256 keeperReward);
-    /// @notice Sells final tokens for crvUSD through the set token path and pays the caller a share of any profit.
+    /// @notice Sells final tokens for crvUSD, pays the caller, and sends terminal profit to the fee receiver.
     function contractViaAmm(uint256 yieldTokenAmount)
         external
         returns (uint256 yieldTokenSpent, uint256 crvUsdReceived, uint256 keeperReward);

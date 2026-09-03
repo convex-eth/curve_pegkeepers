@@ -102,6 +102,7 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         assertEq(reward, expectedReward);
         assertEq(crvUsd.balanceOf(contractionKeeper), expectedReward);
         assertEq(crvUsd.balanceOf(address(pegKeeper)), expectedNet);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
         assertEq(pegKeeper.undeployed_backing(), backingBefore - targetAmount);
         assertEq(pegKeeper.deployed_crvusd(), deployedBefore - expectedNet);
         assertEq(pegKeeper.last_expansion_at(), expansionTime);
@@ -146,7 +147,8 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         vm.prank(contractionKeeper);
         contraction.contractUndeployedBacking(10_000e6);
         assertEq(pegKeeper.deployed_crvusd(), 0);
-        assertGt(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), EXPANSION_AMOUNT);
+        assertGt(crvUsd.balanceOf(feeReceiver), 0);
 
         vm.prank(expansionKeeper);
         pegKeeper.expand(EXPANSION_AMOUNT);
@@ -211,18 +213,22 @@ contract PegKeeperV3UndeployedContractionTest is Test {
         assertEq(pegKeeper.undeployed_backing(), inventoryBefore);
     }
 
-    function test_fullContractionCapsExposureReductionAtCurrentDeployedAmount() public {
+    function test_fullContractionPaysTerminalProfitToFeeReceiver() public {
         _createUndeployedBacking();
         _enableContraction();
         uint256 targetAmount = pegKeeper.undeployed_backing();
+        uint256 deployedBefore = pegKeeper.deployed_crvusd();
         (uint256 expectedOut,, uint256 expectedReward) = _expected(targetAmount);
+        uint256 expectedNet = expectedOut - expectedReward;
+        uint256 expectedTerminalProfit = expectedNet - deployedBefore;
 
         vm.prank(contractionKeeper);
         contraction.contractUndeployedBacking(targetAmount);
 
         assertEq(pegKeeper.undeployed_backing(), 0);
         assertEq(pegKeeper.deployed_crvusd(), 0);
-        assertEq(crvUsd.balanceOf(address(pegKeeper)), expectedOut - expectedReward);
+        assertEq(crvUsd.balanceOf(feeReceiver), expectedTerminalProfit);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), deployedBefore);
     }
 
     function testFuzz_contractionPreservesPrincipalAcrossAmountsAndProfitableSpreads(

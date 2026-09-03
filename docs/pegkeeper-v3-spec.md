@@ -136,9 +136,9 @@ yieldContractionPaused
 
 `undeployedBacking()` and `accountedYieldTokenUnits()` remain ABI-compatible view getters, but they are not storage counters. They return `targetAsset.balanceOf(V3)` and `yieldToken.balanceOf(V3)` respectively. Every configured target-asset or yield-token unit held by V3 is protocol inventory, including an unsolicited transfer; intermediate and arbitrary token balances are not backing.
 
-The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `24,409` bytes; deployment appends the immutable shared preview-module address for an authoritative `24,441`-byte implementation runtime, `135` bytes below EIP-170. Full implementation initcode is `24,595` bytes. The keeper-identity-bound Vyper preview module is `8,249` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
+The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `24,376` bytes; deployment appends the immutable shared preview-module address for an authoritative `24,408`-byte implementation runtime, `168` bytes below EIP-170. Full implementation initcode is `24,562` bytes. The keeper-identity-bound Vyper preview module is `8,249` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
 
-The implementation keeps economic actions separate while centralizing repeated invariants. `_remaining_exposure_capacity()` is the sole local-cap and Factory-allocation calculation used by expansion and surplus claims; velocity remains an independent bound. `_target_amm_swap_exact_in()` owns target-AMM quoting, approval reset, minimum output, and exact input/output balance deltas. `_transfer_exact_to()` owns recipient balance-delta verification for protocol payouts. `_settle_keeper_contraction_and_reduce_exposure()` owns realized profit, keeper reward, exit margin, and capped exposure reduction for both keeper-triggered contraction paths, while each caller visibly retains its own live-inventory and final-solvency checks. `_checked_route_conversion_cost()` owns the configured route-loss ceiling. Expansion, direct buyback, undeployed-backing deployment, and the two contraction front halves remain distinct because their authorization, valuation, routing, inventory, and fallback semantics differ.
+The implementation keeps economic actions separate while centralizing repeated invariants. `_remaining_exposure_capacity()` is the sole local-cap and Factory-allocation calculation used by expansion and surplus claims; velocity remains an independent bound. `_target_amm_swap_exact_in()` owns target-AMM quoting, approval reset, minimum output, and exact input/output balance deltas. `_transfer_exact_to()` owns recipient balance-delta verification for protocol payouts. `_settle_keeper_contraction_and_reduce_exposure()` owns realized profit, keeper reward, exit margin, exposure reduction, and terminal crvUSD profit payment for both keeper-triggered contraction paths, while each caller visibly retains its own live-inventory and final-solvency checks. `_checked_route_conversion_cost()` owns the configured route-loss ceiling. Expansion, direct buyback, undeployed-backing deployment, and the two contraction front halves remain distinct because their authorization, valuation, routing, inventory, and fallback semantics differ.
 
 Vyper `0.3.10` emits disproportionately large runtime sequences for assertion reason strings. V3 therefore uses bare assertions for contract-owned guards rather than splitting custody, accounting, or route execution across extra modules solely to carry diagnostic text. This size remediation removes only V3's revert strings: every predicate, authorization boundary, atomic rollback, measured-delta check, state transition, return value, and event remains unchanged. A revert returned by the target of governance `execute()` is still bubbled verbatim. Offchain integrations must not branch on V3 revert text.
 
@@ -564,7 +564,7 @@ For undeployed backing:
 4. Pay the configured percentage of realized gross profit to the keeper in crvUSD.
 5. Enforce the selected post-reward exit margin.
 6. Verify the measured target-asset outflow and resulting live backing value.
-7. Reduce `deployedCrvUsd` by net crvUSD retained, capped at the deployed amount.
+7. Reduce `deployedCrvUsd` by the post-reward crvUSD receipt capped at current exposure, then send any current-call excess above the remaining debt to the fee receiver.
 ```
 
 For yield backing:
@@ -578,8 +578,8 @@ For yield backing:
 6. Calculate the principal-recovery basis as the greater of the trusted backing value removed and the crvUSD recovery needed to keep remaining trusted backing at least equal to remaining deployed exposure. Calculate gross exit profit as crvUSD received above that basis. This prevents recovery of an existing backing deficit from becoming rewardable profit.
 7. Calculate the keeper reward as the configured percentage of gross exit profit and pay it to `msg.sender` in crvUSD.
 8. Verify the net crvUSD retained after the reward exceeds the trusted backing value spent by the selected exit margin.
-9. Reduce deployedCrvUsd by the net crvUSD retained, capped at the deployed amount.
-10. Keep the remaining recovered crvUSD idle.
+9. Reduce `deployedCrvUsd` by the post-reward crvUSD receipt, capped at the deployed amount.
+10. Keep recovered principal idle and send any current-call receipt above the remaining debt directly to the Factory's current fee receiver.
 ```
 
 The implemented keeper-contraction interface is:
@@ -604,7 +604,7 @@ postYieldValue = normalizeDown(yield_token_assets(yieldTokenBalanceAfter))
 trustedValueRemoved = preYieldValue - postYieldValue
 ```
 
-This pre/post difference is authoritative for the exposure bound, realized gross profit, selected post-reward margin, and final principal check. In ERC-4626 mode, `convertToAssets(yieldTokenSpent)` is not interchangeable because floor rounding can make it differ from the whole-position value change; in vanilla mode the helper is identity. Execution snapshots the pre-route position and re-reads the remaining position after route execution, spends exactly the requested live final-token units, measures final crvUSD by balance delta, pays the keeper only from realized gross profit, reduces `deployedCrvUsd` by net retained crvUSD capped at current exposure, and leaves `lastExpansionAt` unchanged. The yield branch emits `KeeperBuyback` with `backingToken = backingAsset`, `backingSpent = 0`, and measured `yieldTokenSpent`.
+This pre/post difference is authoritative for the exposure bound, realized gross profit, selected post-reward margin, and final principal check. In ERC-4626 mode, `convertToAssets(yieldTokenSpent)` is not interchangeable because floor rounding can make it differ from the whole-position value change; in vanilla mode the helper is identity. Execution snapshots the pre-route position and re-reads the remaining position after route execution, spends exactly the requested live final-token units, measures final crvUSD by balance delta, pays the keeper only from realized gross profit, reduces `deployedCrvUsd` by the post-reward receipt capped at current exposure, sends any terminal excess to the fee receiver, and leaves `lastExpansionAt` unchanged. The yield branch emits `KeeperBuyback` with `backingToken = backingAsset`, `backingSpent = 0`, and measured `yieldTokenSpent`.
 
 The keeper fallback is previewable:
 
@@ -994,8 +994,15 @@ crvUsdReceived - keeperReward
 >= trustedValueRemoved
  + selectedExitMargin
 
+netCrvUsd = crvUsdReceived - keeperReward
+debtReduction = min(netCrvUsd, deployedCrvUsdBefore)
+terminalProfit = netCrvUsd - debtReduction
+deployedCrvUsdAfter = deployedCrvUsdBefore - debtReduction
+
 trustedBackingValueAfter >= deployedCrvUsdAfter
 ```
+
+When `terminalProfit > 0`, the same contraction transfers it directly to the Factory's current fee receiver without increasing `deployedCrvUsd`. This occurs only when the post-reward receipt exceeds all remaining exposure. Pre-existing idle crvUSD is excluded because `netCrvUsd` is measured from the current call's balance delta.
 
 Reward-token conversion and every trusted-value normalization round down. Vanilla endpoint conversion is identity; ERC-4626 endpoint conversion uses `convertToShares()` for inverse sizing and `convertToAssets()` for valuation.
 
@@ -1180,7 +1187,7 @@ protocolSurplus
 
 Here `trustedBackingValue` is the normalized value of live target inventory plus the current backing-asset-equivalent value represented by live final-token inventory. Shared target/final inventory is counted once. Vanilla final tokens use identity conversion; ERC-4626 final tokens use current `convertToAssets()` value rather than historical acquisition cost.
 
-Yield-token appreciation, retained expansion or contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, independent backing-source outflows, yield-token exchange-rate appreciation, and fee claims, without strengthening the principal invariant.
+Yield-token appreciation, retained expansion profit, nonterminal contraction profit, and route costs all change the same combined trusted-backing value. Tracking their provenance separately would require persistent cost-basis accounting across mixed backing, later deployment, independent backing-source outflows, yield-token exchange-rate appreciation, and fee claims, without strengthening the principal invariant. A contraction whose post-reward crvUSD receipt exceeds all remaining debt is the terminal exception: no liability remains against which to record that final realized profit, so the excess is paid immediately to the fee receiver.
 
 V3 realizes that surplus for governance by transferring idle crvUSD to the configured FeeSplitter and increasing `deployedCrvUsd` by exactly the amount transferred. It does not remove the configured target asset, backing asset, or yield token from the backing portfolio. Let `F` be the crvUSD fee payment:
 
@@ -1452,7 +1459,7 @@ event Executed(
 30. Every configured expansion or contraction step is typed route data with fixed tokens, venues, protocol minima, and V3 as recipient.
 31. The compatibility inventory getters are derived from live ERC-20 balances and contain no separately mutable accounting state.
 32. Yield-token contraction spends exactly the requested live units, values the outflow from the complete pre/post live positions, and cannot remove trusted value greater than current deployed exposure.
-33. Successful yield-token contraction reduces `deployedCrvUsd` only by net retained crvUSD, capped at current exposure, and never changes `lastExpansionAt`.
+33. Successful keeper contraction reduces `deployedCrvUsd` by the post-reward crvUSD receipt capped at current exposure, sends only current-call terminal excess to the fee receiver, and never changes `lastExpansionAt`.
 34. `backingDeploymentPaused` blocks both immediate expansion-time downstream execution and explicit deferred deployment while preserving the configured path for later unpause.
 35. Both target-backed and yield-backed monetary contraction remain independently available regardless of downstream-deployment state; donations cannot block either exit by changing a raw balance from zero.
 36. While downstream deployment is paused, `unwindYieldToTarget()` may execute the contraction-path prefix without reward or exposure/timer changes, subject to target-oracle health, absolute step-loss bounds, route-loss and surplus limits, and final backing.
