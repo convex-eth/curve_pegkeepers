@@ -5,8 +5,8 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 ## 0. Frozen source
 
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
-- [x] Production source commit: `e80d6c10fece37bca3fdb2461071089ed6f69877`.
-- [x] Exact pre-commit staged source diff SHA-256: `7eb9c9cbc520c748a241d3e7624ba55334c10a54ffdc1dd106804178451fb964`.
+- [x] Production source commit: `92c5b80815c6c64adaf92db1e52ad82c88138bc4`.
+- [x] Exact pre-commit staged source diff SHA-256: `26ee913662c89e163cd192bd5bcc2ede4ffa299a66f17f1d469ed87f4eee8c77`.
 - [x] Source commit is pushed to `origin/main`.
 - [x] Evidence is regenerated from the exact production source commit.
 - [x] Evidence drift is restricted to:
@@ -31,14 +31,14 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 ### PegKeeperV3 implementation
 
-- [x] Source SHA-256: `37d33d5c9e9d58d884aa02004be92d58db60ad42243d63c1ecf5da6260ffa437`.
-- [x] Compiler creation code: `24,423` bytes.
-- [x] Compiler creation keccak: `0x5cfab6e428df9226906745f853fa8cd2ae50db12f6f9a1f39c80dd93091d9e14`.
-- [x] Full initcode with constructor argument: `24,455` bytes; EIP-3860 margin `24,697` bytes.
-- [x] Semantic runtime core: `24,269` bytes.
-- [x] Semantic runtime keccak: `0x04fa8470ec0c15b6b2aa86a587de9371d68f33c04cabb12b62b0a02ef2550dc9`.
-- [x] Deployed runtime with immutable preview address: `24,301` bytes; EIP-170 margin `275` bytes.
-- [x] ABI parity: `80` functions and `13` events.
+- [x] Source SHA-256: `c87e79b5b4a07567ac01bd99ea7418eefe0ea3728f3131aef0b464cc34e9b786`.
+- [x] Compiler creation code: `24,563` bytes.
+- [x] Compiler creation keccak: `0xed1dd27180ae338081cae7fbffc19a8369e66ba0882f4728cd5b98ac4b2160e2`.
+- [x] Full initcode with constructor argument: `24,595` bytes; EIP-3860 margin `24,557` bytes.
+- [x] Semantic runtime core: `24,409` bytes.
+- [x] Semantic runtime keccak: `0x7142ae105ea472f77b3fd6d5a3568c32f82c68134d61a3db7be95ae74be128b5`.
+- [x] Deployed runtime with immutable preview address: `24,441` bytes; EIP-170 margin `135` bytes.
+- [x] ABI parity: `81` functions and `14` events.
 - [x] Locked implementation cannot be operationally initialized.
 
 ### Preview module
@@ -65,6 +65,7 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 - [x] Vanilla ERC-20 mode uses identity token-unit/backing-asset conversion.
 - [x] ERC-4626 mode uses `convertToAssets()` and `convertToShares()`.
 - [x] Intermediate ERC-4626 route steps remain supported independently of persistent endpoint mode.
+- [x] Admin debt reduction is saturating, has no global-pause precondition, and changes only recorded `deployedCrvUsd`; the caller must separately ensure the liability was retired or reassigned.
 - [x] Shared `targetAsset == finalToken` inventory is counted once in nominal and oracle backing values.
 - [x] Empty expansion is accepted only when target and final tokens are identical; contraction remains independently validated.
 - [x] Frax mint is route kind `4`; keeper-specific FraxNet redemption is route kind `5`; unsupported kinds start at `6`.
@@ -106,7 +107,7 @@ All keepers use plain frxUSD as final token and start fully paused.
 
 ## 6. Verification evidence
 
-- [x] Full forced suite: `294 passed`, `0 failed`, `0 skipped`.
+- [x] Full forced suite: `298 passed`, `0 failed`, `0 skipped`.
 - [x] Stateful invariants: all six campaigns passed at `256` runs × `500` calls.
 - [x] All focused endpoint, Frax redemption, deployment, proposal, fork, and rollback suites passed.
 - [x] ABI parity passed for implementation, Factory, preview module, Curve oracle, and Chainlink oracle.
@@ -122,7 +123,7 @@ All keepers use plain frxUSD as final token and start fully paused.
   - the Shanghai canary discloses its cloned live FraxNet beacon proxy and ABI-equivalent USTB token harness; the live Frax coordinator, cap/price logic, USDC redeemer, and USDC inventory remained in-path;
   - expansion path hash: `0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d`;
   - contraction path hash: `0x1602a97a9de217a466169f46195f2ac971329883350aea19826b7a2a97c2ef9c`.
-- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path and release wiring changes.
+- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path, release wiring, and admin debt-reduction changes.
 - [x] This regenerated evidence package is subject to a final exact staged-diff audit.
 - [x] Manifest mutation tests rejected top-level schema drift, test-count drift, endpoint-mode drift, Frax redemption-buffer drift, adapter-count drift, deployed-state drift, canary-hash drift, and activation-blocker drift; byte-exact restoration passed.
 
@@ -159,7 +160,7 @@ The pinned-block atomic-liquidity observation is not an activation guarantee. Th
 
 ## 9. Operator sequence after explicit authorization
 
-1. Check out `e80d6c10fece37bca3fdb2461071089ed6f69877` and verify the evidence commit changes only the three evidence files.
+1. Check out `92c5b80815c6c64adaf92db1e52ad82c88138bc4` and verify the evidence commit changes only the three evidence files.
 2. Run `make check` and the current-block no-broadcast canary.
 3. Run the unified deployer without broadcast from the intended deployment sender; inspect and remove the temporary deployment JSON if the run is rejected.
 4. Reconfirm all hardcoded addresses, code hashes, nonces, oracle health, Frax capacity, and policy/cap values.

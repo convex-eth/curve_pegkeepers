@@ -1,9 +1,9 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-02T06:02:05Z",
+  "generatedAtUtc": "2026-09-03T02:20:49Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "e80d6c10fece37bca3fdb2461071089ed6f69877",
-  "productionSourceDiffSha256": "7eb9c9cbc520c748a241d3e7624ba55334c10a54ffdc1dd106804178451fb964",
+  "productionSourceCommit": "92c5b80815c6c64adaf92db1e52ad82c88138bc4",
+  "productionSourceDiffSha256": "26ee913662c89e163cd192bd5bcc2ede4ffa299a66f17f1d469ed87f4eee8c77",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -15,23 +15,23 @@
   "implementation": {
     "source": {
       "path": "src/vyper/PegKeeperV3.vy",
-      "sha256": "37d33d5c9e9d58d884aa02004be92d58db60ad42243d63c1ecf5da6260ffa437"
+      "sha256": "c87e79b5b4a07567ac01bd99ea7418eefe0ea3728f3131aef0b464cc34e9b786"
     },
     "artifact": {
       "path": "out/PegKeeperV3.vy/PegKeeperV3.json",
-      "compilerCreationBytes": 24423,
-      "compilerCreationKeccak256": "0x5cfab6e428df9226906745f853fa8cd2ae50db12f6f9a1f39c80dd93091d9e14",
+      "compilerCreationBytes": 24563,
+      "compilerCreationKeccak256": "0xed1dd27180ae338081cae7fbffc19a8369e66ba0882f4728cd5b98ac4b2160e2",
       "constructorArgsBytes": 32,
-      "fullInitCodeBytes": 24455,
+      "fullInitCodeBytes": 24595,
       "eip3860LimitBytes": 49152,
-      "fullInitCodeMarginBytes": 24697,
-      "semanticCoreRuntimeBytes": 24269,
-      "semanticCoreRuntimeKeccak256": "0x04fa8470ec0c15b6b2aa86a587de9371d68f33c04cabb12b62b0a02ef2550dc9",
-      "deployedRuntimeBytes": 24301,
+      "fullInitCodeMarginBytes": 24557,
+      "semanticCoreRuntimeBytes": 24409,
+      "semanticCoreRuntimeKeccak256": "0x7142ae105ea472f77b3fd6d5a3568c32f82c68134d61a3db7be95ae74be128b5",
+      "deployedRuntimeBytes": 24441,
       "eip170LimitBytes": 24576,
-      "deployedRuntimeMarginBytes": 275,
-      "abiFunctions": 80,
-      "abiEvents": 13
+      "deployedRuntimeMarginBytes": 135,
+      "abiFunctions": 81,
+      "abiEvents": 14
     },
     "lockedAgainstOperationalInitialization": true
   },
@@ -257,7 +257,7 @@
     }
   },
   "verification": {
-    "testsPassed": 294,
+    "testsPassed": 298,
     "testsFailed": 0,
     "testsSkipped": 0,
     "keeperAbiParity": "pass",
