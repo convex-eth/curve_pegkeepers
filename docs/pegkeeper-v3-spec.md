@@ -67,14 +67,14 @@ V3 is not intended to:
 - **Contraction path:** an independently configured sequence from the configured final token to crvUSD.
 - **Mature deployment state:** the configured minimum market time has elapsed since the latest successful material expansion.
 - **Young deployment state:** V3 remains inside the minimum market-time window following the latest successful material expansion.
-- **Deployed crvUSD:** Factory-allocated crvUSD that V3 has sold and has not yet reacquired.
+- **Deployed crvUSD:** V3's recorded externalized crvUSD after automatic contractions and any explicit admin reduction for externally retired or reassigned liability.
 - **Idle crvUSD:** crvUSD held by V3 and therefore available for a later expansion or Factory debt reduction.
 
 ## Actors
 
 ### Governance
 
-Governance selects the deployment's fixed token endpoints and configures debt capacity, the target AMM, paths, execution constraints, profitability thresholds, and keeper fees. PegKeeper authorization resolves dynamically through `PegKeeperV3Factory.admin()`, and the crvUSD surplus recipient resolves through `PegKeeperV3Factory.fee_receiver()`. Approved route changes apply atomically when the governance proposal executes but cannot change fixed token endpoints. The current factory admin can also make an arbitrary external call through `execute()` when a typed path or slow wind-down is insufficient.
+Governance selects the deployment's fixed token endpoints and configures debt capacity, the target AMM, paths, execution constraints, profitability thresholds, and keeper fees. PegKeeper authorization resolves dynamically through `PegKeeperV3Factory.admin()`, and the crvUSD surplus recipient resolves through `PegKeeperV3Factory.fee_receiver()`. Approved route changes apply atomically when the governance proposal executes but cannot change fixed token endpoints. The current factory admin can also make an arbitrary external call through `execute()` and reduce the recorded externalized crvUSD amount after a separately governed repayment, auction, or migration.
 
 ### Deployment factory owner
 
@@ -136,7 +136,7 @@ yieldContractionPaused
 
 `undeployedBacking()` and `accountedYieldTokenUnits()` remain ABI-compatible view getters, but they are not storage counters. They return `targetAsset.balanceOf(V3)` and `yieldToken.balanceOf(V3)` respectively. Every configured target-asset or yield-token unit held by V3 is protocol inventory, including an unsolicited transfer; intermediate and arbitrary token balances are not backing.
 
-The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `23,761` bytes; deployment appends the immutable shared preview-module address for an authoritative `23,793`-byte implementation runtime, `783` bytes below EIP-170. Full implementation initcode is `23,947` bytes. The keeper-identity-bound Vyper preview module is `8,185` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
+The production implementation and stateless preview module use Vyper `0.3.10` with the `codesize` optimizer. The keeper core runtime is `24,409` bytes; deployment appends the immutable shared preview-module address for an authoritative `24,441`-byte implementation runtime, `135` bytes below EIP-170. Full implementation initcode is `24,595` bytes. The keeper-identity-bound Vyper preview module is `8,249` bytes. Each EIP-1167 instance uses 55-byte initcode and a 45-byte runtime. Executable runtime/initcode, proxy-target, implementation-lock, and preview-identity checks are covered directly.
 
 The implementation keeps economic actions separate while centralizing repeated invariants. `_remaining_exposure_capacity()` is the sole local-cap and Factory-allocation calculation used by expansion and surplus claims; velocity remains an independent bound. `_target_amm_swap_exact_in()` owns target-AMM quoting, approval reset, minimum output, and exact input/output balance deltas. `_transfer_exact_to()` owns recipient balance-delta verification for protocol payouts. `_settle_keeper_contraction_and_reduce_exposure()` owns realized profit, keeper reward, exit margin, and capped exposure reduction for both keeper-triggered contraction paths, while each caller visibly retains its own live-inventory and final-solvency checks. `_checked_route_conversion_cost()` owns the configured route-loss ceiling. Expansion, direct buyback, undeployed-backing deployment, and the two contraction front halves remain distinct because their authorization, valuation, routing, inventory, and fallback semantics differ.
 
@@ -262,7 +262,7 @@ deployedCrvUsd <= Factory allocation
 deployedCrvUsd <= trustedBackingValue
 ```
 
-`deployedCrvUsd` is the amount of V3's accounted crvUSD allocation that has been externalized from V3 and therefore requires the approved backing portfolio. It is broader than only crvUSD sold through an AMM. Expansion increases it by crvUSD sold; a surplus claim increases it by crvUSD transferred to the FeeSplitter. Direct buyback decreases it by crvUSD received from the user, and keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. Idle crvUSD backs itself; the combined trusted value of undeployed backing and the yield position must cover all externalized crvUSD after rewards, later conversion costs, and fee claims.
+`deployedCrvUsd` is the amount of V3's accounted crvUSD allocation that has been externalized from V3 and therefore requires the approved backing portfolio. It is broader than only crvUSD sold through an AMM. Expansion increases it by crvUSD sold; a surplus claim increases it by crvUSD transferred to the FeeSplitter. Direct buyback decreases it by crvUSD received from the user, and keeper contraction decreases it by crvUSD retained after the keeper reward, always capped at the current deployed amount. The factory admin may also reduce it explicitly after governance handles repayment or migrates the corresponding liability outside V3. Idle crvUSD backs itself; the combined trusted value of undeployed backing and the yield position must cover all externalized crvUSD after rewards, later conversion costs, and fee claims.
 
 ## Expansion lifecycle
 
@@ -1334,6 +1334,8 @@ The owner is expected to be the same DAO or governance executor that already con
 
 Governance should pause affected directions before using `execute()` where practical. If the call moves principal outside the fixed backing set, the existing V3 remains paused and is wound down or retired; it does not reconcile a new yield token into normal accounting. Calls that preserve the fixed endpoints may resume only after live backing balances, oracle valuation, approvals, and active paths are consistent.
 
+After governance retires or reassigns externalized crvUSD through an auction, adapter, migration contract, or other one-off process, the factory admin may call `reduce_deployed_crvusd(amount)`. The reduction is capped at the recorded amount, so an oversized request sets `deployedCrvUsd` to zero. It moves no tokens and does not change pressure, maturity time, local capacity, Factory allocation, or the ControllerFactory ceiling. It deliberately has no pause precondition and is trusted administrative accounting: governance must verify the external liability was actually retired or reassigned. The event records both the requested and actual reduction. If the released capacity must not be reused, governance must also lower the local maximum and ControllerFactory debt ceiling.
+
 ## Events
 
 At minimum:
@@ -1402,6 +1404,12 @@ event SurplusClaimed(
     uint256 crvUsdTransferred,
     uint256 deployedCrvUsdAfter
 );
+event DebtReduced(
+    address indexed caller,
+    uint256 requestedReduction,
+    uint256 actualReduction,
+    uint256 deployedCrvUsdAfter
+);
 event Executed(
     address indexed target,
     uint256 value,
@@ -1430,7 +1438,7 @@ event Executed(
 16. Disabling expansion also disables surplus claims but never disables direct buyback or the governance-approved contraction paths.
 17. A path update preserves the deployment's fixed target asset, backing asset, and final yield token.
 18. Every external conversion is non-reentrant and uses measured balance deltas.
-19. Only the governance owner can execute arbitrary targets or calldata.
+19. Only the governance owner can execute arbitrary targets or calldata or reduce the recorded externalized crvUSD amount.
 20. Keeper-supplied parameters cannot weaken protocol-calculated output or profit floors.
 21. Combined trusted backing remaining after rewards, later deployment costs, and crvUSD fee claims is never below `deployedCrvUsd`.
 22. Expansion is not delayed when either approved branch satisfies its entry floor.

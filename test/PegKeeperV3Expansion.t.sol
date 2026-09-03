@@ -966,6 +966,82 @@ contract PegKeeperV3ExpansionTest is Test {
         assertGe(pegKeeper.trusted_backing_value(), pegKeeper.deployed_crvusd());
     }
 
+    function test_adminReducesDebtWhileExecutionRemainsUnpaused() public {
+        crvUsd.mint(address(pegKeeper), 2 * MIN_EXPANSION);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        uint256 reduction = MIN_EXPANSION / 2;
+        uint256 crvUsdBefore = crvUsd.balanceOf(address(pegKeeper));
+        uint256 targetBefore = targetAsset.balanceOf(address(pegKeeper));
+        uint256 yieldBefore = yieldToken.balanceOf(address(pegKeeper));
+        uint256 trustedBefore = pegKeeper.trusted_backing_value();
+        uint256 pressureBefore =
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure();
+        uint256 expansionTime = pegKeeper.last_expansion_at();
+        uint256 localCapacity = pegKeeper.max_deployed_crvusd();
+        uint256 factoryCapacity = factory.debt_ceiling(address(pegKeeper));
+        assertFalse(pegKeeper.all_execution_paused());
+
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.DebtReduced(governance, reduction, reduction, MIN_EXPANSION - reduction);
+        vm.prank(governance);
+        pegKeeper.reduce_deployed_crvusd(reduction);
+
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION - reduction);
+        assertEq(pegKeeper.debt(), MIN_EXPANSION - reduction);
+        assertEq(crvUsd.balanceOf(address(pegKeeper)), crvUsdBefore);
+        assertEq(targetAsset.balanceOf(address(pegKeeper)), targetBefore);
+        assertEq(yieldToken.balanceOf(address(pegKeeper)), yieldBefore);
+        assertEq(pegKeeper.trusted_backing_value(), trustedBefore);
+        assertEq(
+            IPegKeeperV3ExpansionSafety(address(pegKeeper)).expansion_pressure(), pressureBefore
+        );
+        assertEq(pegKeeper.last_expansion_at(), expansionTime);
+        assertEq(pegKeeper.max_deployed_crvusd(), localCapacity);
+        assertEq(factory.debt_ceiling(address(pegKeeper)), factoryCapacity);
+        assertFalse(pegKeeper.all_execution_paused());
+    }
+
+    function test_adminDebtReductionAboveExposureClampsToZero() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.DebtReduced(governance, type(uint256).max, MIN_EXPANSION, 0);
+        vm.prank(governance);
+        pegKeeper.reduce_deployed_crvusd(type(uint256).max);
+
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.debt(), 0);
+    }
+
+    function test_zeroDebtReductionIsHarmless() public {
+        vm.expectEmit(true, false, false, true, address(pegKeeper));
+        emit IPegKeeperV3.DebtReduced(governance, 0, 0, 0);
+        vm.prank(governance);
+        pegKeeper.reduce_deployed_crvusd(0);
+
+        assertEq(pegKeeper.deployed_crvusd(), 0);
+        assertEq(pegKeeper.debt(), 0);
+    }
+
+    function test_nonAdminCannotReduceDebt() public {
+        crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
+        _enableExpansion(0);
+        vm.prank(keeper);
+        pegKeeper.expand(MIN_EXPANSION);
+
+        vm.prank(keeper);
+        vm.expectRevert();
+        pegKeeper.reduce_deployed_crvusd(MIN_EXPANSION);
+
+        assertEq(pegKeeper.deployed_crvusd(), MIN_EXPANSION);
+    }
+
     function test_expansionRequiresDirectionAndGlobalExecution() public {
         crvUsd.mint(address(pegKeeper), MIN_EXPANSION);
 

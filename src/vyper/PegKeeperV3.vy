@@ -147,6 +147,12 @@ event SurplusClaimed:
     crv_usd_transferred: uint256
     deployed_crv_usd_after: uint256
 
+event DebtReduced:
+    caller: indexed(address)
+    requested_reduction: uint256
+    actual_reduction: uint256
+    deployed_crv_usd_after: uint256
+
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
@@ -1872,6 +1878,18 @@ def contractViaAmm(_yield_token_amount: uint256) -> (uint256, uint256, uint256):
         early_exit,
     )
     return yield_token_spent, crv_usd_received, keeper_reward
+
+
+@external
+def reduce_deployed_crvusd(_amount: uint256):
+    """
+    @notice Lets the admin reduce the recorded externalized crvUSD amount, clamped at zero.
+    """
+    assert self._is_admin(msg.sender)
+
+    reduction: uint256 = min(_amount, self.deployed_crvusd)
+    self.deployed_crvusd -= reduction
+    log DebtReduced(msg.sender, _amount, reduction, self.deployed_crvusd)
 
 
 @external

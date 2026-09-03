@@ -60,6 +60,12 @@ interface IPegKeeperV3 {
         uint256 crvUsdTransferred,
         uint256 deployedCrvUsdAfter
     );
+    event DebtReduced(
+        address indexed caller,
+        uint256 requestedReduction,
+        uint256 actualReduction,
+        uint256 deployedCrvUsdAfter
+    );
 
     event PolicyUpdated(
         uint256 entryMinProfitPpm,
@@ -348,6 +354,8 @@ interface IPegKeeperV3 {
         returns (uint256 yieldTokenSpent, uint256 targetReceived);
     /// @notice Sends available crvUSD to the fee receiver when extra backing covers it, up to the caller's limit.
     function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
+    /// @notice Lets the admin reduce the recorded externalized crvUSD amount, clamped at zero.
+    function reduce_deployed_crvusd(uint256 amount) external;
     /// @notice Lets the admin call another address and returns any response.
     function execute(address target, uint256 value, bytes calldata data)
         external
