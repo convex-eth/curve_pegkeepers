@@ -72,9 +72,9 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
     address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
 
-    uint256 internal constant FRXUSD_CAP = 2_500_000e18;
-    uint256 internal constant USDC_CAP = 2_500_000e18;
-    uint256 internal constant USDT_CAP = 5_000_000e18;
+    uint256 internal constant FRXUSD_CAP = 20_000_000e18;
+    uint256 internal constant USDC_CAP = 20_000_000e18;
+    uint256 internal constant USDT_CAP = 20_000_000e18;
     uint256 internal constant VOTING_PERIOD = 8 days;
 
     ICurveVoting internal constant OWNERSHIP_VOTE = ICurveVoting(OWNERSHIP_VOTING);
@@ -147,7 +147,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     function test_ProposalActionsOnlyConfigureNewV3Keepers() public view {
         BaseCurveProposal.Action[] memory actions = proposal.buildProposalActions();
-        assertEq(actions.length, 17);
+        assertEq(actions.length, 16);
 
         assertEq(actions[0].target, address(factory));
         assertEq(_selector(actions[0].data), IPegKeeperV3Factory.setDefaults.selector);
@@ -168,14 +168,12 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _assertMonetaryPolicyAction(actions[10], LEGACY_MONETARY_POLICY, expectedUsdcKeeper);
 
         assertEq(actions[11].target, address(factory));
-        assertEq(_selector(actions[11].data), IPegKeeperV3Factory.setDefaults.selector);
-        assertEq(actions[12].target, address(factory));
-        assertEq(_selector(actions[12].data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        assertEq(actions[13].target, expectedUsdtKeeper);
-        assertEq(_selector(actions[13].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[14], expectedUsdtKeeper, USDT_CAP);
-        _assertMonetaryPolicyAction(actions[15], MONETARY_POLICY, expectedUsdtKeeper);
-        _assertMonetaryPolicyAction(actions[16], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
+        assertEq(_selector(actions[11].data), IPegKeeperV3Factory.deployPegKeeper.selector);
+        assertEq(actions[12].target, expectedUsdtKeeper);
+        assertEq(_selector(actions[12].data), IPegKeeperV3.set_policy.selector);
+        _assertDebtCeilingAction(actions[13], expectedUsdtKeeper, USDT_CAP);
+        _assertMonetaryPolicyAction(actions[14], MONETARY_POLICY, expectedUsdtKeeper);
+        _assertMonetaryPolicyAction(actions[15], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
     function test_OracleAdaptersUseSelectedFrxUsdChainlinkFeed() public view {

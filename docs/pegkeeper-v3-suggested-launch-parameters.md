@@ -15,9 +15,9 @@ Deploy three PegKeeper V3 instances with a plain ERC-20 frxUSD final endpoint:
 
 | Keeper | Target asset | Final token | Endpoint mode | Backing asset | Suggested `maxDeployedCrvUsd` | ControllerFactory debt ceiling |
 |---|---|---|---|---|---:|---:|
-| frxUSD | frxUSD | frxUSD | vanilla ERC-20 | frxUSD | 2,500,000 crvUSD | 2,500,000 crvUSD |
-| USDC | USDC | frxUSD | vanilla ERC-20 | frxUSD | 2,500,000 crvUSD | 2,500,000 crvUSD |
-| USDT | USDT | frxUSD | vanilla ERC-20 | frxUSD | 5,000,000 crvUSD | 5,000,000 crvUSD |
+| frxUSD | frxUSD | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
+| USDC | USDC | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
+| USDT | USDT | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
 
 GHO and PYUSD are not included in the initial launch scope. ERC-4626 final endpoints and the Dai/USDS route adapter remain supported by the implementation but are not selected for these three launch keepers.
 
@@ -98,9 +98,9 @@ fullRefillPeriod = 300 seconds
 
 | Keeper | Max burst | Linear refill rate |
 |---|---:|---:|
-| frxUSD | `125,000 crvUSD` | `25,000 crvUSD/minute` |
-| USDC | `125,000 crvUSD` | `25,000 crvUSD/minute` |
-| USDT | `250,000 crvUSD` | `50,000 crvUSD/minute` |
+| frxUSD | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
+| USDC | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
+| USDT | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
 
 Pressure is shared across callers and calls. Splitting cannot bypass it; contraction does not refund it; configuration changes do not reset it; reverted transactions consume nothing.
 

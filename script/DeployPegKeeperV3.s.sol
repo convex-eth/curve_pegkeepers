@@ -39,7 +39,7 @@ contract DeployPegKeeperV3 is Script {
     /// @dev Provisional heartbeat-plus-grace value. Reconfirm the feed before broadcast.
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
 
-    uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 2_500_000e18;
+    uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
     uint256 public constant TARGET_AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_DOWNSTREAM_ATTEMPT_GAS = 1_500_000;
     uint256 public constant FALLBACK_SETTLEMENT_GAS_RESERVE = 300_000;

@@ -177,7 +177,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.admin, deployer.CURVE_OWNERSHIP_AGENT());
         assertEq(config.emergencyAdmin, deployer.CURVE_EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
-        assertEq(config.maxDeployedCrvUsd, 2_500_000e18);
+        assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
         assertEq(config.targetAmmExecutionBufferBps, 3);
         assertEq(config.minDownstreamAttemptGas, 1_500_000);
         assertEq(config.fallbackSettlementGasReserve, 300_000);

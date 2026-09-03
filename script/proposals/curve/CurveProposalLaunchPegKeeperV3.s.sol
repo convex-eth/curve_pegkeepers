@@ -45,9 +45,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant MIN_ORACLE_PRICE = 999_700_000_000_000_000;
     uint256 public constant CHAINLINK_MAX_DELAY = 26 hours;
 
-    uint256 public constant FRXUSD_CAP = 2_500_000e18;
-    uint256 public constant USDC_CAP = 2_500_000e18;
-    uint256 public constant USDT_CAP = 5_000_000e18;
+    uint256 public constant FRXUSD_CAP = 20_000_000e18;
+    uint256 public constant USDC_CAP = 20_000_000e18;
+    uint256 public constant USDT_CAP = 20_000_000e18;
 
     address public constant CURVE_EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
@@ -147,7 +147,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         address usdtKeeper = expectedKeeper(3);
         _validateFraxNetAccount(usdcFraxNetDeposit, usdcKeeper);
         _validateFraxNetAccount(usdtFraxNetDeposit, usdtKeeper);
-        actions = new Action[](17);
+        actions = new Action[](16);
 
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
         actions[1] = _deployAction(
@@ -178,8 +178,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[9] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
         actions[10] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdcKeeper);
 
-        actions[11] = _setDefaultsAction(USDT_CAP);
-        actions[12] = _deployAction(
+        actions[11] = _deployAction(
             USDT_CRVUSD_POOL,
             FRXUSD,
             false,
@@ -188,10 +187,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             _frxUsdExpansion(USDT, 2),
             _frxUsdContraction(USDT, 2, usdtFraxNetDeposit)
         );
-        actions[13] = _setPolicyAction(usdtKeeper, USDT_CAP);
-        actions[14] = _debtCeilingAction(usdtKeeper, USDT_CAP);
-        actions[15] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
-        actions[16] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdtKeeper);
+        actions[12] = _setPolicyAction(usdtKeeper, USDT_CAP);
+        actions[13] = _debtCeilingAction(usdtKeeper, USDT_CAP);
+        actions[14] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
+        actions[15] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdtKeeper);
     }
 
     function _validateFactory() internal view {
