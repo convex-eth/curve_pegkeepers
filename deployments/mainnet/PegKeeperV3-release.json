@@ -1,9 +1,9 @@
 {
   "status": "release_candidate_not_deployed",
-  "generatedAtUtc": "2026-09-03T04:57:32Z",
+  "generatedAtUtc": "2026-09-03T05:37:14Z",
   "repository": "git@github.com:convex-eth/curve_pegkeepers.git",
-  "productionSourceCommit": "f9c553411a895d5cc4258fe9788ccc064aa81a14",
-  "productionSourceDiffSha256": "e5064faf3a99b179a2ea524ddb544b75a72a8ff70a5d28807e22441e3aee0723",
+  "productionSourceCommit": "303f27bb5d61d66c4820e036088b813c7f617f66",
+  "productionSourceDiffSha256": "fa2bd67ccd6664cd2d482f26c5bc9e5c19f96c5700a0a0e7f1b270eb15f9cb8e",
   "toolchain": {
     "vyperVersion": "0.3.10+commit.9136169",
     "vyperPath": ".venv/bin/vyper",
@@ -201,7 +201,7 @@
         "endpointMode": "vanilla_erc20",
         "expansionPath": "empty",
         "contractionPath": "CURVE_FRXUSD_TO_CRVUSD",
-        "maxDeployedCrvUsd": "2500000000000000000000000"
+        "maxDeployedCrvUsd": "20000000000000000000000000"
       },
       {
         "index": 2,
@@ -211,7 +211,7 @@
         "endpointMode": "vanilla_erc20",
         "expansionPath": "FRXUSD_MINT",
         "contractionPath": "FRAXNET_REDEEM -> CURVE_USDC_TO_CRVUSD",
-        "maxDeployedCrvUsd": "2500000000000000000000000"
+        "maxDeployedCrvUsd": "20000000000000000000000000"
       },
       {
         "index": 3,
@@ -221,7 +221,7 @@
         "endpointMode": "vanilla_erc20",
         "expansionPath": "CURVE_USDT_TO_USDC -> FRXUSD_MINT",
         "contractionPath": "FRAXNET_REDEEM -> CURVE_USDC_TO_USDT -> CURVE_USDT_TO_CRVUSD",
-        "maxDeployedCrvUsd": "5000000000000000000000000"
+        "maxDeployedCrvUsd": "20000000000000000000000000"
       }
     ],
     "allKeepersStartPaused": true,

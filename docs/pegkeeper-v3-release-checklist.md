@@ -5,8 +5,8 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 ## 0. Frozen source
 
 - [x] Repository: `git@github.com:convex-eth/curve_pegkeepers.git`.
-- [x] Production source commit: `f9c553411a895d5cc4258fe9788ccc064aa81a14`.
-- [x] Exact pre-commit staged source diff SHA-256: `e5064faf3a99b179a2ea524ddb544b75a72a8ff70a5d28807e22441e3aee0723`.
+- [x] Production source commit: `303f27bb5d61d66c4820e036088b813c7f617f66`.
+- [x] Exact pre-commit staged source diff SHA-256: `fa2bd67ccd6664cd2d482f26c5bc9e5c19f96c5700a0a0e7f1b270eb15f9cb8e`.
 - [x] Source commit is pushed to `origin/main`.
 - [x] Evidence is regenerated from the exact production source commit.
 - [x] Evidence drift is restricted to:
@@ -77,13 +77,13 @@ This is an **undeployed, non-upgradeable EIP-1167 release candidate**. It does n
 
 All keepers use plain frxUSD as final token and start fully paused.
 
-1. `frxUSD -> frxUSD`, cap `2,500,000 crvUSD`
+1. `frxUSD -> frxUSD`, cap `20,000,000 crvUSD`
    - expansion: empty identity route;
    - contraction: `frxUSD -> crvUSD` through the target AMM.
-2. `USDC -> frxUSD`, cap `2,500,000 crvUSD`
+2. `USDC -> frxUSD`, cap `20,000,000 crvUSD`
    - expansion: Frax `USDC -> frxUSD` mint;
    - contraction: keeper-specific FraxNet `frxUSD -> USDC` redemption, then target AMM to crvUSD.
-3. `USDT -> frxUSD`, cap `5,000,000 crvUSD`
+3. `USDT -> frxUSD`, cap `20,000,000 crvUSD`
    - expansion: 3pool `USDT -> USDC`, then Frax mint;
    - contraction: keeper-specific FraxNet redemption, reverse 3pool `USDC -> USDT`, then target AMM to crvUSD.
 
@@ -123,7 +123,7 @@ All keepers use plain frxUSD as final token and start fully paused.
   - the Shanghai canary discloses its cloned live FraxNet beacon proxy and ABI-equivalent USTB token harness; the live Frax coordinator, cap/price logic, USDC redeemer, and USDC inventory remained in-path;
   - expansion path hash: `0x17600eb74b28066eb62f0c63fd46e6e6352fd34efb7b7c8415971240b25e7f9d`;
   - contraction path hash: `0x1602a97a9de217a466169f46195f2ac971329883350aea19826b7a2a97c2ef9c`.
-- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path, release wiring, admin debt-reduction, and terminal contraction-profit changes.
+- [x] Independent bounded review found no protocol-level source blocker after the FraxNet path, release wiring, admin debt-reduction, terminal contraction-profit, and 20 million crvUSD per-keeper launch-cap changes.
 - [x] This regenerated evidence package is subject to a final exact staged-diff audit.
 - [x] Manifest mutation tests rejected top-level schema drift, test-count drift, endpoint-mode drift, Frax redemption-buffer drift, adapter-count drift, deployed-state drift, canary-hash drift, and activation-blocker drift; byte-exact restoration passed.
 
@@ -160,7 +160,7 @@ The pinned-block atomic-liquidity observation is not an activation guarantee. Th
 
 ## 9. Operator sequence after explicit authorization
 
-1. Check out `f9c553411a895d5cc4258fe9788ccc064aa81a14` and verify the evidence commit changes only the three evidence files.
+1. Check out `303f27bb5d61d66c4820e036088b813c7f617f66` and verify the evidence commit changes only the three evidence files.
 2. Run `make check` and the current-block no-broadcast canary.
 3. Run the unified deployer without broadcast from the intended deployment sender; inspect and remove the temporary deployment JSON if the run is rejected.
 4. Reconfirm all hardcoded addresses, code hashes, nonces, oracle health, Frax capacity, and policy/cap values.

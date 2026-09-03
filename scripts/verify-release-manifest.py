@@ -797,7 +797,7 @@ def main() -> None:
     fail(
         "keeper capacities",
         [keeper["maxDeployedCrvUsd"] for keeper in launch["keepers"]],
-        ["2500000000000000000000000", "2500000000000000000000000", "5000000000000000000000000"],
+        ["20000000000000000000000000"] * 3,
     )
     fail("keepers paused", launch["allKeepersStartPaused"], True)
     execution_policy = launch["executionPolicy"]
