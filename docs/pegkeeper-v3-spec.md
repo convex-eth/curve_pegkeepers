@@ -194,14 +194,14 @@ The call requires:
 - exact requested LP burn by measured balance delta;
 - measured crvUSD receipt at least `minCrvUsd`;
 - `valueBefore >= valueAfter` and positive `valueRemoved`;
-- post-reward net crvUSD at least `valueRemoved` plus the single `500 ppm` (`5 bp`) exit margin;
+- realized gross profit at least `500 ppm` (`5 bp`) of `valueRemoved`, before the caller share is paid;
 - remaining LP value at least remaining `deployedCrvUsd`.
 
 Virtual price is deliberately not used as `minCrvUsd`. The executable one-coin quote provides slippage protection; whole-position virtual-price deltas provide accounting.
 
-`previewKeeperBuyback(lpTokenAmount)` estimates the same fixed one-coin withdrawal and enforces pause state, aggregate direction, post-reward exit margin, and final backing-versus-debt solvency before returning. Its input is LP tokens and no configurable path executes.
+`previewKeeperBuyback(lpTokenAmount)` estimates the same fixed one-coin withdrawal and enforces pause state, aggregate direction, the gross exit margin, and final backing-versus-debt solvency before returning. Its input is LP tokens and no configurable path executes.
 
-With a `30%` caller share, a `5 bp` retained exit margin requires roughly `7.143 bp` of gross executable edge before rounding. Same-block direct expansion, routed expansion, and donation-sweep round trips without that edge fail in both preview and execution. Curve entry/exit fees and slippage reduce rather than create the required edge.
+At the exact `5 bp` gross boundary, a `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is principal rather than gross profit, so any required solvency recovery must occur before this split. Same-block direct expansion, routed expansion, and donation-sweep round trips without `5 bp` of realized gross edge fail in both preview and execution. Curve entry/exit fees and slippage reduce rather than create the required edge.
 
 ## Typed expansion routes
 
@@ -301,8 +301,8 @@ The launch proposal deploys three paused keepers. Each receives the same fixed `
 Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
 
 ```text
-implementation initcode: 21,471 bytes
-implementation runtime:  21,338 bytes
+implementation initcode: 21,435 bytes
+implementation runtime:  21,302 bytes
 Factory core runtime:      3,830 bytes
 Factory deployed runtime:  3,894 bytes
 Chainlink oracle core:        460 bytes
@@ -312,7 +312,7 @@ Curve oracle runtime:         457 bytes
 preview initcode:         5,972 bytes
 preview runtime:          5,936 bytes
 minimal proxy runtime:       45 bytes
-EIP-170 headroom:          3,238 bytes
+EIP-170 headroom:          3,274 bytes
 ```
 
 The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch. `make check-release-evidence`, included by `make check`, proves those files and their verifier still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`. Full manifest verification remains intentionally checkout-sensitive.

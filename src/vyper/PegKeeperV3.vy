@@ -842,15 +842,14 @@ def _settle_keeper_contraction_and_reduce_exposure(
         _trusted_value_removed,
         _trusted_backing_after,
     )
+    exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm / PPM
+    assert gross_profit >= exit_margin
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
     self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
 
     crv_usd_after_reward: uint256 = self._crv_usd.balanceOf(self)
     assert _crv_usd_after_swap - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
-
-    exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm / PPM
-    assert net_crv_usd >= _trusted_value_removed + exit_margin
 
     deployed_crv_usd: uint256 = self.deployed_crvusd
     if net_crv_usd > deployed_crv_usd:
@@ -890,10 +889,10 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
         trusted_removed,
         trusted_after,
     )
+    exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm / PPM
+    assert gross_profit >= exit_margin
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
     net_crv_usd: uint256 = expected_crv_usd - keeper_reward
-    exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm / PPM
-    assert net_crv_usd >= trusted_removed + exit_margin
 
     deployed_after: uint256 = 0
     if self.deployed_crvusd > net_crv_usd:

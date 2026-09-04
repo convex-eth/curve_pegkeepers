@@ -127,7 +127,7 @@ min   = quote * (10_000 - yieldAmmExecutionBufferBps) / 10_000
 remove_liquidity_one_coin(lpAmount, crvUsdIndex, min)
 ```
 
-The executable quote protects slippage. The pre/post complete LP position at separate virtual-price snapshots determines backing value removed. The call reverts if the pool's own repricing makes that value delta negative or if post-reward crvUSD does not exceed value removed by the configured exit margin.
+The executable quote protects slippage. The pre/post complete LP position at separate virtual-price snapshots determines backing value removed. The call reverts if the pool's own repricing makes that value delta negative or if realized gross profit before the caller share is below the configured exit margin.
 
 The pinned canary makes crvUSD sufficiently abundant in the backing pool before exercising contraction. Without a favorable imbalance, single-coin withdrawal fees can make a contraction correctly fail the positive-profit floor.
 

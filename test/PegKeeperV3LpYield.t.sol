@@ -295,6 +295,7 @@ contract LpYieldAmm is LpYieldToken {
     uint256 public lpMintBps = 10_000;
     uint256 public withdrawBps = 10_100;
     uint256 public actualWithdrawBps = 10_100;
+    uint256 public withdrawBonus;
     uint256 public spendBps = 10_000;
     uint256 public addLiquidityCalls;
     uint256 public removeLiquidityCalls;
@@ -337,6 +338,10 @@ contract LpYieldAmm is LpYieldToken {
         actualWithdrawBps = value;
     }
 
+    function setWithdrawBonus(uint256 value) external {
+        withdrawBonus = value;
+    }
+
     function calc_token_amount(uint256[] calldata amounts, bool isDeposit)
         external
         view
@@ -373,7 +378,7 @@ contract LpYieldAmm is LpYieldToken {
         returns (uint256)
     {
         require(index == 0, "crvUSD only");
-        return lpTokens * withdrawBps / 10_000;
+        return lpTokens * withdrawBps / 10_000 + withdrawBonus;
     }
 
     function remove_liquidity_one_coin(uint256 lpTokens, int128 index, uint256 minAmount)
@@ -382,7 +387,7 @@ contract LpYieldAmm is LpYieldToken {
     {
         require(index == 0, "crvUSD only");
         removeLiquidityCalls++;
-        amountOut = lpTokens * actualWithdrawBps / 10_000;
+        amountOut = lpTokens * actualWithdrawBps / 10_000 + withdrawBonus;
         require(amountOut >= minAmount, "withdraw slippage");
         balanceOf[msg.sender] -= lpTokens;
         LpYieldToken(_coins[0]).mint(msg.sender, amountOut);
@@ -869,7 +874,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(crvUsd.balanceOf(feeReceiver), 0);
     }
 
-    function test_normalExitIsFiveBpsAndAvailableImmediately() public {
+    function test_normalExitRequiresFiveBpsGrossAndSplitsEdgeAfterward() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         assertEq(keeper.normal_exit_min_profit_ppm(), 500);
 
@@ -877,22 +882,37 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 10_000e18);
         keeper.expand(10_000e18);
 
-        yieldAmm.setWithdrawBps(10_008);
-        keeper.previewKeeperBuyback(1_000e18);
-        keeper.contractViaAmm(1_000e18);
+        yieldAmm.setWithdrawBps(10_005);
+        uint256 deployedBefore = keeper.deployed_crvusd();
+        (uint256 expectedCrvUsd, uint256 grossProfit, uint256 expectedReward) =
+            keeper.previewKeeperBuyback(1_000e18);
+        assertEq(expectedCrvUsd, 1_000e18 + 5e17);
+        assertEq(grossProfit, 5e17);
+        assertEq(expectedReward, 15e16);
 
-        assertLt(keeper.deployed_crvusd(), 10_000e18);
+        uint256 keeperBalanceBefore = crvUsd.balanceOf(address(this));
+        (uint256 lpBurned, uint256 crvUsdReceived, uint256 keeperReward) =
+            keeper.contractViaAmm(1_000e18);
+
+        assertEq(lpBurned, 1_000e18);
+        assertEq(crvUsdReceived, expectedCrvUsd);
+        assertEq(keeperReward, expectedReward);
+        assertEq(crvUsd.balanceOf(address(this)) - keeperBalanceBefore, 15e16);
+        assertEq(deployedBefore - keeper.deployed_crvusd(), 1_000e18 + 35e16);
     }
 
-    function test_previewKeeperBuybackRejectsInsufficientPostRewardMargin() public {
+    function test_previewAndExecutionRejectOneWeiBelowGrossExitMargin() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         keeper.expand(10_000e18);
 
-        yieldAmm.setWithdrawBps(10_006);
+        yieldAmm.setWithdrawBps(10_000);
+        yieldAmm.setWithdrawBonus(5e17 - 1);
         vm.expectRevert();
         keeper.previewKeeperBuyback(1_000e18);
+        vm.expectRevert();
+        keeper.contractViaAmm(1_000e18);
     }
 
     function test_previewKeeperBuybackRejectsFinalInsolvency() public {
@@ -903,6 +923,22 @@ contract PegKeeperV3LpYieldTest is Test {
 
         yieldAmm.setVirtualPrice(0.9e18);
         yieldAmm.setWithdrawBps(10_000);
+        vm.expectRevert();
+        keeper.previewKeeperBuyback(1_000e18);
+        vm.expectRevert();
+        keeper.contractViaAmm(1_000e18);
+    }
+
+    function test_deficitRecoveryDoesNotCountTowardGrossExitMargin() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand(10_000e18);
+
+        // Burning 1,000 LP removes 900 of trusted value. The 1,899.37 principal-recovery
+        // basis includes the existing deficit, leaving only 0.43 gross profit: below 5 bp.
+        yieldAmm.setVirtualPrice(0.9e18);
+        yieldAmm.setWithdrawBps(18_998);
         vm.expectRevert();
         keeper.previewKeeperBuyback(1_000e18);
         vm.expectRevert();

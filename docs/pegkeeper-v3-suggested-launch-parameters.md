@@ -143,7 +143,7 @@ frxUSD/crvUSD LP
     -> crvUSD
 ```
 
-`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The single `500 ppm` (`5 bp`) post-reward exit floor and whole-position virtual-price delta remain independent checks. With the `30%` caller share, the gross edge must be roughly `7.143 bp` before rounding.
+`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The single `500 ppm` (`5 bp`) gross exit floor and whole-position virtual-price delta remain independent checks. At that gross boundary, the `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is treated as principal and must be recovered before this profit split.
 
 ## Deployment/proposal sequence
 
