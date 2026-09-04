@@ -23,6 +23,7 @@ contract PegKeeperV3LpYieldHandler is Test {
     LpYieldToken public immutable yieldToken;
     LpYieldAmm public immutable yieldAmm;
     uint256 public successfulExpansions;
+    uint256 public successfulDonationSweeps;
     uint256 public successfulContractions;
     uint256 public successfulSurplusClaims;
 
@@ -48,7 +49,18 @@ contract PegKeeperV3LpYieldHandler is Test {
     }
 
     function donateYield(uint256 seed) external {
-        yieldToken.mint(address(keeper), bound(seed, 1, 2_000e18));
+        yieldToken.mint(address(keeper), bound(seed, 1, 20_000e18));
+    }
+
+    function sweepDonatedYield(uint256 seed) external {
+        uint256 held = yieldToken.balanceOf(address(keeper));
+        uint256 minimum = keeper.min_expansion_amount();
+        if (held < minimum) return;
+        vm.warp(block.timestamp + 300);
+        uint256 amount = bound(seed, minimum, held);
+        (bool success,) =
+            address(keeper).call(abi.encodeCall(IPegKeeperV3.sweepDonatedYield, (amount)));
+        if (success) successfulDonationSweeps++;
     }
 
     function donateLp(uint256 seed) external {
@@ -102,6 +114,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         targetAmm = new LpYieldTargetAmm(crvUsd, targetAsset);
         routePool = new LpYieldRoutePool(targetAsset, yieldToken);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
+        yieldAmm.setLpMintBps(10_001);
         LpYieldOracle oracle = new LpYieldOracle();
 
         keeper = PegKeeperV3TestDeployer.deploy(
@@ -139,6 +152,8 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         crvUsd.mint(address(keeper), 20_000_000e18);
         handler = new PegKeeperV3LpYieldHandler(keeper, crvUsd, targetAsset, yieldToken, yieldAmm);
         handler.expand(10_000e18);
+        handler.donateYield(10_000e18);
+        handler.sweepDonatedYield(10_000e18);
         handler.contractLp(100e18);
         handler.claimSurplus(1e18);
         targetContract(address(handler));
@@ -166,6 +181,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
 
     function invariant_handlerReachesEveryEconomicAction() public view {
         assertGt(handler.successfulExpansions(), 0);
+        assertGt(handler.successfulDonationSweeps(), 0);
         assertGt(handler.successfulContractions(), 0);
         assertGt(handler.successfulSurplusClaims(), 0);
     }

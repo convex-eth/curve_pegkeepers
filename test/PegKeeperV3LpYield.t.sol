@@ -38,6 +38,7 @@ interface ILpPegKeeperV3 {
     function accounted_lp_tokens() external view returns (uint256);
     function trusted_backing_value() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
+    function last_expansion_at() external view returns (uint256);
     function expansion_pressure() external view returns (uint256);
     function expansion_path_length() external view returns (uint256);
     function setPaths(RouteStep[] calldata expansion, uint256 expansionMaxRouteLossBps) external;
@@ -65,6 +66,14 @@ interface ILpPegKeeperV3 {
             uint256 keeperReward,
             uint256 lpTokensOut,
             bool directDeposit
+        );
+    function sweepDonatedYield(uint256 maxYieldTokenAmount)
+        external
+        returns (
+            uint256 yieldTokenSwept,
+            uint256 crvUsdMatched,
+            uint256 lpTokensReceived,
+            uint256 keeperReward
         );
     function previewKeeperBuyback(uint256 lpTokenAmount)
         external
@@ -531,6 +540,119 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldToken.balanceOf(address(keeper)), 0);
         assertEq(yieldAmm.balanceOf(address(keeper)), 14_000.98e18);
         assertEq(keeper.deployed_crvusd(), 12_000e18);
+    }
+
+    function test_sweepDonatedYieldWorksWithoutTargetTradeDuringTargetDownturn() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        targetOracle.setPrice(0.5e18);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 15_000e18);
+        yieldToken.mint(address(keeper), 25_000e18);
+
+        address caller = makeAddr("donationSweeper");
+        vm.prank(caller);
+        (uint256 swept, uint256 matched, uint256 lpReceived, uint256 reward) =
+            keeper.sweepDonatedYield(12_000e18);
+
+        assertEq(swept, 12_000e18);
+        assertEq(matched, 12_000e18);
+        assertEq(lpReceived, 24_002.4e18);
+        assertEq(reward, 0.72e18);
+        assertEq(targetAmm.exchangeCalls(), 0);
+        assertEq(yieldAmm.addLiquidityCalls(), 1);
+        assertEq(yieldAmm.lastAmounts(0), 12_000e18);
+        assertEq(yieldAmm.lastAmounts(1), 12_000e18);
+        assertEq(crvUsd.balanceOf(address(keeper)), 3_000e18);
+        assertEq(yieldToken.balanceOf(address(keeper)), 13_000e18);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 24_001.68e18);
+        assertEq(yieldAmm.balanceOf(caller), 0.72e18);
+        assertEq(keeper.deployed_crvusd(), 12_000e18);
+        assertEq(keeper.expansion_pressure(), 12_000e18);
+    }
+
+    function test_sweepUsesDonationToAbsorbLpCostWithoutRewardingDonation() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        targetOracle.setPrice(0.5e18);
+        yieldAmm.setLpMintBps(9_990);
+        crvUsd.mint(address(keeper), 12_000e18);
+        yieldToken.mint(address(keeper), 12_000e18);
+
+        address caller = makeAddr("donationSweeper");
+        vm.prank(caller);
+        (uint256 swept, uint256 matched, uint256 lpReceived, uint256 reward) =
+            keeper.sweepDonatedYield(12_000e18);
+
+        assertEq(swept, 12_000e18);
+        assertEq(matched, 12_000e18);
+        assertEq(lpReceived, 23_976e18);
+        assertEq(reward, 0);
+        assertEq(yieldAmm.balanceOf(caller), 0);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 23_976e18);
+        assertEq(keeper.deployed_crvusd(), 12_000e18);
+        assertGe(keeper.trusted_backing_value(), keeper.deployed_crvusd());
+    }
+
+    function test_sweepDonationRollsBackWhenYieldAmmDoesNotSpendExactAmounts() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        yieldAmm.setSpendBps(9_999);
+        crvUsd.mint(address(keeper), 12_000e18);
+        yieldToken.mint(address(keeper), 12_000e18);
+
+        vm.prank(makeAddr("donationSweeper"));
+        vm.expectRevert();
+        keeper.sweepDonatedYield(12_000e18);
+
+        assertEq(crvUsd.balanceOf(address(keeper)), 12_000e18);
+        assertEq(yieldToken.balanceOf(address(keeper)), 12_000e18);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 0);
+        assertEq(yieldAmm.addLiquidityCalls(), 0);
+        assertEq(crvUsd.allowance(address(keeper), address(yieldAmm)), 0);
+        assertEq(yieldToken.allowance(address(keeper), address(yieldAmm)), 0);
+        assertEq(keeper.deployed_crvusd(), 0);
+        assertEq(keeper.expansion_pressure(), 0);
+    }
+
+    function test_sweepDonationBelowMinimumCannotResetDeploymentAge() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        crvUsd.mint(address(keeper), 9_999e18);
+        yieldToken.mint(address(keeper), 9_999e18);
+        uint256 expansionAtBefore = keeper.last_expansion_at();
+
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert();
+        keeper.sweepDonatedYield(type(uint256).max);
+
+        assertEq(keeper.last_expansion_at(), expansionAtBefore);
+        assertEq(keeper.deployed_crvusd(), 0);
+        assertEq(keeper.expansion_pressure(), 0);
+    }
+
+    function test_sweepDonationIsBlockedByExpansionPause() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(targetAmm));
+        vm.prank(governance);
+        keeper.set_direction_paused(2, false);
+        crvUsd.mint(address(keeper), 12_000e18);
+        yieldToken.mint(address(keeper), 12_000e18);
+
+        vm.expectRevert();
+        keeper.sweepDonatedYield(12_000e18);
+
+        assertEq(keeper.deployed_crvusd(), 0);
+        assertEq(yieldToken.balanceOf(address(keeper)), 12_000e18);
+    }
+
+    function test_sweepDonationRejectsUnhealthyYieldToken() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        yieldOracle.setPrice(0.5e18);
+        crvUsd.mint(address(keeper), 12_000e18);
+        yieldToken.mint(address(keeper), 12_000e18);
+
+        vm.expectRevert();
+        keeper.sweepDonatedYield(12_000e18);
+
+        assertEq(keeper.deployed_crvusd(), 0);
+        assertEq(yieldToken.balanceOf(address(keeper)), 12_000e18);
     }
 
     function test_contractViaAmmBurnsLpAndWithdrawsOnlyCrvUsd() public {

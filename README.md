@@ -54,8 +54,9 @@ The unreleased `lp-yield` branch changes V3 from loose-token backing to Curve LP
 
 - **Expansion through another pool:** `X` crvUSD is sold through the target AMM and the existing typed expansion path ends in `yieldToken`. V3 then sweeps the complete live yield-token balance into the fixed `yieldAmm` with equal-value additional crvUSD. Total recorded exposure is `X + matchedCrvUsd`.
 - **Shared target/yield pool:** when `targetAmm == yieldAmm`, V3 skips the swap and expansion path and deposits crvUSD directly. Donated yield tokens are still swept with equal-value additional crvUSD.
+- **Dedicated donation sweep:** `sweepDonatedYield(maxAmount)` can match and deposit loose yield-token donations without touching the target AMM or expansion route. It is amount-bounded, capacity/velocity controlled, and increases debt only by matched crvUSD.
 - **Contraction:** V3 burns held LP tokens and calls the fixed yield AMM's `remove_liquidity_one_coin(..., crvUsdIndex, minCrvUsd)`. There is no configurable contraction path.
-- **Failure:** expansion is atomic. A route or LP-deposit failure reverts the complete keeper update. There is no undeployed-target fallback or later maintenance deployment.
+- **Failure:** expansion and donation sweeping are atomic. A route, LP-deposit, accounting, or allowance failure reverts the complete keeper update. There is no undeployed-target fallback or later maintenance deployment.
 
 The candidate launch keeps plain frxUSD as `yieldToken` and uses the frxUSD/crvUSD StableSwap-NG pool as `yieldAmm` for the frxUSD, USDC, and USDT keepers. USDC and USDT retain their existing typed target-to-frxUSD expansion paths. The frxUSD keeper uses the direct-pool special case.
 
@@ -67,7 +68,7 @@ trustedBackingValue = floor(lpBalance * virtualPrice / 1e18)
 
 This is an explicit equivalent-asset/rate-aware-pool accounting assumption. ERC-4626 share appreciation must not be applied again if the pool virtual price already incorporates it. One-coin contraction uses `calc_withdraw_one_coin` for executable slippage protection; virtual price is not treated as a withdrawal quote.
 
-Yield-token donations are included in the next LP deposit and matched with crvUSD, but excluded from keeper-profit attribution by adding their normalized value to the pre-action accounting baseline. Actual crvUSD, target, yield-token, and LP balance deltas remain authoritative.
+Yield-token donations may be included in the next expansion or deployed separately through the bounded sweep. They are matched with crvUSD but excluded from keeper-profit attribution. Donated value may absorb LP deposit cost while retained LP value must still cover the new matched debt plus entry margin. Actual crvUSD, target, yield-token, and LP balance deltas remain authoritative.
 
 The branch removes:
 
@@ -93,7 +94,7 @@ The LP-yield candidate has not been deployed. It includes:
 
 - [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-free six-CREATE deployment of preview, implementation, Factory, and three oracle adapters;
 - [`script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol): paused three-keeper proposal using one shared frxUSD/crvUSD backing pool and no contraction route;
-- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet USDT expansion, matched LP deposit, and static one-coin LP contraction;
+- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet USDT expansion, dedicated frxUSD donation sweep, and static one-coin LP contraction;
 - runtime-size and Vyper/Solidity ABI gates.
 
 The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json) and release checklist remain evidence for the earlier `3.0.0` candidate, not this unreleased `3.1.0` branch. A new release manifest is required before this variant can be proposed for deployment.
@@ -105,7 +106,7 @@ The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainne
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The LP-yield implementation core is `19,620` bytes; its deployed runtime with the immutable preview-module address is `19,652` bytes, leaving `4,924` bytes below EIP-170. Full implementation initcode is `19,785` bytes. The stateless Vyper preview module is `5,739` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`, and `make check` compares the Vyper ABIs against their Solidity interfaces.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The LP-yield implementation core is `19,912` bytes; its deployed runtime with the immutable preview-module address is `19,944` bytes, leaving `4,632` bytes below EIP-170. Full implementation initcode is `20,077` bytes. The stateless Vyper preview module is `5,739` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`, and `make check` compares the Vyper ABIs against their Solidity interfaces.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the implementation in one auditable contract, V3 uses bare Vyper assertions for contract-owned guards. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -194,7 +195,7 @@ Current V2 PegKeepers covered by the retirement test:
 
 ### `PegKeeperV3LpYieldTest`
 
-Covers the LP-backed state machine against deterministic local pools: yield-AMM pinning and coin indices; StableSwap-NG dynamic-array deposits; separate-pool target routing; yield-token donation sweeping and matched crvUSD; direct shared-pool deposits; donation exclusion from keeper profit; ERC-4626 non-double-counting; exact LP accounting; preview output; total exposure/velocity consumption; atomic rollback on route or partial LP-deposit failure; static one-coin contraction; executable quote protection; and removal of obsolete undeployed/contraction-path selectors.
+Covers the LP-backed state machine against deterministic local pools: yield-AMM pinning and coin indices; StableSwap-NG dynamic-array deposits; separate-pool target routing; bounded donation-only sweeping during target downturns; matched crvUSD debt and velocity; donation-funded LP costs without donation reward leakage; direct shared-pool deposits; ERC-4626 non-double-counting; exact LP accounting; preview output; atomic rollback on route or partial LP-deposit failure; anti-dust age protection; static one-coin contraction; executable quote protection; and removal of obsolete undeployed/contraction-path selectors.
 
 ### `PegKeeperV3LpFactoryTest`
 
@@ -202,7 +203,7 @@ Deploys a real minimal proxy from the Vyper Factory and verifies owner-only depl
 
 ### `PegKeeperV3LpYieldInvariantTest`
 
-Runs four 256-run stateful campaigns across expansion, static LP contraction, yield-token and LP donations, virtual-price growth, surplus claims, and time advancement. It checks LP backing versus debt, local/Factory capacity, zero residual route/yield-AMM allowances, and zero routed target residue after every sequence.
+Runs five 256-run stateful campaigns across expansion, bounded donation sweeps, static LP contraction, yield-token and LP donations, virtual-price growth, surplus claims, and time advancement. It checks LP backing versus debt, local/Factory capacity, action reachability, zero residual route/yield-AMM allowances, and zero routed target residue after every sequence.
 
 ### `PegKeeperV3RuntimeSizeTest`
 

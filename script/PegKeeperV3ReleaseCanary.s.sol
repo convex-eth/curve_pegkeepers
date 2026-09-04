@@ -47,6 +47,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     uint256 internal constant ALLOCATION = 2_000_000e18;
     uint256 internal constant EXPANSION_AMOUNT = 40_000e18;
+    uint256 internal constant DONATION_SWEEP_AMOUNT = 10_000e18;
     uint256 internal constant CONTRACTION_MARKET_TRADE = 6_000_000e18;
 
     function run() external {
@@ -115,6 +116,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             "yield AMM frxUSD allowance"
         );
 
+        uint256 sweepLp = _sweepDonationAsKeeper(pegKeeper);
+
         // Make crvUSD abundant in the held-LP pool, then exercise fixed one-coin withdrawal.
         deal(CRVUSD, CANARY_TRADER, CONTRACTION_MARKET_TRADE);
         vm.startPrank(CANARY_TRADER);
@@ -138,6 +141,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         console2.log("crvUSD sold", crvUsdSold);
         console2.log("crvUSD matched", crvUsdMatched);
         console2.log("LP received", lpReceived);
+        console2.log("donation LP received", sweepLp);
         console2.log("contraction LP", contractionLp);
         console2.log("contraction quote crvUSD", expectedCrvUsd);
         console2.log("contraction received crvUSD", crvUsdReceived);
@@ -180,6 +184,20 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     {
         vm.prank(CANARY_KEEPER);
         return pegKeeper.expand(EXPANSION_AMOUNT);
+    }
+
+    function _sweepDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 lpReceived) {
+        uint256 debtBefore = pegKeeper.deployed_crvusd();
+        deal(FRXUSD, address(pegKeeper), DONATION_SWEEP_AMOUNT);
+        vm.prank(CANARY_KEEPER);
+        (uint256 swept, uint256 matched, uint256 sweepLp,) =
+            pegKeeper.sweepDonatedYield(DONATION_SWEEP_AMOUNT);
+        require(swept == DONATION_SWEEP_AMOUNT, "donation sweep amount");
+        require(matched == DONATION_SWEEP_AMOUNT, "donation match amount");
+        require(sweepLp > 0, "donation sweep LP");
+        require(pegKeeper.deployed_crvusd() == debtBefore + matched, "donation debt");
+        require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "donation residue");
+        return sweepLp;
     }
 
     function _contractAsKeeper(IPegKeeperV3 pegKeeper, uint256 lpAmount)

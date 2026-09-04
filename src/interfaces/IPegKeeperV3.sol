@@ -36,6 +36,14 @@ interface IPegKeeperV3 {
         uint256 keeperReward,
         bool directDeposit
     );
+    event DonatedYieldSwept(
+        address indexed keeper,
+        uint256 yieldTokenSwept,
+        uint256 crvUsdMatched,
+        uint256 lpTokensReceived,
+        uint256 grossProfit,
+        uint256 keeperReward
+    );
     event Contracted(
         address indexed keeper,
         uint256 lpTokensBurned,
@@ -192,6 +200,15 @@ interface IPegKeeperV3 {
             uint256 lpTokensReceived,
             uint256 keeperRewardLp,
             bool directDeposit
+        );
+    /// @notice Matches donated yield tokens with crvUSD and deposits both into the yield AMM.
+    function sweepDonatedYield(uint256 maxYieldTokenAmount)
+        external
+        returns (
+            uint256 yieldTokenSwept,
+            uint256 crvUsdMatched,
+            uint256 lpTokensReceived,
+            uint256 keeperRewardLp
         );
 
     /// @notice Estimates a fixed one-coin LP withdrawal into crvUSD.

@@ -76,6 +76,8 @@ Expansion no longer accepts a fallback target-inventory state. A failed route or
 
 The velocity bucket counts total crvUSD committed to the LP, not just the first target-AMM leg. A normal expansion around par therefore consumes approximately twice its `expand()` input.
 
+`sweepDonatedYield(maxYieldTokenAmount)` uses the same expansion/global pauses, `minExpansionAmount`, yield-oracle floor, capacity, velocity, LP execution buffer, and entry margin. It skips the target market and expansion route, matches only the selected donated frxUSD with crvUSD, and increases debt only by that matched crvUSD.
+
 ## Oracles
 
 | Keeper | Target oracle | Yield-token oracle |

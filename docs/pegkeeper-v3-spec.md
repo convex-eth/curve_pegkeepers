@@ -129,6 +129,24 @@ After reward, retained LP value above the donation-adjusted baseline must cover 
 
 Direct LP-token donations increase backing and surplus immediately through the live LP balance. They are not action-local expansion output.
 
+## Dedicated yield-token donation sweep
+
+`sweepDonatedYield(maxYieldTokenAmount)` is a permissionless LP-deployment action for loose `yieldToken` received outside an expansion. It is independent of the target AMM, target oracle, and typed expansion path, so a target-market downturn does not prevent donated frxUSD from entering the fixed LP.
+
+The call:
+
+1. selects at most `maxYieldTokenAmount` from the live donated yield-token balance;
+2. requires its normalized value to meet `minExpansionAmount`;
+3. requires a healthy yield-token oracle;
+4. matches it with equal-value crvUSD;
+5. consumes expansion capacity and velocity by only that matched crvUSD;
+6. deposits both assets atomically into `yieldAmm` and measures exact token and LP deltas;
+7. increases `deployedCrvUsd` by only the matched crvUSD.
+
+The amount bound allows a large donation to be swept in executable chunks rather than forcing an all-balance operation. Expansion and global pauses still block the action because it externalizes new crvUSD. Successful sweeps update `lastExpansionAt`; the minimum prevents dust donations from cheaply resetting contraction age.
+
+Donation value is excluded from keeper-profit attribution. It may absorb LP deposit cost because it is free protocol equity, but after any reward the LP-value increase must still cover the newly matched crvUSD plus the configured entry margin. Any failure reverts the complete sweep.
+
 ## Static LP contraction
 
 `contractViaAmm(lpTokenAmount)` has one fixed path:
@@ -200,7 +218,7 @@ max burst = 5% of maxDeployedCrvUsd
 full refill = 300 seconds
 ```
 
-A reverted expansion consumes no pressure. Contraction does not refund pressure.
+A reverted expansion or donation sweep consumes no pressure. Contraction does not refund pressure.
 
 `available_expansion()` reports the remaining aggregate crvUSD budget from idle balance, local/Factory capacity, and velocity. A separate-pool caller must preview its proposed first-leg amount because matched crvUSD makes total consumption larger than the `expand()` input.
 
@@ -217,6 +235,13 @@ function expand(uint256 crvUsdAmount) external returns (
     uint256 lpTokensReceived,
     uint256 keeperRewardLp,
     bool directDeposit
+);
+
+function sweepDonatedYield(uint256 maxYieldTokenAmount) external returns (
+    uint256 yieldTokenSwept,
+    uint256 crvUsdMatched,
+    uint256 lpTokensReceived,
+    uint256 keeperRewardLp
 );
 
 function previewExpansion(uint256 crvUsdAmount) external view returns (
@@ -244,12 +269,12 @@ The launch proposal deploys three paused keepers. Each receives the same fixed `
 Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
 
 ```text
-implementation initcode: 19,785 bytes
-implementation runtime:  19,652 bytes
+implementation initcode: 20,077 bytes
+implementation runtime:  19,944 bytes
 preview initcode:         5,775 bytes
 preview runtime:          5,739 bytes
 minimal proxy runtime:       45 bytes
-EIP-170 headroom:          4,924 bytes
+EIP-170 headroom:          4,632 bytes
 ```
 
 The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch.

@@ -98,7 +98,7 @@ LP deposit       = Y crvUSD + yieldToken worth Y
 
 Around par, `Y ~= X`; a `500,000 crvUSD` target trade therefore consumes about `1,000,000 crvUSD` of velocity and capacity. Route ladders that show only target-to-yield cost are insufficient for sizing this implementation.
 
-A yield-token donation `D` adds another `D` of matched crvUSD consumption. An oversized unsolicited donation can make an expansion revert until governance recovers it through `execute()` or sufficient idle balance/capacity becomes available. The donation does not become keeper profit.
+A yield-token donation `D` adds another `D` of matched crvUSD consumption. `sweepDonatedYield(maxAmount)` can deploy donations separately from the target market and in bounded chunks; it consumes capacity and velocity only for the matching crvUSD. A normal expansion still attempts to sweep the complete remaining donation balance, so callers should use the bounded sweep first when that balance is too large for one expansion. The donation does not become keeper profit.
 
 ## LP accounting assumption
 

@@ -122,6 +122,14 @@ event Expanded:
     keeper_reward: uint256
     direct_deposit: bool
 
+event DonatedYieldSwept:
+    keeper: indexed(address)
+    yield_token_swept: uint256
+    crv_usd_matched: uint256
+    lp_tokens_received: uint256
+    gross_profit: uint256
+    keeper_reward: uint256
+
 event Contracted:
     keeper: indexed(address)
     lp_tokens_burned: uint256
@@ -551,7 +559,7 @@ def _target_price() -> uint256:
 
 @internal
 @view
-def _yield_price() -> (uint256, bool):
+def _yield_price() -> uint256:
     ok: bool = False
     response: Bytes[64] = empty(Bytes[64])
     ok, response = raw_call(
@@ -562,9 +570,10 @@ def _yield_price() -> (uint256, bool):
         revert_on_failure=False,
     )
     if not ok or len(response) != 32:
-        return 0, False
+        raise
     price: uint256 = convert(slice(response, 0, 32), uint256)
-    return price, price >= self.min_yield_oracle_price
+    assert price >= self.min_yield_oracle_price
+    return price
 
 
 @internal
@@ -655,10 +664,7 @@ def _trusted_backing_value() -> uint256:
 @internal
 @view
 def _oracle_backing_value() -> uint256:
-    price: uint256 = 0
-    healthy: bool = False
-    price, healthy = self._yield_price()
-    assert healthy
+    price: uint256 = self._yield_price()
     return self._oracle_value(self._trusted_backing_value(), price)
 
 
@@ -999,6 +1005,36 @@ def _deposit_to_yield_amm(
     return lp_received
 
 
+@internal
+def _settle_lp_expansion(
+    _lp_before: uint256,
+    _lp_value_before: uint256,
+    _donated_yield_value: uint256,
+    _entry_donation_value: uint256,
+    _principal: uint256,
+    _lp_received: uint256,
+) -> (uint256, uint256):
+    lp_after_deposit: uint256 = self._lp_inventory()
+    assert lp_after_deposit - _lp_before == _lp_received
+    virtual_price_after: uint256 = self.yield_amm.get_virtual_price()
+    lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
+    accounting_baseline: uint256 = _lp_value_before + _donated_yield_value
+    gross_profit: uint256 = 0
+    if lp_value_after > accounting_baseline + _principal:
+        gross_profit = lp_value_after - accounting_baseline - _principal
+
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price_after
+    assert keeper_reward <= _lp_received
+    self._transfer_exact_to(ERC20(self.yield_amm.address), msg.sender, keeper_reward)
+
+    retained_value: uint256 = self._lp_value(self._lp_inventory())
+    entry_baseline: uint256 = _lp_value_before + _entry_donation_value
+    assert retained_value >= entry_baseline
+    assert self._meets_entry_floor(retained_value - entry_baseline, _principal)
+    return gross_profit, keeper_reward
+
+
 @external
 @nonreentrant("lock")
 def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, bool):
@@ -1009,10 +1045,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     assert not self.expansion_paused
     assert _crv_usd_amount >= self.min_expansion_amount
     self._target_price()
-    yield_price: uint256 = 0
-    healthy: bool = False
-    yield_price, healthy = self._yield_price()
-    assert healthy
+    self._yield_price()
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
     target_before: uint256 = self._target_inventory()
@@ -1026,7 +1059,6 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         assert len(self.expansion_path) == 0
         assert self._target_asset.address == self._yield_token.address
         direct_crv_usd: uint256 = _crv_usd_amount + donated_yield_value
-        direct_baseline: uint256 = lp_value_before + donated_yield_value
         assert direct_crv_usd <= crv_usd_before
         assert direct_crv_usd <= self._remaining_exposure_capacity()
         self._consume_velocity(direct_crv_usd)
@@ -1035,22 +1067,15 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
             direct_crv_usd,
             yield_before,
         )
-        direct_lp_after: uint256 = self._lp_inventory()
-        assert direct_lp_after - lp_before == direct_lp_received
-        direct_virtual_price: uint256 = self.yield_amm.get_virtual_price()
-        direct_value_after: uint256 = self._lp_value_at(direct_lp_after, direct_virtual_price)
-        assert direct_value_after >= direct_baseline + direct_crv_usd
-        direct_gross_profit: uint256 = direct_value_after - direct_baseline - direct_crv_usd
-        direct_reward_value: uint256 = direct_gross_profit * self.keeper_profit_share_bps / BPS
-        direct_reward: uint256 = direct_reward_value * PRECISION / direct_virtual_price
-        assert direct_reward <= direct_lp_received
-        self._transfer_exact_to(ERC20(self.yield_amm.address), msg.sender, direct_reward)
-
-        direct_retained_value: uint256 = self._lp_value(self._lp_inventory())
-        assert direct_retained_value >= direct_baseline
-        assert self._meets_entry_floor(
-            direct_retained_value - direct_baseline,
+        direct_gross_profit: uint256 = 0
+        direct_reward: uint256 = 0
+        direct_gross_profit, direct_reward = self._settle_lp_expansion(
+            lp_before,
+            lp_value_before,
+            donated_yield_value,
+            donated_yield_value,
             direct_crv_usd,
+            direct_lp_received,
         )
         self.deployed_crvusd += direct_crv_usd
         self.last_expansion_at = block.timestamp
@@ -1105,24 +1130,16 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     )
     assert self._yield_inventory() == 0
     assert crv_usd_before - self._crv_usd.balanceOf(self) == total_principal
-
-    lp_after_deposit: uint256 = self._lp_inventory()
-    assert lp_after_deposit - lp_before == lp_received
-    virtual_price_after: uint256 = self.yield_amm.get_virtual_price()
-    lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
-    accounting_baseline: uint256 = lp_value_before + donated_yield_value
-    assert lp_value_after >= accounting_baseline + total_principal
-    gross_profit: uint256 = lp_value_after - accounting_baseline - total_principal
-
-    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price_after
-    assert keeper_reward <= lp_received
-    self._transfer_exact_to(ERC20(self.yield_amm.address), msg.sender, keeper_reward)
-
-    retained_value: uint256 = self._lp_value(self._lp_inventory())
-    assert retained_value >= accounting_baseline
-    retained_added: uint256 = retained_value - accounting_baseline
-    assert self._meets_entry_floor(retained_added, total_principal)
+    gross_profit: uint256 = 0
+    keeper_reward: uint256 = 0
+    gross_profit, keeper_reward = self._settle_lp_expansion(
+        lp_before,
+        lp_value_before,
+        donated_yield_value,
+        donated_yield_value,
+        total_principal,
+        lp_received,
+    )
 
     self.deployed_crvusd += total_principal
     self.last_expansion_at = block.timestamp
@@ -1138,6 +1155,58 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         False,
     )
     return crv_usd_sold, crv_usd_matched, lp_received, keeper_reward, False
+
+
+@external
+@nonreentrant("lock")
+def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
+    """
+    @notice Matches donated yield tokens with crvUSD and deposits both into the yield AMM.
+    """
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
+    assert _max_yield_token_amount > 0
+
+    self._yield_price()
+
+    yield_token_swept: uint256 = min(_max_yield_token_amount, self._yield_inventory())
+    crv_usd_matched: uint256 = self._trusted_yield_value(yield_token_swept)
+    assert crv_usd_matched >= self.min_expansion_amount
+    assert crv_usd_matched <= self._crv_usd.balanceOf(self)
+    assert crv_usd_matched <= self._remaining_exposure_capacity()
+    self._consume_velocity(crv_usd_matched)
+
+    lp_before: uint256 = self._lp_inventory()
+    virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
+    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
+    lp_received: uint256 = self._deposit_to_yield_amm(
+        crv_usd_matched,
+        yield_token_swept,
+    )
+    gross_profit: uint256 = 0
+    keeper_reward: uint256 = 0
+    gross_profit, keeper_reward = self._settle_lp_expansion(
+        lp_before,
+        lp_value_before,
+        crv_usd_matched,
+        0,
+        crv_usd_matched,
+        lp_received,
+    )
+
+    self.deployed_crvusd += crv_usd_matched
+    self.last_expansion_at = block.timestamp
+    assert self._trusted_backing_value() >= self.deployed_crvusd
+
+    log DonatedYieldSwept(
+        msg.sender,
+        yield_token_swept,
+        crv_usd_matched,
+        lp_received,
+        gross_profit,
+        keeper_reward,
+    )
+    return yield_token_swept, crv_usd_matched, lp_received, keeper_reward
 
 
 @external
