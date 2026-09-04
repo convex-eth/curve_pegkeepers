@@ -20,12 +20,24 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 19_912;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_944;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 21_306;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 21_338;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0xf0b569b81fbd83e5d80ea305af766eb172b72490c3f5acb2836bb78853210586;
+        0x7c2e6162a01529d691e56a6a6f0aef9390fc59ca529e9be89ec4033736102689;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0x9a53e14956710c787985e21ea4aa22fd6bb0971ddd2961457521114476e9073d;
+        0x630f681a980c5cff3504b166417418e8aacb563c13323ee2cf42e054498ae775;
+    uint256 public constant FACTORY_CORE_SIZE = 3_830;
+    uint256 public constant FACTORY_RUNTIME_SIZE = 3_894;
+    bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
+        0xdad098f5843f67094f9107e91fd6511c3b0fb6c59cf01a629528564560922f91;
+    uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 460;
+    uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 556;
+    bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
+        0xe03c54b8bf499010cf16ccbd53437316c3fe05e6cc35ef26b042fa36efcc64b3;
+    uint256 public constant CURVE_ORACLE_CORE_SIZE = 329;
+    uint256 public constant CURVE_ORACLE_RUNTIME_SIZE = 457;
+    bytes32 public constant EXPECTED_CURVE_ORACLE_CORE_HASH =
+        0xfb1bf536fa996ce08fe9176ab628f2d33de000f9736291d93954a34a7ebe3ca6;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_FRXUSD_MINT = 4;
@@ -33,10 +45,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant FRXUSD_MINT_EXECUTION_BUFFER_BPS = 1;
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 1_000;
-    uint256 public constant EARLY_EXIT_MIN_PROFIT_PPM = 5_000;
+    uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 500;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant MIN_DEPLOYMENT_TIME = 2 days;
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MIN_ORACLE_PRICE = 999_700_000_000_000_000;
     uint256 public constant CHAINLINK_MAX_DELAY = 26 hours;
@@ -46,6 +56,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant USDT_CAP = 20_000_000e18;
 
     address public constant CURVE_EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
+    address public constant CRVUSD_AGGREGATE_ORACLE = 0x18672b1b0c623a30089A280Ed9256379fb0E4E62;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
     address public constant CRVUSD_MONETARY_POLICY = 0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251;
     address public constant CRVUSD_LEGACY_MONETARY_POLICY =
@@ -177,11 +188,23 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     function _validateFactory() internal view {
         require(deploymentFactory != address(0), "factory not set");
+        address factoryAddress = deploymentFactory;
+        require(factoryAddress.code.length == FACTORY_RUNTIME_SIZE, "factory size");
+        bytes32 factoryCoreHash;
+        assembly {
+            let pointer := mload(0x40)
+            extcodecopy(factoryAddress, pointer, 0, FACTORY_CORE_SIZE)
+            factoryCoreHash := keccak256(pointer, FACTORY_CORE_SIZE)
+        }
+        require(factoryCoreHash == EXPECTED_FACTORY_CORE_HASH, "factory hash");
+
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deploymentFactory);
         require(factory.owner() == CURVE_OWNERSHIP_AGENT, "factory owner");
+        require(factory.pendingOwner() == address(0), "factory pending owner");
         require(
             factory.controllerFactory() == CURVE_CRVUSD_CONTROLLER_FACTORY, "controller factory"
         );
+        require(factory.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
         require(factory.keeperCount() == 0, "factory not fresh");
 
         address implementation = factory.implementation();
@@ -212,7 +235,14 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         address expectedReference,
         bool expectedInverted
     ) internal view {
-        require(adapter.code.length > 0, "oracle code");
+        require(adapter.code.length == CURVE_ORACLE_RUNTIME_SIZE, "curve oracle size");
+        bytes32 coreHash;
+        assembly {
+            let pointer := mload(0x40)
+            extcodecopy(adapter, pointer, 0, CURVE_ORACLE_CORE_SIZE)
+            coreHash := keccak256(pointer, CURVE_ORACLE_CORE_SIZE)
+        }
+        require(coreHash == EXPECTED_CURVE_ORACLE_CORE_HASH, "curve oracle hash");
         ICurveStablecoinOracle oracle = ICurveStablecoinOracle(adapter);
         require(oracle.pool() == expectedPool, "oracle pool");
         require(oracle.asset() == expectedAsset, "oracle asset");
@@ -222,7 +252,14 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     }
 
     function _validateChainlinkOracle(address adapter, address expectedFeed) internal view {
-        require(adapter.code.length > 0, "oracle code");
+        require(adapter.code.length == CHAINLINK_ORACLE_RUNTIME_SIZE, "chainlink oracle size");
+        bytes32 coreHash;
+        assembly {
+            let pointer := mload(0x40)
+            extcodecopy(adapter, pointer, 0, CHAINLINK_ORACLE_CORE_SIZE)
+            coreHash := keccak256(pointer, CHAINLINK_ORACLE_CORE_SIZE)
+        }
+        require(coreHash == EXPECTED_CHAINLINK_ORACLE_CORE_HASH, "chainlink oracle hash");
         IChainlinkStablecoinOracle oracle = IChainlinkStablecoinOracle(adapter);
         require(oracle.feed() == expectedFeed, "oracle feed");
         require(oracle.feed_decimals() == 8, "oracle decimals");
@@ -284,9 +321,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
                 IPegKeeperV3.set_policy.selector,
                 ENTRY_MIN_PROFIT_PPM,
                 NORMAL_EXIT_MIN_PROFIT_PPM,
-                EARLY_EXIT_MIN_PROFIT_PPM,
                 KEEPER_PROFIT_SHARE_BPS,
-                MIN_DEPLOYMENT_TIME,
                 MIN_EXPANSION_AMOUNT,
                 cap
             )

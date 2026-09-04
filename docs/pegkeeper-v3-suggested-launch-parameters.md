@@ -24,6 +24,7 @@ USDC/crvUSD target AMM  0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E
 USDT/crvUSD target AMM  0x390f3595bCa2Df7d23783dFd126427CCeb997BF4
 Curve 3pool             0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7
 Frax mint custodian     0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c
+aggregate crvUSD oracle 0x18672b1b0c623a30089A280Ed9256379fb0E4E62
 ```
 
 The yield AMM coin order is:
@@ -45,6 +46,7 @@ add_liquidity(uint256[] amounts, uint256 minLp)
 | Parameter | Candidate value |
 |---|---:|
 | ControllerFactory | `0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC` |
+| aggregate crvUSD oracle | `0x18672b1b0c623a30089A280Ed9256379fb0E4E62` |
 | owner/admin | Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
 | emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
 | fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
@@ -66,17 +68,17 @@ Expansion no longer accepts a fallback target-inventory state. A failed route or
 | Parameter | Value |
 |---|---:|
 | `entryMinProfitPpm` | `10` |
-| `normalExitMinProfitPpm` | `1_000` |
-| `earlyExitMinProfitPpm` | `5_000` |
+| `normalExitMinProfitPpm` | `500` (`5 bp`) |
 | `keeperProfitShareBps` | `3_000` |
-| `minDeploymentTime` | `172_800` seconds |
 | `minExpansionAmount` | `10_000e18` |
 | velocity max burst | `5%` of cap |
 | velocity full refill | `300` seconds |
 
 The velocity bucket counts total crvUSD committed to the LP, not just the first target-AMM leg. A normal expansion around par therefore consumes approximately twice its `expand()` input.
 
-`sweepDonatedYield(maxYieldTokenAmount)` uses the same expansion/global pauses, `minExpansionAmount`, yield-oracle floor, capacity, velocity, LP execution buffer, and entry margin. It skips the target market and expansion route, matches only the selected donated frxUSD with crvUSD, and increases debt only by that matched crvUSD.
+`sweepDonatedYield(maxYieldTokenAmount)` uses the expansion/global pauses, `minExpansionAmount`, yield-oracle floor, LP execution buffer, and entry margin. It skips the target market and route. At aggregate crvUSD price at least `$1`, it matches the full selected donation. Below `$1`, it deposits the donation one-sided while reducing crvUSD excess and matches only the remainder that would otherwise overshoot the pool's normalized balance. Matching is capped by idle crvUSD, capacity, and velocity; debt increases only by the actual match.
+
+`claimSurplus()` performs the same donation settlement before calculating profit and reserves budget for the requested claim before optional matching. It is not aggregate-direction-gated, so realized yield remains claimable during contraction regimes.
 
 ## Oracles
 
@@ -86,7 +88,7 @@ The velocity bucket counts total crvUSD committed to the LP, not just the first 
 | USDC | USDC/USDT Curve EMA, USDC orientation | frxUSD/USD adapter |
 | USDT | USDC/USDT Curve EMA, USDT orientation | frxUSD/USD adapter |
 
-Both floors remain `0.9997e18`. Oracle health gates expansion. Contraction remains executable from the held LP because executable output and final solvency are enforced directly.
+Both target/yield floors remain `0.9997e18`. The Factory points every keeper at the canonical aggregate crvUSD oracle and governance may update that address. Expansion requires aggregate price `>= 1e18`; contraction requires aggregate price `<= 1e18`; both are allowed exactly at `1e18`. Previews enforce the same gates. Aggregate and yield-oracle returndata must be exactly 32 bytes.
 
 ## Expansion paths
 
@@ -141,7 +143,7 @@ frxUSD/crvUSD LP
     -> crvUSD
 ```
 
-`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The normal/early exit floor and whole-position virtual-price delta remain independent checks.
+`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The single `500 ppm` (`5 bp`) post-reward exit floor and whole-position virtual-price delta remain independent checks. With the `30%` caller share, the gross edge must be roughly `7.143 bp` before rounding.
 
 ## Deployment/proposal sequence
 
@@ -149,7 +151,7 @@ The deployer performs six monotonic CREATEs:
 
 1. preview module;
 2. locked implementation;
-3. immutable EIP-1167 Factory;
+3. EIP-1167 Factory initialized with the canonical aggregate crvUSD oracle;
 4. USDC target oracle;
 5. USDT target oracle;
 6. frxUSD Chainlink oracle.
@@ -169,7 +171,7 @@ No FraxNet account creation, contraction path, undeployed backing action, direct
 
 If governance later authorizes activation:
 
-1. Reconfirm implementation/preview hashes, proxy targets, oracles, pool coin order, StableSwap-NG dynamic-array ABI, virtual price, fees, balances, and one-coin quote behavior.
+1. Reconfirm implementation/preview hashes, proxy targets, the Factory's aggregate crvUSD oracle, target/yield oracles, pool coin order, StableSwap-NG dynamic-array ABI, virtual price, fees, balances, and one-coin quote behavior.
 2. Reconfirm Frax mint capacity for USDC/USDT expansion.
 3. Confirm all keepers start with directions `0`, `1`, and `2` paused.
 4. Unpause LP contraction (`1`) while global remains paused.

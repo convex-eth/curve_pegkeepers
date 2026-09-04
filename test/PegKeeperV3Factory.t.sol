@@ -28,6 +28,7 @@ contract PegKeeperV3LpFactoryTest is Test {
     LpYieldFactory internal controllerFactory;
     LpYieldOracle internal targetOracle;
     LpYieldOracle internal yieldOracle;
+    LpYieldOracle internal aggregateCrvUsdOracle;
     IPegKeeperV3Factory internal factory;
     address internal implementation;
 
@@ -38,9 +39,12 @@ contract PegKeeperV3LpFactoryTest is Test {
         targetAmm = new LpYieldTargetAmm(crvUsd, target);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         route = new LpYieldRoutePool(target, yieldToken);
-        controllerFactory = new LpYieldFactory(address(crvUsd), admin, emergencyAdmin, feeReceiver);
         targetOracle = new LpYieldOracle();
         yieldOracle = new LpYieldOracle();
+        aggregateCrvUsdOracle = new LpYieldOracle();
+        controllerFactory = new LpYieldFactory(
+            address(crvUsd), admin, emergencyAdmin, feeReceiver, address(aggregateCrvUsdOracle)
+        );
 
         address preview =
             _create(vm.getCode("out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json"));
@@ -61,7 +65,13 @@ contract PegKeeperV3LpFactoryTest is Test {
             _create(
                 bytes.concat(
                     vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json"),
-                    abi.encode(owner, address(controllerFactory), implementation, defaults_)
+                    abi.encode(
+                        owner,
+                        address(controllerFactory),
+                        implementation,
+                        address(aggregateCrvUsdOracle),
+                        defaults_
+                    )
                 )
             )
         );
@@ -116,6 +126,30 @@ contract PegKeeperV3LpFactoryTest is Test {
         assertEq(defaults_.targetAmmExecutionBufferBps, 3);
         assertEq(defaults_.yieldAmmExecutionBufferBps, 4);
         assertEq(defaults_.expansionMaxRouteLossBps, 100);
+    }
+
+    function test_ownerCanUpdateSharedAggregateCrvUsdOracle() public {
+        assertEq(factory.aggregateCrvUsdOracle(), address(aggregateCrvUsdOracle));
+
+        LpYieldOracle replacement = new LpYieldOracle();
+        vm.prank(makeAddr("not owner"));
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
+        factory.setAggregateCrvUsdOracle(address(replacement));
+
+        vm.prank(owner);
+        factory.setAggregateCrvUsdOracle(address(replacement));
+        assertEq(factory.aggregateCrvUsdOracle(), address(replacement));
+    }
+
+    function test_aggregateCrvUsdOracleUpdateRejectsInvalidAddress() public {
+        vm.startPrank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOracle.selector);
+        factory.setAggregateCrvUsdOracle(address(0));
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOracle.selector);
+        factory.setAggregateCrvUsdOracle(makeAddr("no code"));
+        vm.stopPrank();
+
+        assertEq(factory.aggregateCrvUsdOracle(), address(aggregateCrvUsdOracle));
     }
 
     function _path() internal view returns (IPegKeeperV3.RouteStep[] memory path) {

@@ -110,13 +110,14 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         crvUsd = new LpYieldToken(18);
         targetAsset = new LpYieldToken(6);
         yieldToken = new LpYieldToken(18);
-        factory = new LpYieldFactory(address(crvUsd), GOVERNANCE, address(0xBEEF), address(0xFEE));
+        LpYieldOracle oracle = new LpYieldOracle();
+        factory = new LpYieldFactory(
+            address(crvUsd), GOVERNANCE, address(0xBEEF), address(0xFEE), address(oracle)
+        );
         targetAmm = new LpYieldTargetAmm(crvUsd, targetAsset);
         routePool = new LpYieldRoutePool(targetAsset, yieldToken);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         yieldAmm.setLpMintBps(10_001);
-        LpYieldOracle oracle = new LpYieldOracle();
-
         keeper = PegKeeperV3TestDeployer.deploy(
             address(factory),
             address(targetAmm),

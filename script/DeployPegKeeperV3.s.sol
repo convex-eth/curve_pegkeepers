@@ -19,6 +19,7 @@ contract DeployPegKeeperV3 is Script {
 
     address public constant CURVE_OWNERSHIP_AGENT = 0x40907540d8a6C65c637785e8f8B742ae6b0b9968;
     address public constant CRVUSD_CONTROLLER_FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
+    address public constant CRVUSD_AGGREGATE_ORACLE = 0x18672b1b0c623a30089A280Ed9256379fb0E4E62;
     address public constant CURVE_EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
 
@@ -40,6 +41,7 @@ contract DeployPegKeeperV3 is Script {
     struct Config {
         address owner;
         address controllerFactory;
+        address aggregateCrvUsdOracle;
         address admin;
         address emergencyAdmin;
         address feeReceiver;
@@ -79,6 +81,7 @@ contract DeployPegKeeperV3 is Script {
     function mainnetConfig() public pure returns (Config memory config) {
         config.owner = CURVE_OWNERSHIP_AGENT;
         config.controllerFactory = CRVUSD_CONTROLLER_FACTORY;
+        config.aggregateCrvUsdOracle = CRVUSD_AGGREGATE_ORACLE;
         config.admin = CURVE_OWNERSHIP_AGENT;
         config.emergencyAdmin = CURVE_EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
@@ -100,7 +103,7 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Deploying locked PegKeeperV3 implementation");
         deployment.implementation = _deployImplementation(deployment.previewModule);
 
-        console2.log("Deploying immutable PegKeeperV3Factory");
+        console2.log("Deploying PegKeeperV3Factory");
         deployment.factory = _deployFactory(config, deployment.implementation);
 
         console2.log("Deploying Curve USDC target oracle");
@@ -170,7 +173,13 @@ contract DeployPegKeeperV3 is Script {
         bytes memory creationCode = vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
         bytes memory initCode = bytes.concat(
             creationCode,
-            abi.encode(config.owner, config.controllerFactory, implementation, defaults_)
+            abi.encode(
+                config.owner,
+                config.controllerFactory,
+                implementation,
+                config.aggregateCrvUsdOracle,
+                defaults_
+            )
         );
         assembly ("memory-safe") {
             deployed := create(0, add(initCode, 0x20), mload(initCode))
@@ -231,6 +240,10 @@ contract DeployPegKeeperV3 is Script {
             factory.controllerFactory() == config.controllerFactory, "controller factory mismatch"
         );
         require(factory.implementation() == deployment.implementation, "implementation mismatch");
+        require(
+            factory.aggregateCrvUsdOracle() == config.aggregateCrvUsdOracle,
+            "aggregate crvUSD oracle mismatch"
+        );
         require(factory.admin() == config.admin, "factory admin mismatch");
         require(factory.keeperCount() == 0, "initial keeper count");
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
@@ -295,6 +308,7 @@ contract DeployPegKeeperV3 is Script {
         console2.log("PegKeeperV3 monotonic mainnet deployment");
         console2.log("Factory owner", config.owner);
         console2.log("ControllerFactory", config.controllerFactory);
+        console2.log("Aggregate crvUSD oracle", config.aggregateCrvUsdOracle);
         console2.log("Admin", config.admin);
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);

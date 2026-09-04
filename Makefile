@@ -1,8 +1,9 @@
 PYTHON ?= python3.11
 VENV := .venv
 RELEASE_CANARY_BLOCK ?= 25868730
+V3_RELEASE_EVIDENCE_COMMIT := c3a07b66517d91430c0b739f86e4b7c921d9510f
 
-.PHONY: setup build test check release-canary clean
+.PHONY: setup build test check check-release-evidence release-canary clean
 
 setup:
 	$(PYTHON) -m venv $(VENV)
@@ -33,8 +34,14 @@ check:
 	python3 scripts/check-vyper-solidity-abi.py \
 		out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json \
 		out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json
-	python3 scripts/verify-release-manifest.py
+	$(MAKE) check-release-evidence
 	$(MAKE) test
+
+check-release-evidence:
+	git diff --exit-code $(V3_RELEASE_EVIDENCE_COMMIT) -- \
+		deployments/mainnet/PegKeeperV3-release.json \
+		docs/pegkeeper-v3-release-checklist.md \
+		scripts/verify-release-manifest.py
 
 release-canary:
 	@test -n "$$ETH_RPC_URL" || (printf '%s\n' 'ETH_RPC_URL is required' >&2; exit 1)

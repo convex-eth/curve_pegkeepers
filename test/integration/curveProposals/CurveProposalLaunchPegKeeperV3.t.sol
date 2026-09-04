@@ -33,6 +33,59 @@ contract CurveEDAOProxyHarness {
     }
 }
 
+contract SpoofPegKeeperV3Factory {
+    address public immutable owner;
+    address public immutable controllerFactory;
+    address public immutable aggregateCrvUsdOracle;
+    address public immutable implementation;
+    uint256 public keeperCount;
+
+    constructor(
+        address owner_,
+        address controllerFactory_,
+        address aggregateCrvUsdOracle_,
+        address implementation_
+    ) {
+        owner = owner_;
+        controllerFactory = controllerFactory_;
+        aggregateCrvUsdOracle = aggregateCrvUsdOracle_;
+        implementation = implementation_;
+    }
+}
+
+contract SpoofChainlinkStablecoinOracle {
+    address public immutable feed;
+    uint256 public immutable feed_decimals = 8;
+    uint256 public immutable max_delay;
+
+    constructor(address feed_, uint256 maxDelay_) {
+        feed = feed_;
+        max_delay = maxDelay_;
+    }
+
+    function price() external pure returns (uint256) {
+        return 1e18;
+    }
+}
+
+contract SpoofCurveStablecoinOracle {
+    address public immutable pool;
+    address public immutable asset;
+    address public immutable reference_asset;
+    bool public immutable inverted;
+
+    constructor(address pool_, address asset_, address referenceAsset_, bool inverted_) {
+        pool = pool_;
+        asset = asset_;
+        reference_asset = referenceAsset_;
+        inverted = inverted_;
+    }
+
+    function price() external pure returns (uint256) {
+        return 1e18;
+    }
+}
+
 contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant OWNERSHIP_AGENT = 0x40907540d8a6C65c637785e8f8B742ae6b0b9968;
     address internal constant OWNERSHIP_VOTING = 0xE478de485ad2fe566d49342Cbd03E49ed7DB3356;
@@ -135,6 +188,50 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         );
     }
 
+    function test_AggregateCrvUsdOracleIsCanonicalAndLive() public view {
+        address oracle = factory.aggregateCrvUsdOracle();
+        assertEq(oracle, proposal.CRVUSD_AGGREGATE_ORACLE());
+
+        (bool success, bytes memory response) =
+            oracle.staticcall(abi.encodeWithSignature("price()"));
+        assertTrue(success);
+        assertEq(response.length, 32);
+        uint256 price = abi.decode(response, (uint256));
+        assertGt(price, 0.9e18);
+        assertLt(price, 1.1e18);
+    }
+
+    function test_FactoryRuntimeMatchesProposalIdentityPin() public view {
+        bytes memory runtime = address(factory).code;
+        assertEq(runtime.length, proposal.FACTORY_RUNTIME_SIZE());
+        uint256 coreSize = proposal.FACTORY_CORE_SIZE();
+        bytes32 coreHash;
+        assembly {
+            coreHash := keccak256(add(runtime, 0x20), coreSize)
+        }
+        assertEq(coreHash, proposal.EXPECTED_FACTORY_CORE_HASH());
+    }
+
+    function test_OracleRuntimesMatchProposalIdentityPins() public view {
+        bytes memory chainlinkRuntime = proposal.frxUsdOracle().code;
+        assertEq(chainlinkRuntime.length, proposal.CHAINLINK_ORACLE_RUNTIME_SIZE());
+        uint256 chainlinkCoreSize = proposal.CHAINLINK_ORACLE_CORE_SIZE();
+        bytes32 chainlinkCoreHash;
+        assembly {
+            chainlinkCoreHash := keccak256(add(chainlinkRuntime, 0x20), chainlinkCoreSize)
+        }
+        assertEq(chainlinkCoreHash, proposal.EXPECTED_CHAINLINK_ORACLE_CORE_HASH());
+
+        bytes memory curveRuntime = proposal.usdcOracle().code;
+        assertEq(curveRuntime.length, proposal.CURVE_ORACLE_RUNTIME_SIZE());
+        uint256 curveCoreSize = proposal.CURVE_ORACLE_CORE_SIZE();
+        bytes32 curveCoreHash;
+        assembly {
+            curveCoreHash := keccak256(add(curveRuntime, 0x20), curveCoreSize)
+        }
+        assertEq(curveCoreHash, proposal.EXPECTED_CURVE_ORACLE_CORE_HASH());
+    }
+
     function test_ProposalRejectsSwappedChainlinkFeeds() public {
         address wrongFrxUsdOracle =
             _deployChainlinkOracle(WRONG_FRXUSD_FEED, proposal.CHAINLINK_MAX_DELAY());
@@ -149,6 +246,67 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         proposal.setOracleAdapters(frxUsdOracle, proposal.usdcOracle(), proposal.usdtOracle());
 
         vm.expectRevert("oracle delay");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsSpoofFactoryWithCorrectGetters() public {
+        SpoofPegKeeperV3Factory spoof = new SpoofPegKeeperV3Factory(
+            proposal.CURVE_OWNERSHIP_AGENT(),
+            proposal.CURVE_CRVUSD_CONTROLLER_FACTORY(),
+            proposal.CRVUSD_AGGREGATE_ORACLE(),
+            factory.implementation()
+        );
+        proposal.setDeploymentFactory(address(spoof));
+
+        vm.expectRevert("factory size");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsFactoryWithPendingOwner() public {
+        vm.prank(OWNERSHIP_AGENT);
+        factory.transferOwnership(makeAddr("pending factory owner"));
+
+        vm.expectRevert("factory pending owner");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsSpoofChainlinkOracleWithCorrectGetters() public {
+        SpoofChainlinkStablecoinOracle spoof = new SpoofChainlinkStablecoinOracle(
+            proposal.FRXUSD_USD_PROXY(), proposal.CHAINLINK_MAX_DELAY()
+        );
+        proposal.setOracleAdapters(address(spoof), proposal.usdcOracle(), proposal.usdtOracle());
+
+        vm.expectRevert("chainlink oracle size");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsSpoofCurveOracleWithCorrectGetters() public {
+        SpoofCurveStablecoinOracle spoof = new SpoofCurveStablecoinOracle(
+            proposal.USDC_USDT_ORACLE_POOL(), proposal.USDC(), proposal.USDT(), true
+        );
+        proposal.setOracleAdapters(proposal.frxUsdOracle(), address(spoof), proposal.usdtOracle());
+
+        vm.expectRevert("curve oracle size");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsSameSizeMutatedChainlinkOracle() public {
+        address adapter = proposal.frxUsdOracle();
+        bytes memory runtime = adapter.code;
+        runtime[0] = bytes1(uint8(runtime[0]) ^ 1);
+        vm.etch(adapter, runtime);
+
+        vm.expectRevert("chainlink oracle hash");
+        proposal.buildProposalActions();
+    }
+
+    function test_ProposalRejectsSameSizeMutatedCurveOracle() public {
+        address adapter = proposal.usdcOracle();
+        bytes memory runtime = adapter.code;
+        runtime[0] = bytes1(uint8(runtime[0]) ^ 1);
+        vm.etch(adapter, runtime);
+
+        vm.expectRevert("curve oracle hash");
         proposal.buildProposalActions();
     }
 
@@ -343,10 +501,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     function _assertPolicy(IPegKeeperV3 keeper, uint256 cap) internal view {
         assertEq(keeper.entry_min_profit_ppm(), 10);
-        assertEq(keeper.normal_exit_min_profit_ppm(), 1_000);
-        assertEq(keeper.early_exit_min_profit_ppm(), 5_000);
+        assertEq(keeper.normal_exit_min_profit_ppm(), 500);
         assertEq(keeper.keeper_profit_share_bps(), 3_000);
-        assertEq(keeper.min_deployment_time(), 2 days);
         assertEq(keeper.min_expansion_amount(), 10_000e18);
         assertEq(keeper.max_deployed_crvusd(), cap);
     }

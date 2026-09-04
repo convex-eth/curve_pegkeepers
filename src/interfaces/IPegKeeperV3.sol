@@ -49,8 +49,7 @@ interface IPegKeeperV3 {
         uint256 lpTokensBurned,
         uint256 crvUsdReceived,
         uint256 grossProfit,
-        uint256 keeperReward,
-        bool earlyExit
+        uint256 keeperReward
     );
     event SurplusClaimed(
         address indexed caller,
@@ -67,9 +66,7 @@ interface IPegKeeperV3 {
     event PolicyUpdated(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 earlyExitMinProfitPpm,
         uint256 keeperProfitShareBps,
-        uint256 minDeploymentTime,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     );
@@ -122,9 +119,7 @@ interface IPegKeeperV3 {
 
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
-    function early_exit_min_profit_ppm() external view returns (uint256);
     function keeper_profit_share_bps() external view returns (uint256);
-    function min_deployment_time() external view returns (uint256);
     function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
     function target_amm_execution_buffer_bps() external view returns (uint256);
@@ -132,7 +127,6 @@ interface IPegKeeperV3 {
 
     function debt() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
-    function last_expansion_at() external view returns (uint256);
     function expansion_pressure() external view returns (uint256);
     function last_expansion_pressure_update() external view returns (uint256);
     function available_expansion_velocity() external view returns (uint256);
@@ -167,9 +161,7 @@ interface IPegKeeperV3 {
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 earlyExitMinProfitPpm,
         uint256 keeperProfitShareBps,
-        uint256 minDeploymentTime,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
@@ -201,7 +193,7 @@ interface IPegKeeperV3 {
             uint256 keeperRewardLp,
             bool directDeposit
         );
-    /// @notice Matches donated yield tokens with crvUSD and deposits both into the yield AMM.
+    /// @notice Deposits donated yield and matches crvUSD according to aggregate direction and pool balance.
     function sweepDonatedYield(uint256 maxYieldTokenAmount)
         external
         returns (
@@ -218,8 +210,7 @@ interface IPegKeeperV3 {
         returns (
             uint256 expectedCrvUsdOut,
             uint256 expectedGrossProfit,
-            uint256 expectedKeeperReward,
-            bool earlyExit
+            uint256 expectedKeeperReward
         );
     /// @notice Burns LP tokens and removes only crvUSD from the fixed yield AMM.
     function contractViaAmm(uint256 lpTokenAmount)

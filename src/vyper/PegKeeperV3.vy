@@ -22,6 +22,7 @@ interface PegKeeperFactory:
     def admin() -> address: view
     def emergency_admin() -> address: view
     def fee_receiver() -> address: view
+    def aggregateCrvUsdOracle() -> address: view
 
 interface TwoCoinPool:
     def coins(_index: uint256) -> address: view
@@ -31,6 +32,7 @@ interface TwoCoinPool:
 
 interface YieldAmm:
     def coins(_index: uint256) -> address: view
+    def balances(_index: uint256) -> uint256: view
     def balanceOf(_owner: address) -> uint256: view
     def get_virtual_price() -> uint256: view
     def calc_token_amount(_amounts: DynArray[uint256, 2], _is_deposit: bool) -> uint256: view
@@ -136,7 +138,6 @@ event Contracted:
     crv_usd_received: uint256
     gross_profit: uint256
     keeper_reward: uint256
-    early_exit: bool
 
 event SurplusClaimed:
     caller: indexed(address)
@@ -153,9 +154,7 @@ event DebtReduced:
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
-    early_exit_min_profit_ppm: uint256
     keeper_profit_share_bps: uint256
-    min_deployment_time: uint256
     min_expansion_amount: uint256
     max_deployed_crvusd: uint256
 
@@ -171,7 +170,7 @@ event OraclePolicyUpdated:
 
 
 
-version: public(constant(String[8])) = "3.1.0"
+version: public(constant(String[8])) = "3.2.0"
 name: public(String[88])
 keeper_index: public(uint256)
 
@@ -217,9 +216,7 @@ yield_amm_yield_token_index: public(uint256)
 
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
-early_exit_min_profit_ppm: public(uint256)
 keeper_profit_share_bps: public(uint256)
-min_deployment_time: public(uint256)
 min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
 target_amm_execution_buffer_bps: public(uint256)
@@ -228,7 +225,6 @@ expansion_path: DynArray[RouteStep, 16]
 expansion_max_route_loss_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
-last_expansion_at: public(uint256)
 _expansion_pressure: uint256
 last_expansion_pressure_update: public(uint256)
 
@@ -344,10 +340,8 @@ def initialize(
     self.keeper_index = _keeper_index
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
     self.entry_min_profit_ppm = 10
-    self.normal_exit_min_profit_ppm = 1_000
-    self.early_exit_min_profit_ppm = 5_000
+    self.normal_exit_min_profit_ppm = 500
     self.keeper_profit_share_bps = 3_000
-    self.min_deployment_time = 2 * 86400
     self.min_expansion_amount = 10_000 * 10 ** 18
     self.max_deployed_crvusd = _max_deployed_crvusd
     self.last_expansion_pressure_update = block.timestamp
@@ -578,6 +572,38 @@ def _yield_price() -> uint256:
 
 @internal
 @view
+def _aggregate_crvusd_price() -> uint256:
+    oracle: address = self._factory.aggregateCrvUsdOracle()
+    assert oracle != empty(address) and oracle.codesize > 0
+
+    ok: bool = False
+    response: Bytes[64] = empty(Bytes[64])
+    ok, response = raw_call(
+        oracle,
+        method_id("price()"),
+        max_outsize=64,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not ok or len(response) != 32:
+        raise
+    return convert(slice(response, 0, 32), uint256)
+
+
+@internal
+@view
+def _require_expansion_regime():
+    assert self._aggregate_crvusd_price() >= PRECISION
+
+
+@internal
+@view
+def _require_contraction_regime():
+    assert self._aggregate_crvusd_price() <= PRECISION
+
+
+@internal
+@view
 def _max_burst() -> uint256:
     cap: uint256 = self.max_deployed_crvusd
     return cap / BPS * max_expansion_burst_bps + cap % BPS * max_expansion_burst_bps / BPS
@@ -724,16 +750,14 @@ def available_expansion() -> uint256:
     """
     @notice Returns the most crvUSD that can be used for an expansion now.
     """
+    if self.all_execution_paused or self.expansion_paused:
+        return 0
+    if self._aggregate_crvusd_price() < PRECISION:
+        return 0
     return min(
         self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
-
-
-@internal
-@view
-def _is_early_exit() -> bool:
-    return self.deployed_crvusd > 0 and block.timestamp < self.last_expansion_at + self.min_deployment_time
 
 
 @internal
@@ -812,7 +836,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     _crv_usd_received: uint256,
     _trusted_value_removed: uint256,
     _trusted_backing_after: uint256,
-) -> (uint256, uint256, bool):
+) -> (uint256, uint256):
     gross_profit: uint256 = self._realized_contraction_profit(
         _crv_usd_received,
         _trusted_value_removed,
@@ -825,11 +849,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     assert _crv_usd_after_swap - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
-    early_exit: bool = self._is_early_exit()
-    exit_margin_ppm: uint256 = self.normal_exit_min_profit_ppm
-    if early_exit:
-        exit_margin_ppm = self.early_exit_min_profit_ppm
-    exit_margin: uint256 = _trusted_value_removed * exit_margin_ppm / PPM
+    exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm / PPM
     assert net_crv_usd >= _trusted_value_removed + exit_margin
 
     deployed_crv_usd: uint256 = self.deployed_crvusd
@@ -842,15 +862,19 @@ def _settle_keeper_contraction_and_reduce_exposure(
         )
     else:
         self.deployed_crvusd = deployed_crv_usd - net_crv_usd
-    return gross_profit, keeper_reward, early_exit
+    return gross_profit, keeper_reward
 
 
 @external
 @view
-def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256, bool):
+def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
     """
     @notice Estimates burning yield-AMM LP tokens to withdraw crvUSD.
     """
+    assert not self.all_execution_paused
+    assert not self.yield_contraction_paused
+    self._require_contraction_regime()
+
     accounted: uint256 = self._lp_inventory()
     assert _amount > 0 and _amount <= accounted
     virtual_price: uint256 = self.yield_amm.get_virtual_price()
@@ -867,7 +891,15 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256, bool):
         trusted_after,
     )
     keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    return expected_crv_usd, gross_profit, keeper_reward, self._is_early_exit()
+    net_crv_usd: uint256 = expected_crv_usd - keeper_reward
+    exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm / PPM
+    assert net_crv_usd >= trusted_removed + exit_margin
+
+    deployed_after: uint256 = 0
+    if self.deployed_crvusd > net_crv_usd:
+        deployed_after = self.deployed_crvusd - net_crv_usd
+    assert trusted_after >= deployed_after
+    return expected_crv_usd, gross_profit, keeper_reward
 
 
 @external
@@ -876,6 +908,9 @@ def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256, u
     """
     @notice Estimates an expansion from current data; actual results may differ.
     """
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
+    self._require_expansion_regime()
     return PREVIEW_MODULE.previewExpansion(self, _amount)
 
 
@@ -1044,6 +1079,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     assert not self.all_execution_paused
     assert not self.expansion_paused
     assert _crv_usd_amount >= self.min_expansion_amount
+    self._require_expansion_regime()
     self._target_price()
     self._yield_price()
 
@@ -1078,7 +1114,6 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
             direct_lp_received,
         )
         self.deployed_crvusd += direct_crv_usd
-        self.last_expansion_at = block.timestamp
         assert self._trusted_backing_value() >= self.deployed_crvusd
         log Expanded(
             msg.sender,
@@ -1142,7 +1177,6 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     )
 
     self.deployed_crvusd += total_principal
-    self.last_expansion_at = block.timestamp
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log Expanded(
@@ -1157,24 +1191,45 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     return crv_usd_sold, crv_usd_matched, lp_received, keeper_reward, False
 
 
-@external
-@nonreentrant("lock")
-def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
-    """
-    @notice Matches donated yield tokens with crvUSD and deposits both into the yield AMM.
-    """
-    assert not self.all_execution_paused
-    assert not self.expansion_paused
-    assert _max_yield_token_amount > 0
+@internal
+@view
+def _donation_match_amount(_donated_yield_value: uint256) -> uint256:
+    if self._aggregate_crvusd_price() >= PRECISION:
+        return _donated_yield_value
+
+    pool_crv_usd: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
+    pool_yield_value: uint256 = self._trusted_yield_value(
+        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    )
+    yield_value_after: uint256 = pool_yield_value + _donated_yield_value
+    if yield_value_after <= pool_crv_usd:
+        return 0
+    return min(_donated_yield_value, yield_value_after - pool_crv_usd)
+
+
+@internal
+def _settle_donated_yield(
+    _max_yield_token_amount: uint256,
+    _matching_budget: uint256,
+    _require_minimum: bool,
+) -> (uint256, uint256, uint256, uint256):
+    yield_token_swept: uint256 = min(_max_yield_token_amount, self._yield_inventory())
+    if yield_token_swept == 0:
+        return 0, 0, 0, 0
 
     self._yield_price()
+    donated_yield_value: uint256 = self._trusted_yield_value(yield_token_swept)
+    if _require_minimum:
+        assert donated_yield_value >= self.min_expansion_amount
 
-    yield_token_swept: uint256 = min(_max_yield_token_amount, self._yield_inventory())
-    crv_usd_matched: uint256 = self._trusted_yield_value(yield_token_swept)
-    assert crv_usd_matched >= self.min_expansion_amount
-    assert crv_usd_matched <= self._crv_usd.balanceOf(self)
-    assert crv_usd_matched <= self._remaining_exposure_capacity()
-    self._consume_velocity(crv_usd_matched)
+    crv_usd_matched: uint256 = min(
+        self._donation_match_amount(donated_yield_value),
+        _matching_budget,
+    )
+    if crv_usd_matched > 0:
+        assert crv_usd_matched <= self._crv_usd.balanceOf(self)
+        assert crv_usd_matched <= self._remaining_exposure_capacity()
+        self._consume_velocity(crv_usd_matched)
 
     lp_before: uint256 = self._lp_inventory()
     virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
@@ -1188,14 +1243,13 @@ def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, ui
     gross_profit, keeper_reward = self._settle_lp_expansion(
         lp_before,
         lp_value_before,
-        crv_usd_matched,
+        donated_yield_value,
         0,
         crv_usd_matched,
         lp_received,
     )
 
     self.deployed_crvusd += crv_usd_matched
-    self.last_expansion_at = block.timestamp
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log DonatedYieldSwept(
@@ -1211,12 +1265,58 @@ def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, ui
 
 @external
 @nonreentrant("lock")
+def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
+    """
+    @notice Deposits donated yield and matches only the crvUSD appropriate for the current regime.
+    """
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
+    assert _max_yield_token_amount > 0
+
+    matching_budget: uint256 = min(
+        self._crv_usd.balanceOf(self),
+        min(self._available_velocity(), self._remaining_exposure_capacity()),
+    )
+    return self._settle_donated_yield(
+        _max_yield_token_amount,
+        matching_budget,
+        True,
+    )
+
+
+@external
+@nonreentrant("lock")
 def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
     """
     @notice Sends available crvUSD to the fee receiver when extra backing covers it, up to the caller's limit.
     """
     assert not self.all_execution_paused
     assert not self.expansion_paused
+
+    yield_price: uint256 = self._yield_price()
+    backing_before_sweep: uint256 = self._oracle_value(
+        self._trusted_backing_value(),
+        yield_price,
+    )
+    potential_surplus: uint256 = 0
+    if backing_before_sweep > self.deployed_crvusd:
+        potential_surplus = backing_before_sweep - self.deployed_crvusd
+    donated_yield_value: uint256 = self._trusted_yield_value(self._yield_inventory())
+    potential_surplus += self._oracle_value(donated_yield_value, yield_price)
+
+    available_budget: uint256 = min(
+        self._crv_usd.balanceOf(self),
+        min(self._available_velocity(), self._remaining_exposure_capacity()),
+    )
+    claim_reserve: uint256 = min(
+        _max_crv_usd_amount,
+        min(potential_surplus, available_budget),
+    )
+    self._settle_donated_yield(
+        self._yield_inventory(),
+        available_budget - claim_reserve,
+        False,
+    )
 
     trusted_backing: uint256 = self._oracle_backing_value()
     surplus: uint256 = 0
@@ -1487,6 +1587,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     """
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
+    self._require_contraction_regime()
     lp_before: uint256 = self._lp_inventory()
     assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
 
@@ -1521,8 +1622,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
 
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
-    early_exit: bool = False
-    gross_profit, keeper_reward, early_exit = self._settle_keeper_contraction_and_reduce_exposure(
+    gross_profit, keeper_reward = self._settle_keeper_contraction_and_reduce_exposure(
         crv_usd_before,
         crv_usd_after_swap,
         crv_usd_received,
@@ -1537,7 +1637,6 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
         crv_usd_received,
         gross_profit,
         keeper_reward,
-        early_exit,
     )
     return _lp_token_amount, crv_usd_received, keeper_reward
 
@@ -1581,37 +1680,30 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
 def set_policy(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
-    _early_exit_min_profit_ppm: uint256,
     _keeper_profit_share_bps: uint256,
-    _min_deployment_time: uint256,
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
     """
-    @notice Changes profit, reward, timing, minimum trade, and crvUSD limits.
+    @notice Changes profit, reward, minimum trade, and crvUSD limits.
     """
     assert self._is_admin(msg.sender)
-    assert _early_exit_min_profit_ppm <= PPM
+    assert _normal_exit_min_profit_ppm <= PPM
     assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm
-    assert _early_exit_min_profit_ppm > _normal_exit_min_profit_ppm
     assert _keeper_profit_share_bps <= BPS
     assert _min_expansion_amount > 0
     assert _max_deployed_crvusd > 0
 
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
-    self.early_exit_min_profit_ppm = _early_exit_min_profit_ppm
     self.keeper_profit_share_bps = _keeper_profit_share_bps
-    self.min_deployment_time = _min_deployment_time
     self.min_expansion_amount = _min_expansion_amount
     self.max_deployed_crvusd = _max_deployed_crvusd
 
     log PolicyUpdated(
         _entry_min_profit_ppm,
         _normal_exit_min_profit_ppm,
-        _early_exit_min_profit_ppm,
         _keeper_profit_share_bps,
-        _min_deployment_time,
         _min_expansion_amount,
         _max_deployed_crvusd,
     )

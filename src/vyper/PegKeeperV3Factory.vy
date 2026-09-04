@@ -93,6 +93,11 @@ event OwnershipTransferred:
     newOwner: indexed(address)
 
 
+event AggregateCrvUsdOracleUpdated:
+    oldOracle: indexed(address)
+    newOracle: indexed(address)
+
+
 BPS: constant(uint256) = 10_000
 CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
 CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
@@ -105,6 +110,7 @@ IMPLEMENTATION: immutable(address)
 
 owner: public(address)
 pendingOwner: public(address)
+aggregateCrvUsdOracle: public(address)
 _defaults: DeploymentDefaults
 
 keeperCount: public(uint256)
@@ -118,22 +124,27 @@ def __init__(
     _initialOwner: address,
     _controllerFactory: address,
     _implementation: address,
+    _aggregateCrvUsdOracle: address,
     _defaults: DeploymentDefaults,
 ):
     """
-    @notice Sets the owner, controller factory, base keeper code, and starting defaults.
+    @notice Sets the owner, controller factory, base keeper code, aggregate oracle, and defaults.
     """
     if _initialOwner == empty(address) or _controllerFactory == empty(address):
         raw_revert(method_id("InvalidOwner()"))
+    if _aggregateCrvUsdOracle == empty(address) or _aggregateCrvUsdOracle.codesize == 0:
+        raw_revert(method_id("InvalidOracle()"))
 
     CONTROLLER_FACTORY = _controllerFactory
     if not self._is_locked_implementation(_implementation):
         raw_revert(method_id("InvalidImplementation()"))
     IMPLEMENTATION = _implementation
     self.owner = _initialOwner
+    self.aggregateCrvUsdOracle = _aggregateCrvUsdOracle
     self._set_defaults(_defaults)
 
     log OwnershipTransferred(empty(address), _initialOwner)
+    log AggregateCrvUsdOracleUpdated(empty(address), _aggregateCrvUsdOracle)
 
 
 @external
@@ -254,6 +265,20 @@ def setDefaults(_newDefaults: DeploymentDefaults):
     """
     self._check_owner()
     self._set_defaults(_newDefaults)
+
+
+@external
+def setAggregateCrvUsdOracle(_newOracle: address):
+    """
+    @notice Changes the aggregate crvUSD price source used by every keeper.
+    """
+    self._check_owner()
+    if _newOracle == empty(address) or _newOracle.codesize == 0:
+        raw_revert(method_id("InvalidOracle()"))
+
+    old_oracle: address = self.aggregateCrvUsdOracle
+    self.aggregateCrvUsdOracle = _newOracle
+    log AggregateCrvUsdOracleUpdated(old_oracle, _newOracle)
 
 
 @external

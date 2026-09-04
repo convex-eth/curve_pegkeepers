@@ -10,7 +10,7 @@ import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.s
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockCurveOraclePool} from "./CurveStablecoinOracle.t.sol";
 import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
-import {LpYieldFactory, LpYieldToken} from "./PegKeeperV3LpYield.t.sol";
+import {LpYieldFactory, LpYieldOracle, LpYieldToken} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3UnifiedDeploymentTest is Test {
     string internal constant TEST_OUTPUT = "deployments/mainnet/PegKeeperV3-deployment.test.json";
@@ -20,8 +20,14 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
 
     function test_deploysCompleteReleaseAndWritesEveryAddressToJson() public {
         LpYieldToken crvUsd = new LpYieldToken(18);
-        LpYieldFactory controllerFactory =
-            new LpYieldFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
+        LpYieldOracle aggregateCrvUsdOracle = new LpYieldOracle();
+        LpYieldFactory controllerFactory = new LpYieldFactory(
+            address(crvUsd),
+            address(this),
+            address(0xBEEF),
+            address(0xFEE),
+            address(aggregateCrvUsdOracle)
+        );
         MockCurveOraclePool usdcUsdtPool = new MockCurveOraclePool(usdc, usdt);
         MockChainlinkAggregator chainlinkAggregator = new MockChainlinkAggregator();
         MockChainlinkProxy chainlinkProxy = new MockChainlinkProxy(chainlinkAggregator);
@@ -32,6 +38,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         DeployPegKeeperV3.Config memory config = DeployPegKeeperV3.Config({
             owner: address(this),
             controllerFactory: address(controllerFactory),
+            aggregateCrvUsdOracle: address(aggregateCrvUsdOracle),
             admin: makeAddr("admin"),
             emergencyAdmin: makeAddr("emergencyAdmin"),
             feeReceiver: makeAddr("feeReceiver"),
@@ -56,6 +63,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(IPegKeeperV3(deployment.implementation).preview_module(), deployment.previewModule);
         assertEq(factory.owner(), config.owner);
         assertEq(factory.controllerFactory(), config.controllerFactory);
+        assertEq(factory.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
         assertEq(factory.admin(), config.admin);
         assertEq(factory.keeperCount(), 0);
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
@@ -100,6 +108,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
 
         assertEq(config.owner, deployer.CURVE_OWNERSHIP_AGENT());
         assertEq(config.controllerFactory, deployer.CRVUSD_CONTROLLER_FACTORY());
+        assertEq(config.aggregateCrvUsdOracle, deployer.CRVUSD_AGGREGATE_ORACLE());
         assertEq(config.admin, deployer.CURVE_OWNERSHIP_AGENT());
         assertEq(config.emergencyAdmin, deployer.CURVE_EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());

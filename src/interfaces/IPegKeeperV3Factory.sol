@@ -20,6 +20,7 @@ interface IPegKeeperV3Factory {
     error InvalidOwner();
     error InvalidImplementation();
     error InvalidDefaults();
+    error InvalidOracle();
     error InvalidTargetAmm();
     error DeploymentFailed();
 
@@ -42,11 +43,13 @@ interface IPegKeeperV3Factory {
     );
     event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event AggregateCrvUsdOracleUpdated(address indexed oldOracle, address indexed newOracle);
 
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
     function controllerFactory() external view returns (address);
     function implementation() external view returns (address);
+    function aggregateCrvUsdOracle() external view returns (address);
     function defaults() external view returns (DeploymentDefaults memory);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
@@ -68,6 +71,7 @@ interface IPegKeeperV3Factory {
     ) external returns (address pegKeeper);
 
     function setDefaults(DeploymentDefaults calldata newDefaults) external;
+    function setAggregateCrvUsdOracle(address newOracle) external;
     function transferOwnership(address newOwner) external;
     function acceptOwnership() external;
 }

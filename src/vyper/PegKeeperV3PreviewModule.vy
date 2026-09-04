@@ -111,7 +111,7 @@ def _preview_expansion(
 ) -> ExpansionPreview:
     assert _crv_usd_amount >= _keeper.min_expansion_amount()
     self._assert_oracle(_keeper.target_oracle(), _keeper.min_target_oracle_price())
-    self._assert_oracle(_keeper.yield_oracle(), _keeper.min_yield_oracle_price())
+    self._assert_yield_oracle(_keeper.yield_oracle(), _keeper.min_yield_oracle_price())
 
     quote: ExpansionPreview = empty(ExpansionPreview)
     yield_amm: YieldAmm = YieldAmm(_keeper.yield_amm())
@@ -264,6 +264,23 @@ def _lp_value(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
 @view
 def _assert_oracle(_oracle: address, _minimum: uint256):
     assert PriceOracle(_oracle).price() >= _minimum
+
+
+@internal
+@view
+def _assert_yield_oracle(_oracle: address, _minimum: uint256):
+    ok: bool = False
+    response: Bytes[64] = empty(Bytes[64])
+    ok, response = raw_call(
+        _oracle,
+        method_id("price()"),
+        max_outsize=64,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not ok or len(response) != 32:
+        raise
+    assert convert(slice(response, 0, 32), uint256) >= _minimum
 
 @internal
 @view
