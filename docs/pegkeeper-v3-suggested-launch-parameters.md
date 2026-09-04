@@ -71,12 +71,16 @@ Expansion no longer accepts a fallback target-inventory state. A failed route or
 | `normalExitMinProfitPpm` | `500` (`5 bp`) |
 | `keeperProfitShareBps` | `3_000` |
 | `minExpansionAmount` | `10_000e18` |
+| `maxInterventionShareBps` | `3_333` |
+| `minInterventionDelay` | `12` seconds |
 | velocity max burst | `5%` of cap |
 | velocity full refill | `300` seconds |
 
-The velocity bucket counts total crvUSD committed to the LP, not just the first target-AMM leg. A normal expansion around par therefore consumes approximately twice its `expand()` input.
+The local intervention share corrects at most `33.33%` of the relevant normalized reserve imbalance per monetary action. Expansion applies it to the requested crvUSD first leg in `targetAmm`. Contraction applies it to both quoted and measured crvUSD removed from `yieldAmm`. The shared 12-second delay is measured from the last successful expansion or contraction and may be set to zero if governance wants local overshoot damping without separate pacing.
 
-`sweepDonatedYield(maxYieldTokenAmount)` uses the expansion/global pauses, `minExpansionAmount`, yield-oracle floor, LP execution buffer, and entry margin. It skips the target market and route. At aggregate crvUSD price at least `$1`, it matches the full selected donation. Below `$1`, it deposits the donation one-sided while reducing crvUSD excess and matches only the remainder that would otherwise overshoot the pool's normalized balance. Matching is capped by idle crvUSD, capacity, and velocity; debt increases only by the actual match.
+The velocity bucket remains active and counts total crvUSD committed to the LP, not just the first target-AMM leg. A normal expansion around par therefore consumes approximately twice its `expand()` input. The share, delay, and leaky bucket are independent controls for initial tuning.
+
+`sweepDonatedYield(maxYieldTokenAmount)` uses the expansion/global pauses, `minExpansionAmount`, yield-oracle floor, LP execution buffer, and entry margin. It skips the target market and route. At aggregate crvUSD price at least `$1`, it matches the full selected donation. Below `$1`, it deposits the donation one-sided while reducing crvUSD excess and matches only the remainder that would otherwise overshoot the pool's normalized balance. Matching is capped by idle crvUSD, capacity, and velocity; debt increases only by the actual match. Donation settlement does not consume the local intervention share or update the intervention timestamp, so permissionless dust cannot delay a monetary action.
 
 `claimSurplus()` performs the same donation settlement before calculating profit and reserves budget for the requested claim before optional matching. It is not aggregate-direction-gated, so realized yield remains claimable during contraction regimes.
 
@@ -143,7 +147,7 @@ frxUSD/crvUSD LP
     -> crvUSD
 ```
 
-`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The single `500 ppm` (`5 bp`) gross exit floor and whole-position virtual-price delta remain independent checks. At that gross boundary, the `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is treated as principal and must be recovered before this profit split.
+`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. Both its quoted output and measured receipt must fit within `33.33%` of the pre-action normalized crvUSD excess. The single `500 ppm` (`5 bp`) gross exit floor and whole-position virtual-price delta remain independent checks. At that gross boundary, the `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is treated as principal and must be recovered before this profit split.
 
 ## Deployment/proposal sequence
 
@@ -161,9 +165,10 @@ The proposal:
 1. validates deployed bytecode and oracle identities;
 2. deploys each keeper with `yieldToken = frxUSD` and the fixed frxUSD/crvUSD `yieldAmm`;
 3. installs only the expansion path;
-4. allocates the candidate Factory debt ceiling;
-5. registers `debt()` with both aggregate monetary policies;
-6. leaves expansion, LP contraction, and global execution paused.
+4. sets economic policy plus the `3_333` share and `12`-second intervention delay;
+5. allocates the candidate Factory debt ceiling;
+6. registers `debt()` with both aggregate monetary policies;
+7. leaves expansion, LP contraction, and global execution paused.
 
 No FraxNet account creation, contraction path, undeployed backing action, direct buyback, activation, or broadcast is included.
 

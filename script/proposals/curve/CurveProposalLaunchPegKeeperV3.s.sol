@@ -20,10 +20,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 21_270;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 21_302;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 22_335;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 22_367;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0xd5e90ae972017e42195880b415a5dcdba08d9e01012c778e700d8a988ca62dc1;
+        0xe03817d29a77a49a91e9f26b0c94a1fa8b5603bf821cadca9bd5cb3f3f43255a;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
         0x630f681a980c5cff3504b166417418e8aacb563c13323ee2cf42e054498ae775;
     uint256 public constant FACTORY_CORE_SIZE = 3_830;
@@ -48,6 +48,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 500;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
+    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
+    uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
     uint256 public constant MIN_ORACLE_PRICE = 999_700_000_000_000_000;
     uint256 public constant CHAINLINK_MAX_DELAY = 26 hours;
 
@@ -140,7 +142,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         address frxUsdKeeper = expectedKeeper(1);
         address usdcKeeper = expectedKeeper(2);
         address usdtKeeper = expectedKeeper(3);
-        actions = new Action[](16);
+        actions = new Action[](19);
 
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
         actions[1] = _deployAction(
@@ -153,11 +155,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             _frxUsdExpansion()
         );
         actions[2] = _setPolicyAction(frxUsdKeeper, FRXUSD_CAP);
-        actions[3] = _debtCeilingAction(frxUsdKeeper, FRXUSD_CAP);
-        actions[4] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, frxUsdKeeper);
-        actions[5] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, frxUsdKeeper);
+        actions[3] = _setInterventionPolicyAction(frxUsdKeeper);
+        actions[4] = _debtCeilingAction(frxUsdKeeper, FRXUSD_CAP);
+        actions[5] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, frxUsdKeeper);
+        actions[6] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, frxUsdKeeper);
 
-        actions[6] = _deployAction(
+        actions[7] = _deployAction(
             USDC_CRVUSD_POOL,
             FRXUSD,
             FRXUSD_CRVUSD_POOL,
@@ -166,12 +169,13 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             frxUsdBackingOracle,
             _frxUsdExpansion(USDC, 1)
         );
-        actions[7] = _setPolicyAction(usdcKeeper, USDC_CAP);
-        actions[8] = _debtCeilingAction(usdcKeeper, USDC_CAP);
-        actions[9] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
-        actions[10] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdcKeeper);
+        actions[8] = _setPolicyAction(usdcKeeper, USDC_CAP);
+        actions[9] = _setInterventionPolicyAction(usdcKeeper);
+        actions[10] = _debtCeilingAction(usdcKeeper, USDC_CAP);
+        actions[11] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
+        actions[12] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdcKeeper);
 
-        actions[11] = _deployAction(
+        actions[13] = _deployAction(
             USDT_CRVUSD_POOL,
             FRXUSD,
             FRXUSD_CRVUSD_POOL,
@@ -180,10 +184,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             frxUsdBackingOracle,
             _frxUsdExpansion(USDT, 2)
         );
-        actions[12] = _setPolicyAction(usdtKeeper, USDT_CAP);
-        actions[13] = _debtCeilingAction(usdtKeeper, USDT_CAP);
-        actions[14] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
-        actions[15] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdtKeeper);
+        actions[14] = _setPolicyAction(usdtKeeper, USDT_CAP);
+        actions[15] = _setInterventionPolicyAction(usdtKeeper);
+        actions[16] = _debtCeilingAction(usdtKeeper, USDT_CAP);
+        actions[17] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
+        actions[18] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdtKeeper);
     }
 
     function _validateFactory() internal view {
@@ -324,6 +329,17 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
                 KEEPER_PROFIT_SHARE_BPS,
                 MIN_EXPANSION_AMOUNT,
                 cap
+            )
+        });
+    }
+
+    function _setInterventionPolicyAction(address keeper) internal pure returns (Action memory) {
+        return Action({
+            target: keeper,
+            data: abi.encodeWithSelector(
+                IPegKeeperV3.set_intervention_policy.selector,
+                MAX_INTERVENTION_SHARE_BPS,
+                MIN_INTERVENTION_DELAY
             )
         });
     }

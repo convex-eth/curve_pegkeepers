@@ -70,6 +70,7 @@ contract PegKeeperV3LpYieldHandler is Test {
     function contractLp(uint256 seed) external {
         uint256 held = keeper.accounted_lp_tokens();
         if (held == 0) return;
+        vm.warp(block.timestamp + keeper.min_intervention_delay());
         uint256 amount = bound(seed, 1, held / 4 + 1);
         (bool success,) =
             address(keeper).call(abi.encodeCall(IPegKeeperV3.contractViaAmm, (amount)));
@@ -150,6 +151,8 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         keeper.set_direction_paused(0, false);
         vm.stopPrank();
 
+        targetAsset.mint(address(targetAmm), 100_000_000e6);
+        yieldAmm.setBalances(100_000_000e18, 0);
         crvUsd.mint(address(keeper), 20_000_000e18);
         handler = new PegKeeperV3LpYieldHandler(keeper, crvUsd, targetAsset, yieldToken, yieldAmm);
         handler.expand(10_000e18);

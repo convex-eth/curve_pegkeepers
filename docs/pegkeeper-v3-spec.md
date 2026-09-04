@@ -78,6 +78,38 @@ aggregate crvUSD price > 1e18: expansion allowed; contraction forbidden
 
 Both execution and previews use the same boundary. Oracle failure or returndata other than exactly 32 bytes fails closed.
 
+## Local intervention share and pacing
+
+Two keeper-local parameters bound price-moving monetary intervention independently from capacity and velocity:
+
+```text
+maxInterventionShareBps = 3_333
+minInterventionDelay    = 12 seconds
+```
+
+For expansion, let `C` be the target AMM's crvUSD balance and `T` its normalized target-asset balance. Plain target assets use their decimal multiplier. When `targetAsset == yieldToken`, the balance is valued through the same trusted yield-token conversion, including `convertToAssets` for ERC-4626 shares. The requested first leg is bounded by:
+
+```text
+expansionDeficit   = max(T - C, 0)
+expansionAllowance = floor(expansionDeficit * maxInterventionShareBps / 10_000)
+require requestedCrvUsd <= expansionAllowance
+```
+
+For contraction, let `C` be the yield AMM's crvUSD balance and `Y` the trusted normalized value of its yield-token balance:
+
+```text
+contractionExcess    = max(C - Y, 0)
+contractionAllowance = floor(contractionExcess * maxInterventionShareBps / 10_000)
+require quotedCrvUsdOut <= contractionAllowance
+require actualCrvUsdOut <= contractionAllowance
+```
+
+Checking both the quote and measured receipt prevents favorable execution from crossing the pre-action cap. The allowance multiplication uses integer-floor rounding in preview and execution.
+
+`lastInterventionAt` records only successful `expand()` and `contractViaAmm()` calls after every accounting and solvency check passes. The first intervention is immediately available; later interventions in either direction require at least `minInterventionDelay` seconds since the last one. Governance may set the delay to zero. This is a shared operation-pacing control, not LP maturity or a holding period: it never assigns age to fungible LP.
+
+Acquired-yield matching and donation settlement are not counted against the local share. `sweepDonatedYield()` and donation settlement inside `claimSurplus()` do not update `lastInterventionAt`; dust cannot postpone a monetary intervention. Their existing regime-aware exact-balance rule independently prevents donation settlement from overshooting the yield pool.
+
 ## Expansion
 
 Expansion is keeper-driven and all-or-nothing.
@@ -86,7 +118,7 @@ Expansion is keeper-driven and all-or-nothing.
 
 For an input `X`:
 
-1. Verify expansion/global pause state, aggregate crvUSD price at least `1e18`, amount floor, target oracle, and yield-token oracle.
+1. Verify expansion/global pause state, aggregate crvUSD price at least `1e18`, shared intervention delay, local target-pool allowance, amount floor, target oracle, and yield-token oracle.
 2. Swap exactly `X` crvUSD through `targetAmm` and verify measured input/output deltas.
 3. Execute the configured typed expansion path from `targetAsset` to `yieldToken` synchronously.
 4. Revert the whole transaction if any target swap, route step, allowance reset, measured delta, route-loss bound, or endpoint check fails.
@@ -192,6 +224,7 @@ valueRemoved = valueBefore - valueAfter
 The call requires:
 
 - exact requested LP burn by measured balance delta;
+- quoted and measured crvUSD output no greater than the pre-action local contraction allowance;
 - measured crvUSD receipt at least `minCrvUsd`;
 - `valueBefore >= valueAfter` and positive `valueRemoved`;
 - realized gross profit at least `500 ppm` (`5 bp`) of `valueRemoved`, before the caller share is paid;
@@ -199,7 +232,7 @@ The call requires:
 
 Virtual price is deliberately not used as `minCrvUsd`. The executable one-coin quote provides slippage protection; whole-position virtual-price deltas provide accounting.
 
-`previewKeeperBuyback(lpTokenAmount)` estimates the same fixed one-coin withdrawal and enforces pause state, aggregate direction, the gross exit margin, and final backing-versus-debt solvency before returning. Its input is LP tokens and no configurable path executes.
+`previewKeeperBuyback(lpTokenAmount)` estimates the same fixed one-coin withdrawal and enforces pause state, aggregate direction, intervention delay, local contraction allowance, the gross exit margin, and final backing-versus-debt solvency before returning. Its input is LP tokens and no configurable path executes.
 
 At the exact `5 bp` gross boundary, a `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is principal rather than gross profit, so any required solvency recovery must occur before this split. Same-block direct expansion, routed expansion, and donation-sweep round trips without `5 bp` of realized gross edge fail in both preview and execution. Curve entry/exit fees and slippage reduce rather than create the required edge.
 
@@ -242,9 +275,9 @@ max burst = 5% of maxDeployedCrvUsd
 full refill = 300 seconds
 ```
 
-A reverted expansion, donation sweep, or surplus claim consumes no pressure. Contraction does not refund pressure.
+A reverted expansion, donation sweep, or surplus claim consumes no pressure. Contraction does not refund pressure. The bucket remains active alongside the local intervention share and delay; none replaces another.
 
-`available_expansion()` returns zero while expansion/global execution is paused or aggregate crvUSD price is below `1e18`. Otherwise it reports the remaining crvUSD budget from idle balance, local/Factory capacity, and velocity. A separate-pool caller must preview its proposed first-leg amount because matched crvUSD makes total consumption larger than the `expand()` input.
+`available_expansion()` returns zero while expansion/global execution is paused, aggregate crvUSD price is below `1e18`, or the intervention delay has not elapsed. Otherwise it reports the minimum of the local target-pool allowance, idle balance, local/Factory capacity, and velocity. A separate-pool caller must preview its proposed first-leg amount because matched crvUSD makes total consumption larger than the `expand()` input.
 
 ## Surplus
 
@@ -290,6 +323,11 @@ function previewKeeperBuyback(uint256 lpTokenAmount) external view returns (
     uint256 expectedGrossProfit,
     uint256 expectedKeeperReward
 );
+
+function set_intervention_policy(
+    uint256 maxInterventionShareBps,
+    uint256 minInterventionDelay
+) external;
 ```
 
 ## Deployment and release state
@@ -301,8 +339,8 @@ The launch proposal deploys three paused keepers. Each receives the same fixed `
 Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
 
 ```text
-implementation initcode: 21,435 bytes
-implementation runtime:  21,302 bytes
+implementation initcode: 22,500 bytes
+implementation runtime:  22,367 bytes
 Factory core runtime:      3,830 bytes
 Factory deployed runtime:  3,894 bytes
 Chainlink oracle core:        460 bytes
@@ -312,7 +350,7 @@ Curve oracle runtime:         457 bytes
 preview initcode:         5,972 bytes
 preview runtime:          5,936 bytes
 minimal proxy runtime:       45 bytes
-EIP-170 headroom:          3,274 bytes
+EIP-170 headroom:          2,209 bytes
 ```
 
 The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch. `make check-release-evidence`, included by `make check`, proves those files and their verifier still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`. Full manifest verification remains intentionally checkout-sensitive.

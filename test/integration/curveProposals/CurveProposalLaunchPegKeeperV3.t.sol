@@ -138,7 +138,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     function test_ProposalActionsOnlyConfigureNewV3Keepers() public view {
         BaseCurveProposal.Action[] memory actions = proposal.buildProposalActions();
-        assertEq(actions.length, 16);
+        assertEq(actions.length, 19);
 
         assertEq(actions[0].target, address(factory));
         assertEq(_selector(actions[0].data), IPegKeeperV3Factory.setDefaults.selector);
@@ -146,25 +146,31 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(_selector(actions[1].data), IPegKeeperV3Factory.deployPegKeeper.selector);
         assertEq(actions[2].target, expectedFrxUsdKeeper);
         assertEq(_selector(actions[2].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[3], expectedFrxUsdKeeper, FRXUSD_CAP);
-        _assertMonetaryPolicyAction(actions[4], MONETARY_POLICY, expectedFrxUsdKeeper);
-        _assertMonetaryPolicyAction(actions[5], LEGACY_MONETARY_POLICY, expectedFrxUsdKeeper);
+        assertEq(actions[3].target, expectedFrxUsdKeeper);
+        assertEq(_selector(actions[3].data), IPegKeeperV3.set_intervention_policy.selector);
+        _assertDebtCeilingAction(actions[4], expectedFrxUsdKeeper, FRXUSD_CAP);
+        _assertMonetaryPolicyAction(actions[5], MONETARY_POLICY, expectedFrxUsdKeeper);
+        _assertMonetaryPolicyAction(actions[6], LEGACY_MONETARY_POLICY, expectedFrxUsdKeeper);
 
-        assertEq(actions[6].target, address(factory));
-        assertEq(_selector(actions[6].data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        assertEq(actions[7].target, expectedUsdcKeeper);
-        assertEq(_selector(actions[7].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[8], expectedUsdcKeeper, USDC_CAP);
-        _assertMonetaryPolicyAction(actions[9], MONETARY_POLICY, expectedUsdcKeeper);
-        _assertMonetaryPolicyAction(actions[10], LEGACY_MONETARY_POLICY, expectedUsdcKeeper);
+        assertEq(actions[7].target, address(factory));
+        assertEq(_selector(actions[7].data), IPegKeeperV3Factory.deployPegKeeper.selector);
+        assertEq(actions[8].target, expectedUsdcKeeper);
+        assertEq(_selector(actions[8].data), IPegKeeperV3.set_policy.selector);
+        assertEq(actions[9].target, expectedUsdcKeeper);
+        assertEq(_selector(actions[9].data), IPegKeeperV3.set_intervention_policy.selector);
+        _assertDebtCeilingAction(actions[10], expectedUsdcKeeper, USDC_CAP);
+        _assertMonetaryPolicyAction(actions[11], MONETARY_POLICY, expectedUsdcKeeper);
+        _assertMonetaryPolicyAction(actions[12], LEGACY_MONETARY_POLICY, expectedUsdcKeeper);
 
-        assertEq(actions[11].target, address(factory));
-        assertEq(_selector(actions[11].data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        assertEq(actions[12].target, expectedUsdtKeeper);
-        assertEq(_selector(actions[12].data), IPegKeeperV3.set_policy.selector);
-        _assertDebtCeilingAction(actions[13], expectedUsdtKeeper, USDT_CAP);
-        _assertMonetaryPolicyAction(actions[14], MONETARY_POLICY, expectedUsdtKeeper);
-        _assertMonetaryPolicyAction(actions[15], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
+        assertEq(actions[13].target, address(factory));
+        assertEq(_selector(actions[13].data), IPegKeeperV3Factory.deployPegKeeper.selector);
+        assertEq(actions[14].target, expectedUsdtKeeper);
+        assertEq(_selector(actions[14].data), IPegKeeperV3.set_policy.selector);
+        assertEq(actions[15].target, expectedUsdtKeeper);
+        assertEq(_selector(actions[15].data), IPegKeeperV3.set_intervention_policy.selector);
+        _assertDebtCeilingAction(actions[16], expectedUsdtKeeper, USDT_CAP);
+        _assertMonetaryPolicyAction(actions[17], MONETARY_POLICY, expectedUsdtKeeper);
+        _assertMonetaryPolicyAction(actions[18], LEGACY_MONETARY_POLICY, expectedUsdtKeeper);
     }
 
     function test_OracleAdaptersUseSelectedFrxUsdChainlinkFeed() public view {
@@ -505,6 +511,9 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.keeper_profit_share_bps(), 3_000);
         assertEq(keeper.min_expansion_amount(), 10_000e18);
         assertEq(keeper.max_deployed_crvusd(), cap);
+        assertEq(keeper.max_intervention_share_bps(), 3_333);
+        assertEq(keeper.min_intervention_delay(), 12);
+        assertEq(keeper.last_intervention_at(), 0);
     }
 
     function _assertFrxUsdRoutes(IPegKeeperV3 keeper, address targetAsset, int128 threePoolIndex)

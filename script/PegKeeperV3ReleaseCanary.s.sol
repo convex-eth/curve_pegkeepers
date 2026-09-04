@@ -77,6 +77,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         pegKeeper.set_direction_paused(1, false);
         pegKeeper.set_direction_paused(0, false);
         vm.stopPrank();
+        require(pegKeeper.max_intervention_share_bps() == 3_333, "intervention share");
+        require(pegKeeper.min_intervention_delay() == 12, "intervention delay");
 
         // Put the USDT target pool into an expansion state.
         deal(USDT, CANARY_TRADER, 10_000_000e6);
@@ -95,6 +97,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(crvUsdMatched > 0, "missing matched crvUSD");
         require(lpReceived > 0, "no LP received");
         require(!directDeposit, "unexpected direct deposit");
+        // forge-lint: disable-next-line(block-timestamp)
+        require(pegKeeper.last_intervention_at() == block.timestamp, "expansion timestamp");
         require(pegKeeper.accounted_lp_tokens() > 0, "LP accounting missing");
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "loose frxUSD");
         require(
@@ -121,15 +125,26 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         );
 
         uint256 sweepLp = _sweepDonationAsKeeper(pegKeeper);
+        require(
+            // forge-lint: disable-next-line(block-timestamp)
+            pegKeeper.last_intervention_at() == block.timestamp,
+            "donation reset intervention timer"
+        );
 
         // Make crvUSD abundant in the held-LP pool, then exercise fixed one-coin withdrawal.
         aggregateOracle.setPrice(0.999e18);
         _claimDonationAsKeeper(pegKeeper);
+        require(
+            // forge-lint: disable-next-line(block-timestamp)
+            pegKeeper.last_intervention_at() == block.timestamp,
+            "claim reset intervention timer"
+        );
         deal(CRVUSD, CANARY_TRADER, CONTRACTION_MARKET_TRADE);
         vm.startPrank(CANARY_TRADER);
         IERC20(CRVUSD).approve(FRXUSD_CRVUSD_POOL, CONTRACTION_MARKET_TRADE);
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(1, 0, CONTRACTION_MARKET_TRADE, 0);
         vm.stopPrank();
+        vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
 
         uint256 contractionLp = pegKeeper.accounted_lp_tokens() / 10;
         (uint256 expectedCrvUsd, uint256 expectedGross, uint256 expectedReward) =

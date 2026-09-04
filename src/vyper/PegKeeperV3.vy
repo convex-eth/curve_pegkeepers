@@ -26,6 +26,7 @@ interface PegKeeperFactory:
 
 interface TwoCoinPool:
     def coins(_index: uint256) -> address: view
+    def balances(_index: uint256) -> uint256: view
     def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
     def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
 
@@ -158,6 +159,10 @@ event PolicyUpdated:
     min_expansion_amount: uint256
     max_deployed_crvusd: uint256
 
+event InterventionPolicyUpdated:
+    max_intervention_share_bps: uint256
+    min_intervention_delay: uint256
+
 event PathsUpdated:
     expansion_path_hash: indexed(bytes32)
     expansion_max_route_loss_bps: uint256
@@ -219,6 +224,9 @@ normal_exit_min_profit_ppm: public(uint256)
 keeper_profit_share_bps: public(uint256)
 min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
+max_intervention_share_bps: public(uint256)
+min_intervention_delay: public(uint256)
+last_intervention_at: public(uint256)
 target_amm_execution_buffer_bps: public(uint256)
 yield_amm_execution_buffer_bps: public(uint256)
 expansion_path: DynArray[RouteStep, 16]
@@ -344,6 +352,8 @@ def initialize(
     self.keeper_profit_share_bps = 3_000
     self.min_expansion_amount = 10_000 * 10 ** 18
     self.max_deployed_crvusd = _max_deployed_crvusd
+    self.max_intervention_share_bps = 3_333
+    self.min_intervention_delay = 12
     self.last_expansion_pressure_update = block.timestamp
 
     self.expansion_paused = True
@@ -744,6 +754,47 @@ def _remaining_exposure_capacity() -> uint256:
     return min(local_capacity, factory_allocation - deployed)
 
 
+@internal
+@view
+def _local_expansion_limit() -> uint256:
+    crv_usd_balance: uint256 = self.target_amm.balances(self.target_amm_crvusd_index)
+    target_balance: uint256 = 0
+    if self._target_asset.address == self._yield_token.address:
+        target_balance = self._trusted_yield_value(
+            self.target_amm.balances(self.target_amm_target_index)
+        )
+    else:
+        target_balance = self._normalize_target(
+            self.target_amm.balances(self.target_amm_target_index)
+        )
+    if target_balance <= crv_usd_balance:
+        return 0
+    return (target_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
+
+
+@internal
+@view
+def _local_contraction_limit() -> uint256:
+    crv_usd_balance: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
+    yield_balance: uint256 = self._trusted_yield_value(
+        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    )
+    if crv_usd_balance <= yield_balance:
+        return 0
+    return (crv_usd_balance - yield_balance) * self.max_intervention_share_bps / BPS
+
+
+@internal
+@view
+def _intervention_delay_elapsed() -> bool:
+    last_intervention_at: uint256 = self.last_intervention_at
+    if last_intervention_at == 0:
+        return True
+    if block.timestamp < last_intervention_at:
+        return False
+    return block.timestamp - last_intervention_at >= self.min_intervention_delay
+
+
 @external
 @view
 def available_expansion() -> uint256:
@@ -754,9 +805,14 @@ def available_expansion() -> uint256:
         return 0
     if self._aggregate_crvusd_price() < PRECISION:
         return 0
+    if not self._intervention_delay_elapsed():
+        return 0
     return min(
-        self._crv_usd.balanceOf(self),
-        min(self._available_velocity(), self._remaining_exposure_capacity()),
+        self._local_expansion_limit(),
+        min(
+            self._crv_usd.balanceOf(self),
+            min(self._available_velocity(), self._remaining_exposure_capacity()),
+        ),
     )
 
 
@@ -873,6 +929,7 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
     self._require_contraction_regime()
+    assert self._intervention_delay_elapsed()
 
     accounted: uint256 = self._lp_inventory()
     assert _amount > 0 and _amount <= accounted
@@ -884,6 +941,7 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
         _amount,
         convert(self.yield_amm_crvusd_index, int128),
     )
+    assert expected_crv_usd <= self._local_contraction_limit()
     gross_profit: uint256 = self._realized_contraction_profit(
         expected_crv_usd,
         trusted_removed,
@@ -910,6 +968,8 @@ def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256, u
     assert not self.all_execution_paused
     assert not self.expansion_paused
     self._require_expansion_regime()
+    assert self._intervention_delay_elapsed()
+    assert _amount <= self._local_expansion_limit()
     return PREVIEW_MODULE.previewExpansion(self, _amount)
 
 
@@ -1079,6 +1139,8 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     assert not self.expansion_paused
     assert _crv_usd_amount >= self.min_expansion_amount
     self._require_expansion_regime()
+    assert self._intervention_delay_elapsed()
+    assert _crv_usd_amount <= self._local_expansion_limit()
     self._target_price()
     self._yield_price()
 
@@ -1114,6 +1176,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         )
         self.deployed_crvusd += direct_crv_usd
         assert self._trusted_backing_value() >= self.deployed_crvusd
+        self.last_intervention_at = block.timestamp
         log Expanded(
             msg.sender,
             0,
@@ -1177,6 +1240,7 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
 
     self.deployed_crvusd += total_principal
     assert self._trusted_backing_value() >= self.deployed_crvusd
+    self.last_intervention_at = block.timestamp
 
     log Expanded(
         msg.sender,
@@ -1587,15 +1651,18 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
     self._require_contraction_regime()
+    assert self._intervention_delay_elapsed()
     lp_before: uint256 = self._lp_inventory()
     assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
 
     virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
     trusted_backing_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
+    local_contraction_limit: uint256 = self._local_contraction_limit()
     quoted_crv_usd: uint256 = self.yield_amm.calc_withdraw_one_coin(
         _lp_token_amount,
         convert(self.yield_amm_crvusd_index, int128),
     )
+    assert quoted_crv_usd <= local_contraction_limit
     min_crv_usd: uint256 = quoted_crv_usd * (
         BPS - self.yield_amm_execution_buffer_bps
     ) / BPS
@@ -1612,6 +1679,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     crv_usd_after_swap: uint256 = self._crv_usd.balanceOf(self)
     crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
     assert crv_usd_received >= min_crv_usd
+    assert crv_usd_received <= local_contraction_limit
 
     virtual_price_after: uint256 = self.yield_amm.get_virtual_price()
     trusted_backing_after: uint256 = self._lp_value_at(lp_after, virtual_price_after)
@@ -1629,6 +1697,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
         trusted_backing_after,
     )
     assert self._trusted_backing_value() >= self.deployed_crvusd
+    self.last_intervention_at = block.timestamp
 
     log Contracted(
         msg.sender,
@@ -1673,6 +1742,26 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
         selector = convert(slice(_data, 0, 4), bytes4)
     log Executed(_target, _value, selector, keccak256(_data))
     return result
+
+
+@external
+def set_intervention_policy(
+    _max_intervention_share_bps: uint256,
+    _min_intervention_delay: uint256,
+):
+    """
+    @notice Changes the local-imbalance share and minimum time between interventions.
+    """
+    assert self._is_admin(msg.sender)
+    assert _max_intervention_share_bps > 0
+    assert _max_intervention_share_bps <= BPS
+
+    self.max_intervention_share_bps = _max_intervention_share_bps
+    self.min_intervention_delay = _min_intervention_delay
+    log InterventionPolicyUpdated(
+        _max_intervention_share_bps,
+        _min_intervention_delay,
+    )
 
 
 @external

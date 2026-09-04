@@ -70,6 +70,7 @@ interface IPegKeeperV3 {
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     );
+    event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
     event PathsUpdated(bytes32 indexed expansionPathHash, uint256 expansionMaxRouteLossBps);
     event OraclePolicyUpdated(
         address indexed targetOracle,
@@ -122,6 +123,9 @@ interface IPegKeeperV3 {
     function keeper_profit_share_bps() external view returns (uint256);
     function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
+    function max_intervention_share_bps() external view returns (uint256);
+    function min_intervention_delay() external view returns (uint256);
+    function last_intervention_at() external view returns (uint256);
     function target_amm_execution_buffer_bps() external view returns (uint256);
     function yield_amm_execution_buffer_bps() external view returns (uint256);
 
@@ -165,6 +169,8 @@ interface IPegKeeperV3 {
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
+    function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
+        external;
 
     function setPaths(RouteStep[] calldata expansionSteps, uint256 expansionMaxRouteLossBps)
         external;

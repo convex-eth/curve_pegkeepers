@@ -85,6 +85,8 @@ The full target-to-yield route also enforces `expansionMaxRouteLossBps`. Route o
 
 Any failure reverts the initial target swap, path execution, LP deposit, debt accounting, velocity pressure, and rewards. There is no target-retention fallback.
 
+Before the target swap, the requested crvUSD first leg must fit within `maxInterventionShareBps` of the target AMM's normalized target-asset excess over crvUSD. The launch candidate uses `3_333` bps. Matched crvUSD added alongside acquired or donated yield tokens is balance-neutral in `yieldAmm`; it does not consume this local share, though it still consumes capacity and leaky-bucket velocity.
+
 ## Matched-liquidity cost
 
 A route quote must be evaluated together with the matched LP leg.
@@ -115,7 +117,7 @@ This is not a market-price oracle. It assumes:
 3. the pool's accounting and LP token are not compromised;
 4. one-coin exit economics are checked independently.
 
-For an ERC-4626 yield coin, V3 uses `convertToAssets()` only to size the matched crvUSD for loose shares entering the LP. Once LP tokens exist, virtual price is used once. Multiplying LP value by the ERC-4626 share rate again would double-count appreciation.
+For an ERC-4626 yield coin, V3 uses `convertToAssets()` to normalize loose shares entering the LP and yield-token reserve balances used by local intervention sizing. Once LP tokens exist, virtual price is used once for persistent backing. Multiplying LP value by the ERC-4626 share rate again would double-count appreciation.
 
 ## Static contraction economics
 
@@ -127,7 +129,7 @@ min   = quote * (10_000 - yieldAmmExecutionBufferBps) / 10_000
 remove_liquidity_one_coin(lpAmount, crvUsdIndex, min)
 ```
 
-The executable quote protects slippage. The pre/post complete LP position at separate virtual-price snapshots determines backing value removed. The call reverts if the pool's own repricing makes that value delta negative or if realized gross profit before the caller share is below the configured exit margin.
+The executable quote protects slippage. Both quoted and measured crvUSD output must fit within `maxInterventionShareBps` of the yield AMM's pre-action normalized crvUSD excess over its yield-token reserve. The pre/post complete LP position at separate virtual-price snapshots determines backing value removed. The call reverts if the pool's own repricing makes that value delta negative or if realized gross profit before the caller share is below the configured exit margin.
 
 The pinned canary makes crvUSD sufficiently abundant in the backing pool before exercising contraction. Without a favorable imbalance, single-coin withdrawal fees can make a contraction correctly fail the positive-profit floor.
 
@@ -152,5 +154,5 @@ FraxNet redemption accounts and RWA redemption capacity are irrelevant to this a
 4. Simulate balanced and one-sided LP additions with measured token and LP deltas.
 5. Simulate one-coin crvUSD withdrawal across normal and stressed pool states.
 6. Verify all temporary allowances return to zero.
-7. Size local cap and velocity from total crvUSD consumption, not first-leg amount.
+7. Size the local intervention share from normalized pool imbalance; size capacity and velocity from total crvUSD consumption rather than only the first-leg amount.
 8. Run a current-block end-to-end fork canary before any governance action.
