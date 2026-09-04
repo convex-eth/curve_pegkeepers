@@ -8,8 +8,6 @@ import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
 import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
-import {IFraxNetDeposit} from "../../../src/interfaces/IFraxNetDeposit.sol";
-import {IFraxNetDepositFactory} from "../../../src/interfaces/IFraxNetDepositFactory.sol";
 
 /// @title CurveProposalLaunchPegKeeperV3
 /// @notice Deploy and register three initially paused PegKeeperV3 instances for frxUSD, USDC, and USDT.
@@ -22,19 +20,17 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_CORE_SIZE = 24_376;
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 24_408;
+    uint256 public constant IMPLEMENTATION_CORE_SIZE = 19_620;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_652;
     bytes32 public constant EXPECTED_IMPLEMENTATION_CORE_HASH =
-        0x27f9f30c748e811ab392215a748350f63e923cc2fa1ff6ddcdd457b89e4b5f35;
+        0x2dc81879fd8ed08c856b084602af25f6ccba117da8d3abacb873b2b7db8781dd;
     bytes32 public constant EXPECTED_PREVIEW_MODULE_RUNTIME_HASH =
-        0xc20424f3497c62e9b297e777379dd16a820f6b0960a8defe7bc1b76de01b82ce;
+        0x9a53e14956710c787985e21ea4aa22fd6bb0971ddd2961457521114476e9073d;
 
     uint256 public constant ROUTE_CURVE_SWAP = 0;
     uint256 public constant ROUTE_FRXUSD_MINT = 4;
-    uint256 public constant ROUTE_FRXUSD_REDEEM = 5;
     uint256 public constant CURVE_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant FRXUSD_MINT_EXECUTION_BUFFER_BPS = 1;
-    uint256 public constant FRAXNET_REDEMPTION_EXECUTION_BUFFER_BPS = 2;
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 1_000;
@@ -68,16 +64,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     address public constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
     address public constant THREE_POOL = 0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7;
     address public constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
-    address public constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
-    uint32 public constant ETHEREUM_LAYERZERO_EID = 30_101;
 
     address public deploymentFactory;
     address public frxUsdOracle;
     address public frxUsdBackingOracle;
     address public usdcOracle;
     address public usdtOracle;
-    address public usdcFraxNetDeposit;
-    address public usdtFraxNetDeposit;
 
     function run() external returns (uint256 proposalId) {
         loadDeployment(DEPLOYMENT_INPUT_PATH);
@@ -98,8 +90,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         frxUsdBackingOracle = frxUsdOracle;
         usdcOracle = vm.parseJsonAddress(json, ".usdcTargetOracle");
         usdtOracle = vm.parseJsonAddress(json, ".usdtTargetOracle");
-        usdcFraxNetDeposit = vm.parseJsonAddress(json, ".usdcFraxNetDeposit");
-        usdtFraxNetDeposit = vm.parseJsonAddress(json, ".usdtFraxNetDeposit");
     }
 
     function setDeploymentFactory(address factory) external {
@@ -121,12 +111,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         usdtOracle = usdtOracle_;
     }
 
-    function setFraxNetDeposits(address usdcAccount, address usdtAccount) external {
-        require(usdcAccount != address(0) && usdtAccount != address(0), "zero FraxNet account");
-        usdcFraxNetDeposit = usdcAccount;
-        usdtFraxNetDeposit = usdtAccount;
-    }
-
     function expectedKeeper(uint256 keeperNumber) public view returns (address) {
         require(deploymentFactory != address(0), "factory not set");
         require(keeperNumber > 0 && keeperNumber <= 3, "keeper number");
@@ -145,19 +129,17 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         address frxUsdKeeper = expectedKeeper(1);
         address usdcKeeper = expectedKeeper(2);
         address usdtKeeper = expectedKeeper(3);
-        _validateFraxNetAccount(usdcFraxNetDeposit, usdcKeeper);
-        _validateFraxNetAccount(usdtFraxNetDeposit, usdtKeeper);
         actions = new Action[](16);
 
         actions[0] = _setDefaultsAction(FRXUSD_CAP);
         actions[1] = _deployAction(
             FRXUSD_CRVUSD_POOL,
             FRXUSD,
+            FRXUSD_CRVUSD_POOL,
             false,
             frxUsdOracle,
             frxUsdBackingOracle,
-            _frxUsdExpansion(),
-            _frxUsdContraction()
+            _frxUsdExpansion()
         );
         actions[2] = _setPolicyAction(frxUsdKeeper, FRXUSD_CAP);
         actions[3] = _debtCeilingAction(frxUsdKeeper, FRXUSD_CAP);
@@ -167,11 +149,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[6] = _deployAction(
             USDC_CRVUSD_POOL,
             FRXUSD,
+            FRXUSD_CRVUSD_POOL,
             false,
             usdcOracle,
             frxUsdBackingOracle,
-            _frxUsdExpansion(USDC, 1),
-            _frxUsdContraction(USDC, 1, usdcFraxNetDeposit)
+            _frxUsdExpansion(USDC, 1)
         );
         actions[7] = _setPolicyAction(usdcKeeper, USDC_CAP);
         actions[8] = _debtCeilingAction(usdcKeeper, USDC_CAP);
@@ -181,11 +163,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[11] = _deployAction(
             USDT_CRVUSD_POOL,
             FRXUSD,
+            FRXUSD_CRVUSD_POOL,
             false,
             usdtOracle,
             frxUsdBackingOracle,
-            _frxUsdExpansion(USDT, 2),
-            _frxUsdContraction(USDT, 2, usdtFraxNetDeposit)
+            _frxUsdExpansion(USDT, 2)
         );
         actions[12] = _setPolicyAction(usdtKeeper, USDT_CAP);
         actions[13] = _debtCeilingAction(usdtKeeper, USDT_CAP);
@@ -253,22 +235,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         _validateMonetaryPolicy(CRVUSD_LEGACY_MONETARY_POLICY);
     }
 
-    function _validateFraxNetAccount(address account, address keeper) internal view {
-        require(account.code.length > 0, "FraxNet account code");
-        IFraxNetDepositFactory factory = IFraxNetDepositFactory(FRAXNET_DEPOSIT_FACTORY);
-        require(!factory.isPaused(), "FraxNet factory paused");
-        require(factory.isFraxNetDeposit(account), "unknown FraxNet account");
-        require(factory.frxUSDCustodian() == FRXUSD_CUSTODIAN, "FraxNet custodian");
-        require(factory.rwaRedeemer() != address(0), "FraxNet RWA route");
-        IFraxNetDeposit deposit = IFraxNetDeposit(account);
-        require(deposit.asset() == FRXUSD, "FraxNet asset");
-        require(deposit.frxUSD() == FRXUSD, "FraxNet frxUSD");
-        require(deposit.USDC() == USDC, "FraxNet USDC");
-        require(deposit.factory() == FRAXNET_DEPOSIT_FACTORY, "FraxNet factory");
-        require(deposit.targetEid() == ETHEREUM_LAYERZERO_EID, "FraxNet EID");
-        require(deposit.targetAddress() == bytes32(uint256(uint160(keeper))), "FraxNet recipient");
-    }
-
     function _validateMonetaryPolicy(address policy) internal view {
         IAggMonetaryPolicy monetaryPolicy = IAggMonetaryPolicy(policy);
         require(monetaryPolicy.admin() == CURVE_OWNERSHIP_AGENT, "monetary policy admin");
@@ -290,11 +256,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     function _deployAction(
         address targetAmm,
         address yieldToken,
+        address yieldAmm,
         bool yieldTokenIsErc4626,
         address targetOracle,
         address yieldOracle,
-        IPegKeeperV3.RouteStep[] memory expansion,
-        IPegKeeperV3.RouteStep[] memory contraction
+        IPegKeeperV3.RouteStep[] memory expansion
     ) internal view returns (Action memory) {
         return Action({
             target: deploymentFactory,
@@ -302,11 +268,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
                 IPegKeeperV3Factory.deployPegKeeper.selector,
                 targetAmm,
                 yieldToken,
+                yieldAmm,
                 yieldTokenIsErc4626,
                 targetOracle,
                 yieldOracle,
-                expansion,
-                contraction
+                expansion
             )
         });
     }
@@ -356,19 +322,13 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             feeReceiver: FEE_SPLITTER,
             maxDeployedCrvUsd: cap,
             targetAmmExecutionBufferBps: CURVE_EXECUTION_BUFFER_BPS,
-            minDownstreamAttemptGas: 1_500_000,
-            fallbackSettlementGasReserve: 300_000,
+            yieldAmmExecutionBufferBps: CURVE_EXECUTION_BUFFER_BPS,
             expansionMaxRouteLossBps: 5
         });
     }
 
     function _frxUsdExpansion() internal pure returns (IPegKeeperV3.RouteStep[] memory route) {
         return new IPegKeeperV3.RouteStep[](0);
-    }
-
-    function _frxUsdContraction() internal pure returns (IPegKeeperV3.RouteStep[] memory route) {
-        route = new IPegKeeperV3.RouteStep[](1);
-        route[0] = _curve(FRXUSD_CRVUSD_POOL, FRXUSD, CRVUSD, 0, 1);
     }
 
     function _frxUsdExpansion(address targetAsset, int128 targetIndex)
@@ -384,23 +344,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             mintIndex = 1;
         }
         route[mintIndex] = _frxUsd(ROUTE_FRXUSD_MINT, USDC, FRXUSD);
-    }
-
-    function _frxUsdContraction(address targetAsset, int128 targetIndex, address fraxNetAccount)
-        internal
-        pure
-        returns (IPegKeeperV3.RouteStep[] memory route)
-    {
-        bool isUsdt = targetAsset == USDT;
-        route = new IPegKeeperV3.RouteStep[](isUsdt ? 3 : 2);
-        route[0] = _frxUsdRedeem(fraxNetAccount);
-        uint256 targetAmmIndex = 1;
-        if (isUsdt) {
-            route[1] = _curve(THREE_POOL, USDC, USDT, 1, targetIndex);
-            targetAmmIndex = 2;
-        }
-        route[targetAmmIndex] =
-            _curve(isUsdt ? USDT_CRVUSD_POOL : USDC_CRVUSD_POOL, targetAsset, CRVUSD, 0, 1);
     }
 
     function _curve(
@@ -437,25 +380,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
     }
 
-    function _frxUsdRedeem(address fraxNetAccount)
-        internal
-        pure
-        returns (IPegKeeperV3.RouteStep memory)
-    {
-        return IPegKeeperV3.RouteStep({
-            kind: ROUTE_FRXUSD_REDEEM,
-            venue: fraxNetAccount,
-            tokenIn: FRXUSD,
-            tokenOut: USDC,
-            poolIndexIn: 0,
-            poolIndexOut: 0,
-            executionBufferBps: FRAXNET_REDEMPTION_EXECUTION_BUFFER_BPS
-        });
-    }
-
     function _computeCreateAddress(address creator, uint256 nonce) internal pure returns (address) {
         require(nonce > 0 && nonce <= 0x7f, "unsupported nonce");
-        // The bound above makes the uint8 cast exact for this single-byte RLP nonce encoding.
         // forge-lint: disable-next-line(unsafe-typecast)
         bytes1 encodedNonce = bytes1(uint8(nonce));
         return

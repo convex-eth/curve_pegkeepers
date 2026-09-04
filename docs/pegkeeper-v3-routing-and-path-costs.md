@@ -1,338 +1,156 @@
-# PegKeeper V3 routing choices and path costs
+# PegKeeper V3 LP-yield routing and pool assumptions
 
-Status: mainnet route research; no deployment or activation transaction is authorized.
+Status: unreleased route research for the `lp-yield` branch. No production action is authorized.
 
-This document separates route research from the core specification. It covers historical
-ERC-4626 candidates as well as the selected vanilla-frxUSD launch endpoint:
+## Separation of responsibilities
 
-```text
-target assets: frxUSD, USDT, USDC, PYUSD, GHO
-final tokens:  frxUSD (selected launch), sfrxUSD, sUSDS, sUSDe
-```
+V3 uses two pool roles:
 
-The measurements below are snapshots, not permanent limits or executable governance parameters.
-Every deployment still relies on same-transaction quotes, per-step execution minima, exact balance
-deltas, the configured full-route loss limit, and the final post-reward backing invariant. The selected
-launch proposal separately uses `3 bps` total-loss buffers for Curve swaps, `1 bps` for Frax mint
-and redemption, and `5 bps` for each complete downstream deployment route. The implementation
-retains ERC-4626 and DaiUsds step support for non-launch configurations.
+- `targetAmm`: trades crvUSD into the keeper-specific target asset during expansion;
+- `yieldAmm`: receives crvUSD plus `yieldToken`, issues the LP backing, and provides the fixed one-coin crvUSD contraction.
 
-## Measurement basis
+Only target-to-yield expansion routing is configurable. There is no contraction route.
+
+## Selected backing pool
 
 ```text
-Ethereum block: 25,857,270
-UTC timestamp:  2026-08-29 00:17:47 UTC
-RPC:            mainnet archive RPC
-routing:        one deterministic, unsplit linear path
-cost unit:      basis points of normalized input value
-amount ladder:  10k, 100k, 1m, 2.5m, 5m stable units
-gas:            excluded
+Pool / LP: 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1
+coins(0):  frxUSD  0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29
+coins(1):  crvUSD  0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E
+LP decimals: 18
 ```
 
-`Expansion cost` means target-asset input minus final yield-token underlying value. `Contraction
-cost` means starting yield-token underlying value minus final target-asset output. Negative cost is
-a favorable live imbalance. Final yield shares are always normalized with
-`yieldToken.convertToAssets(shares)`; raw shares are never compared with stablecoin units.
-
-The target-AMM leg is reported separately from the downstream path. This matters because a valid V3
-expansion requires a sufficiently favorable crvUSD-to-target execution to pay the downstream cost,
-keeper reward, and entry margin. Adding two static table entries is not an execution guarantee.
-
-## Fixed tokens
-
-| Symbol | Address | Decimals | V3 role |
-|---|---|---:|---|
-| crvUSD | `0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E` | 18 | liability/intervention asset |
-| frxUSD | `0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29` | 18 | target or sfrxUSD backing |
-| USDT | `0xdAC17F958D2ee523a2206206994597C13D831ec7` | 6 | target |
-| USDC | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` | 6 | target/intermediate |
-| PYUSD | `0x6c3ea9036406852006290770BEdFcAbA0e23A0e8` | 6 | target |
-| GHO | `0x40D16FC0246aD3160Ccc09B8D0D3A2cD28aE6C2f` | 18 | target/research candidate |
-| sfrxUSD | `0xcf62F905562626CfcDD2261162a51fd02Fc9c5b6` | 18 | yield token; backing is frxUSD |
-| sUSDS | `0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD` | 18 | yield token; backing is USDS |
-| sUSDe | `0x9D39A5DE30e57443BfF2A8307A4256c8797A3497` | 18 | yield token; backing is USDe |
-| USDS | `0xdC035D45d973E3EC169d2276DDab16f1e407384F` | 18 | sUSDS backing |
-| USDe | `0x4c9EDD5852cd905f086C759E8383e09bff1E68B3` | 18 | sUSDe backing |
-| DAI | `0x6B175474E89094C44Da98b954EedeAC495271d0F` | 18 | canonical USDS bridge |
-
-Wrapper state at the pinned block:
-
-| Yield token | `asset()` | `convertToAssets(1e18)` | `convertToShares(1e18)` | Direct deposit |
-|---|---|---:|---:|---|
-| sfrxUSD | frxUSD | 1.207961812596532010 | 0.827840739311522622 | disabled: `previewDeposit=0`, `maxDeposit=0` |
-| sUSDS | USDS | 1.107750873476643841 | 0.902730048735171957 | enabled |
-| sUSDe | USDe | 1.245442762168418746 | 0.802927304550646213 | enabled |
-
-Consequences:
-
-- sfrxUSD must be acquired and unwound through a Curve pool; V3 must not encode an ERC-4626
-  deposit/redeem step for it while deposits remain disabled.
-- sUSDS and sUSDe may use typed ERC-4626 deposit/redeem steps.
-- V3 additionally requires the final expansion step to be `backingAsset -> yieldToken` and the first
-  contraction step to be `yieldToken -> backingAsset`. A Curve pool that outputs a yield token from
-  some other asset may therefore be used only as an intermediate step. The frxUSD/sUSDS and
-  frxUSD/sUSDe candidates must immediately redeem to backing and redeposit at the terminal step;
-  they cannot terminate directly at the pool output. The frxUSD/sfrxUSD pool is valid as a terminal
-  step because frxUSD is sfrxUSD's configured backing asset.
-
-## Target AMMs
-
-These are the current target-pool choices. All five have `coins(0) = target` and
-`coins(1) = crvUSD`, so expansion uses `exchange(1,0,...)` and undeployed-backing contraction uses
-`exchange(0,1,...)`.
-
-| Target | Pool | Approx. API TVL | `fee()` snapshot | Admin share | Dynamic multiplier |
-|---|---|---:|---:|---:|---:|
-| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | $13.63m | 1.0 bp | 50% | 5x |
-| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | $55.93m | 1.0 bp | 50% | static implementation |
-| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | $13.18m | 1.0 bp | 50% | static implementation |
-| PYUSD | `0x625E92624Bc2D88619ACCc1788365A69767f6200` | $1.09m | 1.0 bp | 50% | 5x |
-| GHO | `0x635EF0056A597D13863B73825CcA297236578595` | $1.30m | 0.5 bp | 50% | 8x |
-
-The obsolete near-empty crvUSD/GHO pool at
-`0x86152dF0a0E321Afb3B0B9C4deb813184F365ADa` is not the current candidate.
-
-### Target-AMM executable quote cost
-
-| Target | Direction | 10k | 100k | 1m | 2.5m | 5m |
-|---|---|---:|---:|---:|---:|---:|
-| frxUSD | crvUSD -> target | 1.14 | 1.21 | 1.90 | 3.33 | 9.71 |
-| frxUSD | target -> crvUSD | 0.87 | 0.94 | 1.61 | 2.96 | 8.42 |
-| USDT | crvUSD -> target | 1.32 | 1.34 | 1.50 | 1.78 | 2.27 |
-| USDT | target -> crvUSD | 0.68 | 0.70 | 0.86 | 1.13 | 1.58 |
-| USDC | crvUSD -> target | 1.96 | 2.03 | 2.81 | 4.67 | 18.17 |
-| USDC | target -> crvUSD | 0.06 | 0.13 | 0.82 | 2.06 | 6.16 |
-| PYUSD | crvUSD -> target | 2.77 | 3.92 | 5,406 | 8,162 | 9,081 |
-| PYUSD | target -> crvUSD | -0.52 | 0.34 | 3,707 | 7,482 | 8,741 |
-| GHO | crvUSD -> target | -4.45 | -3.19 | 1,041 | 6,413 | 8,206 |
-| GHO | target -> crvUSD | 5.94 | 8.07 | 5,973 | 8,389 | 9,194 |
-
-The PYUSD and GHO pools are useful only at small sizes in the pinned state. Their configured fees look
-small, but inventory exhaustion dominates at larger amounts.
-
-## Candidate downstream venues
-
-| Shorthand | Venue | Coin order | `fee()` snapshot | Admin share | Dynamic multiplier |
-|---|---|---|---:|---:|---:|
-| 3pool | `0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7` | DAI, USDC, USDT | 1.5 bp | 100% | static |
-| PayPool | `0x383E6b4437b59fff47B619CBA855CA29342A8559` | PYUSD, USDC | 1.0 bp | 50% | 10x |
-| frxUSD/sfrxUSD | `0xF292eB6c5dcb693Eaaf392D0562a01C3710E5978` | sfrxUSD, frxUSD | 1.0 bp | 50% | 1x |
-| frxUSD/sUSDS | `0x81A2612F6dEA269a6Dd1F6DeAb45C5424EE2c4b7` | frxUSD, sUSDS | 1.0 bp | 50% | 5x |
-| frxUSD/sUSDe | `0x47Ab5f9D8C9C7D002a92320f23a696D348C56A7F` | frxUSD, sUSDe | 1.0 bp | 50% | 10x |
-| USDT/USDe | `0x5B03CcCAb7BA3010fA5CAd23746cbf0794938e96` | USDT, USDe | 0.3 bp | 50% | 40x |
-| USDe/USDC | `0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72` | USDe, USDC | 1.0 bp | 50% | 5x |
-| GHO/USDe | `0x670a72e6D22b0956C0D2573288F82DCc5d6E3a61` | GHO, USDe | 0.5 bp | 50% | 8x |
-| DaiUsds | `0x3225737a9Bbb6473CB4a45b7244ACa2BeFdB276A` | DAI <-> USDS | exact 1:1 typed conversion | n/a | n/a |
-| Frax frxUSD mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC -> external frxUSD mint | `mintFee() = 0` at the research block | n/a | 6-to-18 decimal conversion |
-| FraxNet deposit factory | `0xA3D62f83C433e2A56Af392E08a705A52DEd63696` | keeper-specific frxUSD -> USDC aggregation | current direct custodian plus factory-configured RWA redeemer | n/a | Ethereum endpoint `30101` |
-
-### Frax USDC/frxUSD primary-market adapters
-
-The mint custodian is a permissionless, upgradeable external-share minter. It is not a standard ERC-4626 vault because the venue is not the output share token: `asset()` is USDC while `frxUSD()` is the separately deployed frxUSD token. `FrxUsdMint` validates those getters, quotes `previewDeposit()`, pulls the exact USDC input, and measures received frxUSD. It does not add a generic ERC-4626 exception or arbitrary-call adapter.
-
-Pinned mint-custodian state:
+Live calls confirmed that this pool uses the StableSwap-NG dynamic-array deposit ABI:
 
 ```text
-proxy:              0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c
-implementation:     0x0A2D27A86a2eA07bcc34e457c65AECA7631c0f10
-asset:              USDC (6 decimals)
-output:             frxUSD (18 decimals)
-mintFee:            0 / 1e18
-mintCap:            400,000,000 frxUSD
-frxUSDMinted:       255,359,360.150313908124343598 frxUSD
-maxDeposit:         144,640,639.849687 USDC
+calc_token_amount(uint256[2],bool) -> reverted
+calc_token_amount(uint256[],bool)  -> succeeded
+calc_withdraw_one_coin(uint256,int128) -> succeeded
+get_virtual_price() -> succeeded
 ```
 
-`previewDeposit()` applies the current governance-configurable `mintFee` and scales native USDC units to frxUSD units; `deposit()` pulls the exact USDC input and mints frxUSD to V3. The custodian has no separate user allowlist or mint pause flag. The owner can change fees and the cap, and the proxy can be upgraded. Cap exhaustion, an adverse fee change, a proxy/interface change, or a deposit revert makes the route step fail atomically. V3 quotes immediately before execution, enforces the configured quote-relative minimum on its measured frxUSD balance delta, and resets its USDC allowance to zero.
+V3 therefore deliberately calls:
 
-Redemption does not call this custodian directly. `FrxUsdRedeem` transfers frxUSD to a keeper-specific FraxNet account created by `0xA3D6...3696` and calls `processRedemption()`. The account is fixed to LayerZero endpoint `30101` and to the keeper as its USDC recipient. It reads the factory's `frxUSDCustodian()` and `rwaRedeemer()` at execution time, consumes direct USDC inventory first, and routes any remainder through the configured RWA coordinator. The release therefore follows factory configuration instead of storing the current coordinator in V3 calldata.
+```solidity
+calc_token_amount(uint256[] amounts, bool isDeposit)
+add_liquidity(uint256[] amounts, uint256 minLp)
+```
 
-At research block `25,886,131`, the configured coordinator was `0x19D7...934`, linked to the USTB custodian and its USDC redemption contract. A funded fork execution demonstrated roughly `9.474 million USDC` of combined atomic output at that block, while only `486.876733 USDC` was direct custodian inventory. The larger number was bounded by downstream prefunded USDC, fees, oracle conversion, rounding, limits, and authorization; it was not the USTB custodian's full marked value. Delayed or offchain RWA settlement remains a separate capacity bucket.
+Using the fixed-array selector would compile and pass a permissive mock while reverting against the selected production pool. The unit mock exposes only the dynamic-array selector, and the pinned canary exercises the live pool.
 
-FraxNet exposes no preview method. V3's advisory quote is decimal-normalized par, while execution measures the actual USDC balance delta. The selected `2` bps buffer covers the current `1` bp RWA redemption fee plus observed integer rounding; a worse result reverts atomically. None of this makes capacity durable. Before activation, governance must revalidate the account recipient, factory membership, beacon implementation, factory pause state, direct inventory, current RWA graph, downstream USDC, fees, caps, oracle freshness, and bounded execution.
+## Selected expansion routes
 
-### Selected launch override
-
-The selected release proposal does not use the historical yield endpoints in the cost ladders below.
-All three keepers use plain ERC-20 frxUSD as the final token. The frxUSD keeper has an empty expansion
-path and contracts directly through its frxUSD/crvUSD target AMM. USDC uses Frax mint and redemption;
-USDT adds the USDT/USDC 3pool leg around those primary-market steps. The exact launch routes and pause
-conditions are authoritative in `pegkeeper-v3-suggested-launch-parameters.md`.
-
-### Why USDe primary minting is excluded
-
-Ethena's primary USDe flow is not a permissionless amount-in/amount-out contract call. Its documented
-process requires an API price, an EIP-712 signed order, acceptance by Ethena's server, and an authorized
-onchain executor; the server may reject an order based on balance, approvals, or hedging capacity.
-That RFQ workflow cannot be represented by V3's deterministic typed route without introducing
-offchain order selection or a privileged keeper. V3 therefore keeps USDe acquisition on permissionless
-Curve routes and does not add an Ethena mint adapter. See [Ethena's minting design](https://docs.ethena.fi/technical-design/minting-usde).
-
-Pool fee is not route cost. The tables below include current imbalance, price impact, wrapper exchange
-rate, and rounding. DAO admin-fee accrual is not V3 backing and never weakens an onchain minimum.
-
-## Route choices
-
-Historical expansion paths are shown below. Contraction paths are configured independently. The table
-predates the selected plain-frxUSD launch and remains route-cost research, not launch calldata.
-
-| Target | Yield | Deterministic expansion path | Current use |
-|---|---|---|---|
-| frxUSD | sfrxUSD | frxUSD -> sfrxUSD pool | **preferred; scalable** |
-| frxUSD | sUSDS | frxUSD -> sUSDS pool -> USDS (redeem) -> sUSDS (deposit) | small-cap only |
-| frxUSD | sUSDe | frxUSD -> sUSDe pool -> USDe (redeem) -> sUSDe (deposit) | small-cap only |
-| USDT | sUSDS | USDT -> DAI (3pool) -> USDS (DaiUsds) -> sUSDS (deposit) | **preferred; scalable** |
-| USDT | sUSDe | USDT -> USDe -> sUSDe (deposit) | small-cap only |
-| USDT | sfrxUSD | USDT -> USDC (3pool) -> frxUSD (mint) -> sfrxUSD | scalable alternative |
-| USDC | sUSDS | USDC -> DAI (3pool) -> USDS (DaiUsds) -> sUSDS (deposit) | scalable |
-| USDC | sUSDe | USDC -> USDe -> sUSDe (deposit) | small-cap only |
-| USDC | sfrxUSD | USDC -> frxUSD (mint) -> sfrxUSD | **preferred; scalable** |
-| PYUSD | sUSDS | PYUSD -> USDC (PayPool) -> DAI (3pool) -> USDS -> sUSDS | scalable downstream; target pool limits total capacity |
-| PYUSD | sUSDe | PYUSD -> USDC -> USDe -> sUSDe | small-cap only |
-| PYUSD | sfrxUSD | PYUSD -> USDC -> frxUSD (mint) -> sfrxUSD | **preferred downstream; target pool limits total capacity** |
-| GHO | sUSDS | GHO -> USDe -> USDC -> DAI -> USDS -> sUSDS | not activation-ready |
-| GHO | sUSDe | GHO -> USDe -> sUSDe | not activation-ready |
-| GHO | sfrxUSD | GHO -> USDe -> USDC -> frxUSD (mint) -> sfrxUSD | not activation-ready |
-
-No path loops through crvUSD between the target-AMM intervention and the final yield token. Such a
-loop would partially undo or contaminate the monetary-policy action and is rejected as a route choice
-even if an optimizer quotes it favorably.
-
-The frxUSD/sUSDS and frxUSD/sUSDe cost rows include the V3-required terminal wrapper round trip. At
-the pinned block and 10k input, `previewRedeem(poolShares)` followed by `previewDeposit(assets)` loses
-one share for each wrapper, below the displayed basis-point precision. It is retained in the route
-because omitting it would make the path fail `setPaths()` validation.
-
-## Downstream expansion cost ladder
-
-Values are all-in target -> final yield backing loss in basis points.
-
-| Target | Yield | 10k | 100k | 1m | 2.5m | 5m |
-|---|---|---:|---:|---:|---:|---:|
-| frxUSD | sfrxUSD | 0.92 | 0.93 | 1.09 | 1.39 | 3.11 |
-| frxUSD | sUSDS | 2.05 | 2.76 | 1,401 | 6,553 | 8,277 |
-| frxUSD | sUSDe | -2.36 | -0.36 | 5,783 | 8,313 | 9,157 |
-| USDT | sUSDS | 1.68 | 1.69 | 1.73 | 1.80 | 1.91 |
-| USDT | sUSDe | 0.42 | 0.80 | 7,066 | 8,826 | 9,413 |
-| USDT | sfrxUSD | 2.64 | 2.65 | 2.85 | 3.23 | 5.06 |
-| USDC | sUSDS | 1.46 | 1.47 | 1.51 | 1.59 | 1.71 |
-| USDC | sUSDe | 0.28 | 3.88 | 6,548 | 8,619 | 9,310 |
-| USDC | sfrxUSD | 0.92 | 0.93 | 1.09 | 1.39 | 3.11 |
-| PYUSD | sUSDS | 2.09 | 2.10 | 2.23 | 2.44 | 2.81 |
-| PYUSD | sUSDe | 0.90 | 4.51 | 6,548 | 8,619 | 9,310 |
-| PYUSD | sfrxUSD | 1.54 | 1.56 | 1.80 | 2.25 | 4.21 |
-| GHO | sUSDS | 22.78 | 8,234 | 9,823 | 9,929 | 9,965 |
-| GHO | sUSDe | 18.84 | 8,233 | 9,823 | 9,929 | 9,965 |
-| GHO | sfrxUSD | 22.24 | 8,233.82 | 9,823.40 | 9,929.36 | 9,964.68 |
-
-## Reverse contraction cost ladder
-
-Values are all-in starting yield backing -> target loss in basis points, before the final target ->
-crvUSD target-AMM leg.
-
-| Target | Yield | 10k | 100k | 1m | 2.5m | 5m |
-|---|---|---:|---:|---:|---:|---:|
-| frxUSD | sfrxUSD | 1.09 | 1.10 | 1.27 | 1.65 | 5.28 |
-| frxUSD | sUSDS | 0.10 | 0.75 | 185.95 | 6,015 | 8,007 |
-| frxUSD | sUSDe | 5.03 | 8.97 | 7,438 | 8,975 | 9,488 |
-| USDT | sUSDS | 1.32 | 1.32 | 1.37 | 1.43 | 1.55 |
-| USDT | sUSDe | 0.24 | 0.56 | 6,789 | 8,716 | 9,358 |
-| USDT | sfrxUSD | -1.03 | 1.30 | 6,789 | 8,716 | 9,358 |
-| USDC | sUSDS | 1.54 | 1.54 | 1.59 | 1.66 | 1.79 |
-| USDC | sUSDe | 2.49 | 6.58 | 6,840 | 8,736 | 9,368 |
-| USDC | sfrxUSD | 1.22 | 7.31 | 6,845 | 8,738 | 9,369 |
-| PYUSD | sUSDS | 2.93 | 2.95 | 3.09 | 3.33 | 3.80 |
-| PYUSD | sUSDe | 3.89 | 7.98 | 6,840 | 8,736 | 9,368 |
-| PYUSD | sfrxUSD | 2.62 | 8.72 | 6,845 | 8,738 | 9,369 |
-| GHO | sUSDS | 1.37 | 7,029 | 9,703 | 9,881 | 9,941 |
-| GHO | sUSDe | -0.45 | 7,029 | 9,703 | 9,881 | 9,941 |
-| GHO | sfrxUSD | -1.72 | 7,029 | 9,703 | 9,881 | 9,941 |
-
-The sfrxUSD reverse rows deliberately retain the Curve-only unwind measured before the mint adapter was
-added. They do not call the Frax custodian's redemption methods. Expansion and contraction capacity
-are therefore asymmetric: the mint cap supports large USDC-to-frxUSD expansion, while reverse
-capacity remains bounded by the selected Curve pools.
-
-## Capacity conclusions
-
-### Activation-ready combinations
+### frxUSD
 
 ```text
-frxUSD target -> sfrxUSD
-USDT target   -> sUSDS or sfrxUSD
-USDC target   -> sfrxUSD or sUSDS
-PYUSD target  -> sfrxUSD or sUSDS downstream, but only with a target-AMM cap far below 1m
+targetAmm == yieldAmm
+route = []
+requested crvUSD -> direct one-sided LP deposit
 ```
 
-These routes retain low-single-digit downstream cost through most or all of the 5m ladder. The direct
-USDC mint makes sfrxUSD the lowest-cost pinned downstream endpoint for USDC and PYUSD and a scalable
-alternative for USDT. The PYUSD target AMM still exhausts around the 1m scale, so the target pool—not
-the yield path—is the binding limit. Route activation must also keep the configured V3 capacity below
-the custodian's refreshed `maxDeposit()` and the selected Curve unwind capacity.
+No crvUSD/frxUSD swap is performed first. If donated frxUSD exists, V3 adds it with equal-value additional crvUSD in the same deposit.
 
-### Small-cap combinations
+### USDC
 
 ```text
-frxUSD -> sUSDS or sUSDe
-USDT/USDC/PYUSD -> sUSDe
+crvUSD -> USDC in targetAmm
+USDC -> frxUSD through Frax mint custodian
+frxUSD + matched crvUSD -> yieldAmm LP
 ```
 
-These can look excellent at 10k-100k and then collapse because one shallow output-side pool is nearly
-drained. A low nominal fee is not capacity.
-
-### Research-only combinations
+### USDT
 
 ```text
-all GHO -> yield routes
+crvUSD -> USDT in targetAmm
+USDT -> USDC in Curve 3pool
+USDC -> frxUSD through Frax mint custodian
+frxUSD + matched crvUSD -> yieldAmm LP
 ```
 
-The frxUSD mint adapter removes the shallow sUSDe/frxUSD bridge from USDT, USDC, and PYUSD sfrxUSD
-expansion. GHO is still limited by the roughly $47k GHO/USDe venue. GHO may remain a valid target-AMM
-candidate for future liquidity, but it is not activation-ready for the current yield set.
+No path may loop through crvUSD between the initial target-AMM intervention and `yieldToken` acquisition.
 
-## Governance calibration rules
+## Route checks
 
-Before any deployment or route update:
+Each target and expansion step is exact-input and enforces:
 
-1. Re-pin a fresh block and repeat the full quote ladder in both directions.
-2. Verify every `coins(i)` live; do not trust this document after pool replacement.
-3. Re-read `fee()`, `admin_fee()`, `offpeg_fee_multiplier()`, balances, wrapper conversions, and any
-   primary-minter `asset()`, output-token getter, fee, cap, minted amount, and `maxDeposit()` state.
-4. Select a local/Factory capacity below the first nonlinear impact point of both the target AMM and
-   downstream route, and below any live primary-mint cap.
-5. Derive per-step execution buffers from measured same-transaction quote behavior. Do not encode the
-   historical table cost itself as slippage tolerance.
-6. Keep `expansionMaxRouteLossBps` separate from quote-relative buffers and the final entry margin.
-7. Run a fork canary for the exact constructor tuple, paths, amount cap, and gas policy.
-8. Treat DAO admin-fee accrual as consolidated economics only; it is never V3 backing.
-9. Pause expansion immediately on target, backing, or yield-token impairment. Contraction and owner
-   recovery remain the wind-down paths.
+- immediate venue quote;
+- quote-relative minimum output;
+- normalized absolute value floor;
+- exact measured input spending;
+- measured output receipt;
+- exact temporary allowance reset to zero;
+- token continuity and fixed endpoint validation.
 
-## Source and reproduction notes
+The full target-to-yield route also enforces `expansionMaxRouteLossBps`. Route output is not final backing until it and matched crvUSD have been deposited into `yieldAmm` and measured LP tokens have been received.
 
-Pool enumeration used Curve's Ethereum pool API, then the addresses, coin order, fees, wrapper state,
-and `get_dy` results were checked against mainnet state at the pinned block. Cost rows were generated
-by sequential pinned `eth_call` evaluation of every swap, converter, primary mint, and wrapper hop,
-then transcribed into this document; they are not estimates copied from a routing UI. All 15 documented
-expansion/contraction templates are also instantiated against the live contracts and accepted by
-V3's exact endpoint, terminal-backing, continuity, venue, and pool-index validation in
-`test/PegKeeperV3RouteMatrixFork.t.sol`. A separate pinned execution test performs a real
-USDC-to-frxUSD custodian deposit inside a full V3 expansion, checks the actual frxUSD/sfrxUSD swap,
-measured accounting, and zero residual allowances in `test/PegKeeperV3FrxUsdMintFork.t.sol`.
+Any failure reverts the initial target swap, path execution, LP deposit, debt accounting, velocity pressure, and rewards. There is no target-retention fallback.
 
-The canonical costing method is:
+## Matched-liquidity cost
+
+A route quote must be evaluated together with the matched LP leg.
+
+For a first-leg amount `X` and final yield value `Y`:
 
 ```text
-finalBacking = yieldToken.convertToAssets(finalYieldShares)
-routeCostBps = (normalizedInput - finalBacking) * 10_000 / normalizedInput
+crvUSD consumed = X + Y
+LP deposit       = Y crvUSD + yieldToken worth Y
 ```
 
-For reverse routes:
+Around par, `Y ~= X`; a `500,000 crvUSD` target trade therefore consumes about `1,000,000 crvUSD` of velocity and capacity. Route ladders that show only target-to-yield cost are insufficient for sizing this implementation.
+
+A yield-token donation `D` adds another `D` of matched crvUSD consumption. An oversized unsolicited donation can make an expansion revert until governance recovers it through `execute()` or sufficient idle balance/capacity becomes available. The donation does not become keeper profit.
+
+## LP accounting assumption
+
+Persistent backing is:
 
 ```text
-startShares  = yieldToken.convertToShares(backingNotional)
-startBacking = yieldToken.convertToAssets(startShares)
-routeCostBps = (startBacking - normalizedTargetOut) * 10_000 / startBacking
+floor(lpBalance * virtualPrice / 1e18)
 ```
 
-These are route-selection measurements. Production execution remains authoritative.
+This is not a market-price oracle. It assumes:
+
+1. both pool coins are governance-approved equivalent stable assets;
+2. the pool correctly includes rate-provider or wrapped-share appreciation in virtual price;
+3. the pool's accounting and LP token are not compromised;
+4. one-coin exit economics are checked independently.
+
+For an ERC-4626 yield coin, V3 uses `convertToAssets()` only to size the matched crvUSD for loose shares entering the LP. Once LP tokens exist, virtual price is used once. Multiplying LP value by the ERC-4626 share rate again would double-count appreciation.
+
+## Static contraction economics
+
+Contraction does not reverse the expansion route. It burns held LP and requests crvUSD only:
+
+```text
+quote = calc_withdraw_one_coin(lpAmount, crvUsdIndex)
+min   = quote * (10_000 - yieldAmmExecutionBufferBps) / 10_000
+remove_liquidity_one_coin(lpAmount, crvUsdIndex, min)
+```
+
+The executable quote protects slippage. The pre/post complete LP position at separate virtual-price snapshots determines backing value removed. The call reverts if the pool's own repricing makes that value delta negative or if post-reward crvUSD does not exceed value removed by the configured exit margin.
+
+The pinned canary makes crvUSD sufficiently abundant in the backing pool before exercising contraction. Without a favorable imbalance, single-coin withdrawal fees can make a contraction correctly fail the positive-profit floor.
+
+## Current addresses
+
+| Role | Address |
+|---|---|
+| frxUSD/crvUSD yield AMM | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` |
+| USDC/crvUSD target AMM | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` |
+| USDT/crvUSD target AMM | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` |
+| Curve 3pool | `0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7` |
+| Frax mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` |
+| USDC/USDT oracle pool | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` |
+
+FraxNet redemption accounts and RWA redemption capacity are irrelevant to this architecture because contraction never redeems frxUSD through a configured route.
+
+## Pre-activation checks
+
+1. Verify target and yield pool code, coin order, decimals, fee parameters, dynamic-array ABI, balances, virtual price, and rate providers.
+2. Re-run target and expansion-path quote ladders at total matched-liquidity sizes.
+3. Reconfirm Frax mint fee, cap, minted amount, `maxDeposit()`, proxy implementation, and authorization.
+4. Simulate balanced and one-sided LP additions with measured token and LP deltas.
+5. Simulate one-coin crvUSD withdrawal across normal and stressed pool states.
+6. Verify all temporary allowances return to zero.
+7. Size local cap and velocity from total crvUSD consumption, not first-leg amount.
+8. Run a current-block end-to-end fork canary before any governance action.

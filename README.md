@@ -50,91 +50,53 @@ When demand for crvUSD rises, V2 answers it by minting more crvUSD into an AMM p
 
 ## Current V3 direction
 
-The current V3 design is asymmetric:
+The unreleased `lp-yield` branch changes V3 from loose-token backing to Curve LP backing.
 
-- **Above peg:** a permissionless keeper sells idle Factory-allocated crvUSD into a designated crvUSD/stablecoin AMM. V3 then follows the configured expansion route when one exists. A downstream failure or downstream-deployment pause leaves the measured target stablecoin as approved backing instead of reverting the peg-critical swap.
-- **Below peg:** users can sell crvUSD directly to V3 for its fixed configured final token. No route executes and the target asset is never substituted.
-- **Fallback below peg:** if direct buyback flow does not arrive, a keeper can buy crvUSD using either undeployed target backing or the independently configured final-token contraction path.
+- **Expansion through another pool:** `X` crvUSD is sold through the target AMM and the existing typed expansion path ends in `yieldToken`. V3 then sweeps the complete live yield-token balance into the fixed `yieldAmm` with equal-value additional crvUSD. Total recorded exposure is `X + matchedCrvUsd`.
+- **Shared target/yield pool:** when `targetAmm == yieldAmm`, V3 skips the swap and expansion path and deposits crvUSD directly. Donated yield tokens are still swept with equal-value additional crvUSD.
+- **Contraction:** V3 burns held LP tokens and calls the fixed yield AMM's `remove_liquidity_one_coin(..., crvUsdIndex, minCrvUsd)`. There is no configurable contraction path.
+- **Failure:** expansion is atomic. A route or LP-deposit failure reverts the complete keeper update. There is no undeployed-target fallback or later maintenance deployment.
 
-The selected launch stores plain frxUSD as the final token for all three keepers:
+The candidate launch keeps plain frxUSD as `yieldToken` and uses the frxUSD/crvUSD StableSwap-NG pool as `yieldAmm` for the frxUSD, USDC, and USDT keepers. USDC and USDT retain their existing typed target-to-frxUSD expansion paths. The frxUSD keeper uses the direct-pool special case.
+
+Persistent backing is the complete live LP balance valued once through Curve virtual price:
 
 ```text
-frxUSD: expansion []
-        contraction frxUSD -> crvUSD through the frxUSD target AMM
-
-USDC:   expansion USDC -> frxUSD through Frax mint
-        contraction frxUSD -> USDC through a keeper-specific FraxNet account -> crvUSD
-
-USDT:   expansion USDT -> USDC through 3pool -> frxUSD through Frax mint
-        contraction frxUSD -> USDC through a keeper-specific FraxNet account
-                    -> USDT through 3pool -> crvUSD
+trustedBackingValue = floor(lpBalance * virtualPrice / 1e18)
 ```
 
-Final-token accounting mode is explicit at factory deployment. In vanilla mode, `backingAsset == yieldToken`, token units equal backing-asset units, and conversion helpers are identity functions. In ERC-4626 mode, `backingAsset = yieldToken.asset()`, held units are valued with `convertToAssets()`, and backing-asset budgets are converted with `convertToShares()`. The contract does not probe interfaces to guess the mode. ERC-4626, Dai/USDS, and Curve route steps remain supported and tested even though they are not selected for this launch.
+This is an explicit equivalent-asset/rate-aware-pool accounting assumption. ERC-4626 share appreciation must not be applied again if the pool virtual price already incorporates it. One-coin contraction uses `calc_withdraw_one_coin` for executable slippage protection; virtual price is not treated as a withdrawal quote.
 
-Undeployed target backing is an intentional terminal state; intermediate route assets remain transient. The invariant counts the complete live target balance plus the configured final-token value. When `targetAsset == yieldToken`, the shared balance is counted once. Donations of either configured token become protocol backing immediately, but never inflate action-local route output.
+Yield-token donations are included in the next LP deposit and matched with crvUSD, but excluded from keeper-profit attribution by adding their normalized value to the pre-action accounting baseline. Actual crvUSD, target, yield-token, and LP balance deltas remain authoritative.
 
-Expansion and contraction paths are separately updatable through atomic governance execution. Routes use typed Curve-swap, canonical DaiUsds-converter, ERC-4626 deposit/redeem, Frax mint, and FraxNet redemption steps rather than arbitrary calldata. Minting calls the external-share USDC custodian. Redemption transfers frxUSD to a keeper-specific FraxNet account, which dynamically uses its factory's direct custodian and configured RWA redeemer and returns USDC only to that keeper. An expansion path may be empty only when `targetAsset == yieldToken`; contraction remains independently nonempty and must end in crvUSD. Each directional path permits at most `16` steps.
+The branch removes:
 
-Configured paths remain exact-input and use protocol-calculated minimum outputs. The target AMM and every typed step enforce both a same-transaction quote-consistency floor and an absolute normalized-value floor using the configured buffer. The final trusted-value profit floor and downstream `maxRouteLossBps` remain independent checks. Direct buyback transfers only the configured final token: vanilla mode uses identity unit conversion, while ERC-4626 mode uses conservative `convertToShares()` sizing and whole-position `convertToAssets()` valuation.
+- contraction-path storage and governance setters;
+- direct loose-token buyback;
+- undeployed target backing and its contraction/deployment maintenance actions;
+- downstream fallback gas configuration and deployment pause;
+- FraxNet redemption-account deployment and proposal dependencies.
 
-This gives routing infrastructure one fixed pair per deployment: `coins(0) = crvUSD` and `coins(1) = yieldToken`. The pair never changes because USDT, frxUSD, or another target asset happens to be sitting in `undeployedBacking`. Keepers clean target inventory independently through profitable target-to-crvUSD contraction or convert it into the yield token through `deployUndeployedBacking()`. While downstream deployment is paused, the no-reward `unwindYieldToTarget()` maintenance action may execute the contraction-path prefix and retain target backing without changing crvUSD exposure. Both monetary-contraction exits remain independently available regardless of downstream-deployment state; keeper strategy may prefer yield first while paused and target first while unpaused without a donation-sensitive onchain priority guard.
+Only three pause directions remain: expansion (`0`), LP contraction (`1`), and all execution (`2`). Every Factory-created keeper starts fully paused.
 
-The current admin reported by `PegKeeperV3Factory.admin()` also has a separate `execute(target, value, calldata)` escape hatch with explicit `65,535`-byte input and captured-output bounds. It can move or convert assets through a one-off recovery path if a configured venue breaks or governance loses confidence in the held yield token or an underlying stablecoin. After an external repayment, auction, or liability migration, the same admin may call `reduce_deployed_crvusd(amount)` to reduce the recorded exposure, clamped at zero. That accounting hook moves no tokens and makes no assumptions about the external mechanism. These powers belong only to the DAO owner, not keepers or the distinct emergency admin. The DAO already controls crvUSD minting and protocol configuration, so they do not introduce a new trusted actor. `execute()` uses an ordinary external call, never `delegatecall`.
-
-V3 does not require the target crvUSD AMM spot price to remain close to its EMA or pass a separate aggregate crvUSD oracle trigger. A sharp upward crvUSD move is the opportunity the expansion keeper should capture. Exact amount bounds, protocol-calculated route minima, realized post-reward profitability, final backing checks, and exposure limits gate execution. When downstream deployment is enabled, V3 attempts the fixed downstream path in an isolated call. Success finishes in yield backing; failure rolls back only the downstream attempt and retains the target asset as `undeployedBacking`. When downstream deployment is paused, `expand()` skips the downstream call entirely and retains target backing. The keeper cannot select the branch, route, minima, or recipient, and an implementation gas reserve prevents deliberate fallback through gas starvation.
-
-Every keeper has mandatory target and downstream-backing oracle adapters. `address(0)` never disables a check. Before increasing exposure, V3 requires the target adapter to return at least `0.9997e18`; failure or a lower value reverts. A healthy target with an unhealthy downstream adapter still allows the peg-critical target-AMM trade, but retains the measured target asset as `undeployedBacking` instead of entering the yield route. Oracle credit is capped at par with `min(price, 1e18)`. Contraction, wind-down, and owner recovery remain available during oracle failures.
-
-The launch uses opposite orientations of the USDC/USDT StableSwap-NG EMA for the USDC and USDT target checks and one direct Chainlink adapter around canonical `frxusd-usd.data.eth` (`0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83`) for every final-token check and the frxUSD target check. The adapter pins the consumer-facing proxy, feed decimals, and a provisional 26-hour maximum delay while allowing proxy-level aggregator rotation. Non-positive answers, incomplete rounds, stale data, and future timestamps revert.
-
-`trustedBackingValue` is normalized target inventory plus the configured final-token value, with shared target/final inventory counted once. Vanilla final tokens use identity valuation; ERC-4626 final tokens use current `convertToAssets()` value rather than historical acquisition cost. Retained execution profit and any ERC-4626 appreciation contribute to `protocolSurplus = max(trustedBackingValue - deployedCrvUsd, 0)`.
-
-Governance route analysis also distinguishes gross PegKeeper output from DAO-consolidated cost. A Curve pool may direct some or all swap fees to Curve DAO admin balances rather than LPs. V3 still treats every fee as a local execution cost because it does not receive admin balances atomically, but governance can prefer DAO-capturing routes when comparing where protocol-level fees accrue. The current 3pool example is recorded in the V3 specification.
-
-Keeper rewards are paid from realized gross profit rather than principal. A successful routed expansion measures the complete final-token output, converts its gross value through the configured endpoint mode, and pays the reward in final-token units. A target-retention fallback pays in target units. Contraction rewards remain crvUSD-denominated. Each rewarded branch pays the configured share, rounded down in the payout token, and must retain principal plus the configured margin after reward.
-
-One `expand()` call pays one reward; it does not separately reward the target-AMM swap and downstream yield route. `deployUndeployedBacking()` and `unwindYieldToTarget()` receive no percentage reward or gas reimbursement. The isolated-call gas policy is instead a safety mechanism. V3 requires `gasleft() >= minDownstreamAttemptGas` immediately before a downstream attempt and preserves a separate outer settlement reserve; checking `gasleft()` and then forwarding everything would be useless.
-
-Future target-to-yield fees are not deducted hypothetically from fallback keeper profit because later conversion is optional: the target asset may instead contract crvUSD directly. V3 has no separate undeployed-backing cap; overall exposure remains bounded by `maxDeployedCrvUsd` and the Factory allocation so downstream failure cannot disable otherwise profitable expansion. `deployUndeployedBacking(amount)` accepts any exact amount up to the live target balance with no separate per-call maximum, but reverts while `backingDeploymentPaused` is true. The governance-approved downstream path stores its own `maxRouteLossBps`, and the same quote-consistency floor, absolute step-loss floor, route-loss check, surplus limit, and final backing invariant determine whether both new downstream deployment and later maintenance deployment are executable.
-
-Existing undeployed target-asset backing is not combined with a newly rewarded expansion or automatically flushed afterward. It is handled only through a separate explicit `deployUndeployedBacking(amount)` call, so old assets cannot contaminate the new expansion's profit attribution or make a healthy peg action fail from excessive combined size.
-
-Keeper execution remains fully open. Rewarded keeper functions accept an exact amount but no caller-selected route or minimum-output parameters. Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, consumes one keeper-local leaky bucket. Maximum pressure is `5%` of `maxDeployedCrvUsd` and fully refills linearly over `300` seconds. Calls, callers, oracle updates, policy updates, and ceiling changes share the same pressure; splitting calls cannot bypass it, contraction does not refund it, and reverted transactions consume nothing. Percentage-only compensation remains split-invariant before token rounding and changing AMM execution. `minExpansionAmount` blocks true dust.
-
-Timing is intentionally asymmetric. Expansion has no cooldown and initially requires a `0.1 bps` realized margin after route costs and keeper compensation. The unsigned entry parameter cannot authorize a local loss, and every expansion must preserve `trustedBackingValue >= deployedCrvUsd`. Mature contraction requires `10 bps`; early contraction requires `50 bps`, corresponding roughly to `0.999` and `0.995` crvUSD before accounting for costs and reward. The higher early margin makes realized distress—not a manipulable spot trigger—the override. The timer gates contraction rather than token destruction: once crvUSD is reacquired it is already out of circulation, so delaying its later Factory burn would not prevent market churn.
-
-V3 keeps the current Factory inventory model: governance allocates and mints a fixed crvUSD amount upfront, `expand()` uses it when needed, and unused or principal-reacquired crvUSD remains idle. Nonterminal backing profit supports a later `claimSurplus()` payment. If a keeper contraction's post-reward crvUSD receipt exceeds all remaining exposure, the excess is terminal realized profit and is sent directly to the Factory's current fee receiver without increasing debt. V3 receives no lazy mint or burn authority; governance may lower the Factory ceiling to burn idle inventory.
-
-Slow wind-down requires only `expansionPaused = true`. New crvUSD sales and FeeSplitter surplus claims stop while direct buyback and both keeper contraction paths remain available, so deployed exposure can decline naturally and reacquired crvUSD can be burned by lowering the Factory ceiling. V3 has no separate global-shutdown state or prescribed migration state machine; admin `execute()` and explicit debt reduction provide generic hooks for urgent one-off recovery or migration.
-
-The timing model uses one global `lastExpansionAt`, with no tranches or maturity buckets. Initially, only a successful expansion of at least `10,000 crvUSD` resets it. A flash-liquidity actor can buy crvUSD, request that minimum expansion, and sell back to reset the timer, but V3 countertrades the full amount and the actor eats the round-trip loss, fees, and V3's required entry economics. The initial `0.1 bps` retained margin on `10,000 crvUSD` is only `0.10` normalized dollar units, so governance should monitor repeated resets and may raise the minimum amount if necessary. Young exposure is not trapped: sufficiently profitable contraction remains available immediately under the higher early-exit margin.
-
-The initial governance-changeable `minDeploymentTime` is `2 days`. At `4%` to `5%` annualized stablecoin yield, that earns approximately `2.19` to `2.74 bps` for assets that reached the yield token. Undeployed target-asset backing earns no such carry, but it uses the same global timer because the timer is an anti-churn control rather than per-position yield accounting. Every exit must still pass its final-value check.
-
-The complete implemented specification is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). It records route governance, lifecycle steps, accounting, interfaces, invariants, risks, future considerations, and the remaining deployment-specific governance decisions. Current mainnet target-pool choices, fixed yield endpoints, deterministic route candidates, and pinned executable cost ladders are maintained separately in [`docs/pegkeeper-v3-routing-and-path-costs.md`](docs/pegkeeper-v3-routing-and-path-costs.md).
-
-The production implementation is complete in Vyper `0.3.10`. It pins the Factory stablecoin, target asset, backing asset, configured final token, and explicit final-token mode; validates a governance-replaceable target AMM against the fixed crvUSD/target pair; exposes the ABI-compatible immutable `crvUSD`/`yieldToken` routing pair; derives backing from live configured inventories with shared-token deduplication; and keeps per-action deltas authoritative. It deploys exact idle Factory inventory through the active target AMM and then attempts the configured expansion path in a bounded-gas self-call. A successful attempt measures the complete final-token output, pays one reward in final-token units, and accounts the net final-token delta. Route, reward, route-loss, or final-margin failure rolls back only the isolated attempt and settles the original target receipt through the measured fallback branch while preserving a configured outer gas reserve. Keepers can reverse an exact live target amount through the same AMM, pay a measured crvUSD reward only from realized profit, apply the early or normal exit margin, reduce deployed exposure by the post-reward receipt, and send any current-call receipt above all remaining debt directly to the fee receiver. Permissionless surplus settlement sends only bounded idle crvUSD to the factory's current fee receiver while increasing backed exposure by the exact transfer. Governance can atomically install separately validated expansion and contraction paths of up to `16` typed steps. Permissionless maintenance can deploy exact live target backing through the expansion path into measured final yield-token units, with per-step quote floors, exact approval resets, route-loss and available-surplus bounds, and no reward or maturity reset. Permissionless keeper contraction can spend exact live yield-token units through the independent typed contraction path, value the outflow from complete pre/post yield positions, pay a bounded crvUSD reward only from realized profit, enforce the selected exit margin, reduce deployed exposure by the post-reward receipt, and send terminal excess to the fee receiver. Direct buyback accepts exact crvUSD from any caller and transfers only the fixed final token, using identity conversion in vanilla mode or conservative `convertToShares()` sizing in ERC-4626 mode, caller minimum output, measured two-sided token deltas, whole-position post-transfer valuation, the selected exit margin, and the final principal invariant; it never executes either stored route or spends separate target inventory.
+The complete design is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.md). Candidate routes and pool ABI assumptions are in [`docs/pegkeeper-v3-routing-and-path-costs.md`](docs/pegkeeper-v3-routing-and-path-costs.md), and candidate configuration is in [`docs/pegkeeper-v3-suggested-launch-parameters.md`](docs/pegkeeper-v3-suggested-launch-parameters.md).
 
 ## V3 deployment factory
 
-`PegKeeperV3Factory` is implemented in pinned Vyper `0.3.10`. It is an owner-gated deployment registry that creates non-upgradeable EIP-1167 minimal proxies. The implementation address is embedded directly in each 45-byte proxy runtime: there is no proxy admin, implementation setter, or mutable implementation slot. The implementation itself is locked against operational initialization.
+`PegKeeperV3Factory` deploys non-upgradeable EIP-1167 proxies against one locked implementation. The owner supplies `targetAmm`, `yieldToken`, `yieldAmm`, endpoint mode, two mandatory oracle adapters, and only an expansion path. The Factory derives target/backing assets, validates keeper initialization, assigns the keeper index, and copies capacity, target-AMM buffer, yield-AMM buffer, and expansion-route loss defaults.
 
-The factory stores the shared PegKeeper admin, distinct emergency admin, fee receiver, immutable implementation, and deployment defaults. A deployment supplies target AMM, final token, explicit `yieldTokenIsErc4626` mode, mandatory target/yield oracle adapters, expansion route, and contraction route. The factory performs exactly one `CREATE` per keeper, atomically initializes the proxy, installs routes/defaults, and records it. A failed initialization reverts creation and nonce consumption. Every proxy owns its own endpoint configuration, accounting, routes, pause state, oracle addresses, velocity pressure, and timestamps; only executable code is shared. The result starts fully paused and exposes `keeper_index()` plus `name()` as `Pegkeeper 1`, `Pegkeeper 2`, and so on.
+Shared `admin`, `emergency_admin`, and `fee_receiver` remain dynamic Factory policy. All endpoint, route, pause, accounting, and velocity state remains local to each proxy.
 
-## V3 release package
+## V3 candidate package
 
-V3 is an implementation-complete release candidate. It has not been deployed. The package includes:
+The LP-yield candidate has not been deployed. It includes:
 
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): one explicit, environment-free mainnet deployment of the stateless preview module, locked implementation, immutable EIP-1167 factory, two Curve USDC/USDT target adapters, one canonical frxUSD/USD Chainlink adapter, and two canonical FraxNet accounts bound to the predicted USDC and USDT keepers; it writes every address to `deployments/mainnet/PegKeeperV3-deployment.json`;
-- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet simulation of the selected USDT keeper's USDT → USDC → frxUSD expansion and an executed frxUSD → FraxNet RWA redemption → USDC → USDT → crvUSD contraction;
-- [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json): compiler, source, bytecode, candidate constructor, typed-path hashes, and canary evidence;
-- [`scripts/verify-release-manifest.py`](scripts/verify-release-manifest.py): fail-closed source, compiler, ABI, artifact-hash, runtime-bound, and undeployed-status verification;
-- [`docs/pegkeeper-v3-suggested-launch-parameters.md`](docs/pegkeeper-v3-suggested-launch-parameters.md): focused initial deployment caps, shared defaults, exact frxUSD/USDC/USDT routes, and activation order;
-- [`docs/pegkeeper-v3-routing-and-path-costs.md`](docs/pegkeeper-v3-routing-and-path-costs.md): current target AMMs, yield routes, fee layers, capacity limits, and pinned path-cost ladders;
-- [`docs/pegkeeper-v3-release-checklist.md`](docs/pegkeeper-v3-release-checklist.md): explicit governance decisions, reproducible gates, deployment, activation, and monitoring sequence.
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-free six-CREATE deployment of preview, implementation, Factory, and three oracle adapters;
+- [`script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol): paused three-keeper proposal using one shared frxUSD/crvUSD backing pool and no contraction route;
+- [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet USDT expansion, matched LP deposit, and static one-coin LP contraction;
+- runtime-size and Vyper/Solidity ABI gates.
 
-The release manifest records the latest non-broadcast mainnet canary. No deployment or activation transaction is broadcast by the release package. Governance must approve capacity, Factory allocation, route buffers, route-loss tolerance, and bounded-gas values before deployment and must enable expansion last.
+The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json) and release checklist remain evidence for the earlier `3.0.0` candidate, not this unreleased `3.1.0` branch. A new release manifest is required before this variant can be proposed for deployment.
 
 ## Toolchain
 
@@ -143,9 +105,9 @@ The release manifest records the latest non-broadcast mainnet canary. No deploym
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The implementation core is `24,376` bytes; its deployed runtime with the immutable preview-module address is `24,408` bytes, leaving `168` bytes below EIP-170. Full implementation initcode is `24,562` bytes. The stateless, keeper-identity-bound Vyper preview module is `8,249` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`, and `make check` compares the Vyper module ABI against `IPegKeeperV3PreviewModule`.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The LP-yield implementation core is `19,620` bytes; its deployed runtime with the immutable preview-module address is `19,652` bytes, leaving `4,924` bytes below EIP-170. Full implementation initcode is `19,785` bytes. The stateless Vyper preview module is `5,739` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`, and `make check` compares the Vyper ABIs against their Solidity interfaces.
 
-Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the complete implementation in one auditable contract rather than introducing routing/delegatecall modules solely for size, V3 uses bare Vyper assertions for its own guards. The predicates, atomic rollback behavior, state transitions, returns, and events are unchanged, but V3-owned reverts intentionally carry no diagnostic string. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
+Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the implementation in one auditable contract, V3 uses bare Vyper assertions for contract-owned guards. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
 ```bash
 git submodule update --init --recursive
@@ -195,7 +157,6 @@ test/
 ├── ChainlinkStablecoinOracleFork.t.sol
 ├── CurveStablecoinOracle.t.sol
 ├── PegKeeperV3ProposalDeploymentJson.t.sol
-├── PegKeeperV3PreviewModuleVyper.t.sol
 ├── PegKeeperV3RuntimeSize.t.sol
 ├── PegKeeperV3UnifiedDeployment.t.sol
 └── PegKeeperV3*.t.sol
@@ -231,98 +192,37 @@ Current V2 PegKeepers covered by the retirement test:
 
 `CurveStablecoinOracleTest` covers pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection. `PegKeeperV3UnifiedDeploymentTest` and the launch-proposal fork suite validate the two selected USDC/USDT Curve orientations. `ChainlinkStablecoinOracleTest` covers direct proxy binding, decimal normalization, underlying-aggregator rotation through the same proxy, round completeness, positive answers, timestamp direction, and staleness. `ChainlinkStablecoinOracleForkTest` runs the unified deployment against the selected canonical frxUSD/USD proxy. Proposal tests reject proxy or maximum-delay drift.
 
-### `PegKeeperV3FoundationTest`
+### `PegKeeperV3LpYieldTest`
 
-Deploys the Vyper V3 foundation against local token, Factory, yield-accounting, and two-coin AMM contracts. It verifies fixed endpoint and both target-pair orderings, initial parameter values, safe fully paused startup, constructor rejection of bad pool/yield/decimal configurations or missing yield-conversion accounting, adoption of unsolicited configured target/yield balances while arbitrary assets remain excluded, the requirement for benchmarked downstream and fallback gas limits before expansion can be enabled, emergency-admin pause-only authority, pause and execution events, and owner-only ordinary-call execution with value forwarding, bounded large input/return data, and bubbled target reverts.
+Covers the LP-backed state machine against deterministic local pools: yield-AMM pinning and coin indices; StableSwap-NG dynamic-array deposits; separate-pool target routing; yield-token donation sweeping and matched crvUSD; direct shared-pool deposits; donation exclusion from keeper profit; ERC-4626 non-double-counting; exact LP accounting; preview output; total exposure/velocity consumption; atomic rollback on route or partial LP-deposit failure; static one-coin contraction; executable quote protection; and removal of obsolete undeployed/contraction-path selectors.
 
-### `PegKeeperV3ExpansionTest`
+### `PegKeeperV3LpFactoryTest`
 
-Exercises the first economic V3 branch against a deterministic two-coin pool. It verifies fallback preview values and amount bounds without state changes, governance expansion-safety configuration, the minimum of idle inventory, Factory allocation, and local capacity, protocol-calculated target-AMM quote floors, exact crvUSD spending, measured target receipts, target-denominated keeper rewards, retained `undeployedBacking`, timer updates, allowance reset, callback reentrancy rejection during a target-AMM exchange, admin debt reduction including zero-clamping and state isolation, event fields, and complete rollback when the retained entry margin is unavailable.
+Deploys a real minimal proxy from the Vyper Factory and verifies owner-only deployment, the fixed yield AMM, only one expansion path, copied target/yield AMM execution buffers, fully paused startup, and the absence of fallback-gas defaults.
 
-### `PegKeeperV3PolicyTest`
+### `PegKeeperV3LpYieldInvariantTest`
 
-Verifies the atomic governance policy surface, margin ordering and ppm bounds, keeper-share and exposure limits, zero-reward and zero-delay policies, validated target-AMM rotation with either pair order, immediate factory role propagation, distinct emergency authority, event fields, and rejection of unauthorized, bad-pair, or excessive-buffer updates.
+Runs four 256-run stateful campaigns across expansion, static LP contraction, yield-token and LP donations, virtual-price growth, surplus claims, and time advancement. It checks LP backing versus debt, local/Factory capacity, zero residual route/yield-AMM allowances, and zero routed target residue after every sequence.
 
 ### `PegKeeperV3RuntimeSizeTest`
 
-Deploys the locked implementation with its immutable preview-module address, checks full initcode and actual runtime limits, then creates an exact 55-byte EIP-1167 initcode payload and verifies its 45-byte runtime embeds the implementation address.
+Deploys the locked implementation with its immutable preview-module address, verifies exact initcode/runtime sizes and EIP-170/EIP-3860 limits, then creates and checks the exact 55-byte EIP-1167 initcode and 45-byte proxy runtime.
 
 ### `PegKeeperV3UnifiedDeploymentTest`
 
-Runs the complete deployment against deterministic local dependencies. It verifies six direct monotonic CREATEs from one deployer, locked implementation/preview binding, immutable factory wiring and defaults, both Curve target orientations, the selected frxUSD Chainlink adapter, the explicit hardcoded mainnet configuration, and complete JSON address readback.
+Runs the six-CREATE deployment against deterministic local dependencies. It verifies locked implementation/preview binding, immutable Factory wiring and LP-yield defaults, both Curve target-oracle orientations, the selected frxUSD Chainlink adapter, hardcoded mainnet configuration, no FraxNet account deployment, and complete JSON readback.
 
-### `PegKeeperV3ProposalDeploymentJsonTest`
+### Proposal tests
 
-Writes the unified deployment schema and verifies that the Curve proposal loads its factory, two Curve target adapters, and selected frxUSD Chainlink adapter from that JSON instead of environment variables.
+`PegKeeperV3ProposalDeploymentJsonTest` verifies chain-bound deployment JSON loading. The mainnet-fork `CurveProposalLaunchPegKeeperV3Test` validates implementation and preview hashes, three paused LP-backed keeper deployments, the shared frxUSD/crvUSD yield AMM, exact expansion paths, policy defaults, debt ceilings, and monetary-policy registration. It also confirms the proposal contains no activation actions.
 
-### `PegKeeperV3FactoryTest`
+### ABI gates
 
-Deploys V3 through the real minimal-proxy factory and verifies owner-only creation, immutable implementation binding, target/backing derivation, one-based names, mandatory oracles, route and execution-default installation, dynamic shared role and fee-recipient resolution, rejection of the factory itself as admin, emergency admin, or fee receiver, fully paused startup, exact proxy runtime, atomic rollback and CREATE nonce preservation, registry state, and two-step factory ownership.
+`scripts/check-vyper-solidity-abi.py` compares canonical functions and events for the keeper, Factory, and preview module artifacts. All Vyper and Solidity surfaces must match exactly.
 
+### Pinned LP-yield canary
 
-### `PegKeeperV3ExpansionForkTest`
-
-Deploys V3 against the live USDT/crvUSD pool and ControllerFactory at block `25,837,866`, allocates `1,000,000 crvUSD` through the real Factory, creates an above-peg opportunity by buying crvUSD with USDT, and executes a `100,000 crvUSD` fallback expansion. It verifies the live pool's `int128` quote/exchange ABI, crvUSD spending, no-return USDT reward transfer, retained USDT accounting, and the final backing invariant.
-
-### `PegKeeperV3DownstreamExpansionTest`
-
-Exercises the preferred fully deployed expansion branch and its isolated fallback boundary. It verifies deterministic downstream and fallback preview selection, exact preview/execution agreement for malformed or oversized yield-oracle return data, advisory quote staleness, exact current-call target spending, one final-token reward, measured final-token accounting, route-loss and final-margin enforcement, current-action delta isolation while configured-token donations count as backing, exclusion of old undeployed backing from new route sizing, only-self path execution, rejection of inconsistent successful-subcall deltas, complete rollback on route failure, the pre-attempt gas threshold, and successful fallback settlement even when the downstream subcall exhausts all forwarded gas.
-
-### `PegKeeperV3DownstreamExpansionForkTest`
-
-Creates an above-peg opportunity and routes a live `100,000 crvUSD` expansion through the USDT/crvUSD target AMM, Curve 3pool, canonical DAI/USDS conversion, and live sUSDS deposit endpoint at block `25,851,930`. This retained ERC-4626 route test verifies an sUSDS-denominated final-token reward, measured sUSDS receipt and accounting, zero residual route balances and allowances, no fallback inventory, and the final principal invariant; it is not the selected launch route.
-
-### `PegKeeperV3UndeployedContractionTest`
-
-Exercises the fixed-AMM reverse path against deterministic local tokens. It verifies preview output, early and mature margin selection, protocol quote floors, exact live target spending, crvUSD-denominated percentage rewards, split-call economics, net exposure reduction, allowance reset, event fields, adoption and contraction of unsolicited target donations, and complete rollback when early-exit economics are insufficient.
-
-### `PegKeeperV3UndeployedContractionForkTest`
-
-Creates a target-only USDT backing position through the live target AMM, then pushes crvUSD below peg and contracts `50,000 USDT` through the reverse pool direction. It verifies the no-return USDT approval path, measured crvUSD output and reward, early-exit margin, accounted-backing reduction, deployed-exposure reduction, and final principal invariant at block `25,837,866`.
-
-### `PegKeeperV3SurplusTest`
-
-Verifies liability-side surplus settlement against deterministic local state. Claims are bounded by the caller maximum, fungible protocol surplus, actual idle crvUSD, remaining Factory allocation, and remaining local exposure capacity. The suite also verifies exact receiver and contract balance deltas, exposure accounting, pause semantics, zero-claim rejection, timer preservation, and the inability of crvUSD donations to bypass Factory capacity.
-
-### `PegKeeperV3SurplusForkTest`
-
-Creates realized USDT backing surplus through the live USDT/crvUSD expansion path, then permissionlessly transfers `5 crvUSD` of bounded surplus to Curve's live FeeSplitter. It verifies the FeeSplitter balance delta, idle-inventory reduction, exact exposure increase, equal surplus reduction, unchanged maturity timer, and final principal invariant at block `25,837,866`.
-
-### `PegKeeperV3RoutesTest`
-
-Validates atomic governance installation of independently directed expansion and contraction paths. It covers the `16`-step Vyper bound, fixed endpoints, token continuity, explicit Curve coin indices, canonical bidirectional DaiUsds semantics, ERC-4626 asset/share relationships, per-step execution buffers, expansion route-loss bounds, event hashes, public route getters, governance access, and rollback of both paths when either replacement is invalid.
-
-### `PegKeeperV3RoutesForkTest`
-
-Validates the concrete live sUSDS expansion route at block `25,851,930`: USDT through Curve 3pool to DAI, DAI through the canonical DaiUsds converter to USDS, and USDS through the sUSDS ERC-4626 endpoint. It proves the stored indices match live 3pool `coins()`, the converter getters match the typed direction, and `sUSDS.asset() == USDS` under the production route validator.
-
-### `PegKeeperV3BackingDeploymentTest`
-
-Executes live target backing through typed Curve, canonical DaiUsds, ERC-4626 deposit, and ERC-4626 redeem steps. It verifies exact input spending, balance-delta output accounting, zeroed temporary approvals, donation adoption without current-action output inflation, immediate and deferred downstream pause coverage, pause/unpause recovery, quote-relative step minima, canonical 1:1 converter output, route-loss and available-surplus bounds, full rollback, unchanged deployed exposure and maturity time, and the final principal invariant.
-
-### `PegKeeperV3BackingDeploymentForkTest`
-
-Creates live USDT fallback backing and then permissionlessly routes `1,000 USDT` through Curve 3pool to DAI, the canonical DaiUsds converter to USDS, and the live sUSDS deposit endpoint at block `25,851,930`. It verifies measured sUSDS receipt and accounting, exact undeployed-target reduction, unchanged crvUSD exposure and maturity timer, bounded conversion cost, and final principal preservation.
-
-### `PegKeeperV3YieldContractionTest`
-
-Exercises exact live yield-token contraction and paused no-reward yield-to-target maintenance through the stored typed route. It verifies early and mature previews, whole-position pre/post ERC-4626 valuation, all four route-step kinds, the exact `16`-step bound, quote-consistency and absolute normalized-value floors, canonical converter output, exact temporary approval cleanup, donation adoption, independent target/yield contraction availability, pause controls, bounded rewards, net exposure reduction, full-exit capping, unchanged maturity time, and complete rollback on route failure.
-
-### `PegKeeperV3YieldContractionForkTest`
-
-Creates live sUSDS backing and then contracts it through sUSDS redemption, canonical USDS-to-DAI conversion, Curve 3pool DAI-to-USDT exchange, and the live USDT/crvUSD target AMM at block `25,851,930`. It verifies the production four-step contraction route, preview/execution parity, measured yield and crvUSD deltas, bounded keeper reward, whole-position value removal, exposure reduction, unchanged maturity time, and the final principal invariant.
-
-### `PegKeeperV3DirectBuybackTest`
-
-Exercises the immutable direct `crvUSD -> yieldToken` edge. It verifies early and mature conservative quotes, exact crvUSD receipt and yield-token payout, caller minimum output, directional and global pauses, exposure and live-inventory bounds, donated yield adoption without quote inflation, no target-backing or maturity-timer changes, full-exposure contraction, non-additive ERC-4626 floor rounding, post-transfer conversion-rate changes, atomic rollback, surplus growth, and fuzzed principal preservation across input amounts and conversion rates.
-
-### `PegKeeperV3DirectBuybackForkTest`
-
-Creates live sUSDS backing and executes direct crvUSD-to-sUSDS buyback at block `25,851,930`. It verifies the live sUSDS `convertToShares()` quote, exact crvUSD and sUSDS balance deltas, whole-position `convertToAssets()` value removed, caller receipt, accounted-unit and deployed-exposure reductions, unchanged target/intermediate balances and maturity time, selected early-exit profit, and the final principal invariant without executing either typed route.
-
-### `PegKeeperV3InvariantTest`
-
-Runs stateful randomized sequences across expansion, direct buyback, both monetary-contraction exits, deferred backing deployment, paused yield-to-target unwind, surplus claims, configured-token donations, pause transitions, and time advancement. After every sequence it checks that trusted backing covers deployed exposure, exposure remains within local and Factory capacity, directional/global pauses cannot be bypassed, configured inventory equals live balances, and every temporary venue approval returns to zero.
+`script/PegKeeperV3ReleaseCanary.s.sol` forks block `25,868,730`, creates an above-peg USDT target opportunity, executes the live USDT -> USDC -> frxUSD expansion, matches the frxUSD with crvUSD in the real StableSwap-NG backing pool, checks zero residual route/yield allowances and loose frxUSD, then creates favorable one-coin exit economics and executes static LP -> crvUSD contraction. The script never broadcasts.
 
 ### `test_liveEndpointsAndExactRoundTrip`
 

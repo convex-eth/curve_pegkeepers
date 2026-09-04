@@ -35,6 +35,7 @@ interface PegKeeperV3:
         _target_asset: address,
         _backing_asset: address,
         _yield_token: address,
+        _yield_amm: address,
         _max_deployed_crvusd: uint256,
         _keeper_index: uint256,
         _target_oracle: address,
@@ -45,12 +46,10 @@ interface PegKeeperV3:
     def setPaths(
         _expansion_steps: DynArray[RouteStep, 16],
         _expansion_max_route_loss_bps: uint256,
-        _contraction_steps: DynArray[RouteStep, 16],
     ): nonpayable
     def set_expansion_config(
         _target_amm_execution_buffer_bps: uint256,
-        _min_downstream_attempt_gas: uint256,
-        _fallback_settlement_gas_reserve: uint256,
+        _yield_amm_execution_buffer_bps: uint256,
     ): nonpayable
 
 
@@ -60,8 +59,7 @@ struct DeploymentDefaults:
     feeReceiver: address
     maxDeployedCrvUsd: uint256
     targetAmmExecutionBufferBps: uint256
-    minDownstreamAttemptGas: uint256
-    fallbackSettlementGasReserve: uint256
+    yieldAmmExecutionBufferBps: uint256
     expansionMaxRouteLossBps: uint256
 
 
@@ -72,8 +70,7 @@ event DefaultsUpdated:
     feeReceiver: indexed(address)
     maxDeployedCrvUsd: uint256
     targetAmmExecutionBufferBps: uint256
-    minDownstreamAttemptGas: uint256
-    fallbackSettlementGasReserve: uint256
+    yieldAmmExecutionBufferBps: uint256
     expansionMaxRouteLossBps: uint256
 
 
@@ -83,6 +80,7 @@ event PegKeeperDeployed:
     implementation: indexed(address)
     targetAmm: address
     yieldToken: address
+    yieldAmm: address
 
 
 event OwnershipTransferStarted:
@@ -99,7 +97,7 @@ BPS: constant(uint256) = 10_000
 CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
 CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
 INITIALIZE_SELECTOR: constant(Bytes[4]) = method_id(
-    "initialize(address,address,address,address,uint256,uint256,address,address)"
+    "initialize(address,address,address,address,address,uint256,uint256,address,address)"
 )
 
 CONTROLLER_FACTORY: immutable(address)
@@ -196,11 +194,11 @@ def fee_receiver() -> address:
 def deployPegKeeper(
     _targetAmm: address,
     _yieldToken: address,
+    _yieldAmm: address,
     _yieldTokenIsErc4626: bool,
     _targetOracle: address,
     _yieldOracle: address,
     _expansionSteps: DynArray[RouteStep, 16],
-    _contractionSteps: DynArray[RouteStep, 16],
 ) -> address:
     """
     @notice Lets the owner deploy a paused keeper, set its token paths, and record it.
@@ -224,6 +222,7 @@ def deployPegKeeper(
         target_asset,
         backing_asset,
         _yieldToken,
+        _yieldAmm,
         config.maxDeployedCrvUsd,
         index,
         _targetOracle,
@@ -233,12 +232,10 @@ def deployPegKeeper(
     PegKeeperV3(peg_keeper).setPaths(
         _expansionSteps,
         config.expansionMaxRouteLossBps,
-        _contractionSteps,
     )
     PegKeeperV3(peg_keeper).set_expansion_config(
         config.targetAmmExecutionBufferBps,
-        config.minDownstreamAttemptGas,
-        config.fallbackSettlementGasReserve,
+        config.yieldAmmExecutionBufferBps,
     )
 
     self.keeperCount = index
@@ -246,7 +243,7 @@ def deployPegKeeper(
     self.isPegKeeper[peg_keeper] = True
     self.implementationOf[peg_keeper] = implementation
 
-    log PegKeeperDeployed(index, peg_keeper, implementation, _targetAmm, _yieldToken)
+    log PegKeeperDeployed(index, peg_keeper, implementation, _targetAmm, _yieldToken, _yieldAmm)
     return peg_keeper
 
 
@@ -340,6 +337,7 @@ def _deploy_keeper(
     _targetAsset: address,
     _backingAsset: address,
     _yieldToken: address,
+    _yieldAmm: address,
     _maxDeployedCrvUsd: uint256,
     _index: uint256,
     _targetOracle: address,
@@ -364,6 +362,7 @@ def _deploy_keeper(
             _targetAsset,
             _backingAsset,
             _yieldToken,
+            _yieldAmm,
             _maxDeployedCrvUsd,
             _index,
             _targetOracle,
@@ -389,9 +388,8 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
         or _newDefaults.feeReceiver == self
         or _newDefaults.maxDeployedCrvUsd == 0
         or _newDefaults.targetAmmExecutionBufferBps > BPS
+        or _newDefaults.yieldAmmExecutionBufferBps > BPS
         or _newDefaults.expansionMaxRouteLossBps > BPS
-        or _newDefaults.fallbackSettlementGasReserve == 0
-        or _newDefaults.minDownstreamAttemptGas <= _newDefaults.fallbackSettlementGasReserve
     ):
         raw_revert(method_id("InvalidDefaults()"))
 
@@ -402,8 +400,7 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
         _newDefaults.feeReceiver,
         _newDefaults.maxDeployedCrvUsd,
         _newDefaults.targetAmmExecutionBufferBps,
-        _newDefaults.minDownstreamAttemptGas,
-        _newDefaults.fallbackSettlementGasReserve,
+        _newDefaults.yieldAmmExecutionBufferBps,
         _newDefaults.expansionMaxRouteLossBps,
     )
 

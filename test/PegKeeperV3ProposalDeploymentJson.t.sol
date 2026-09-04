@@ -20,9 +20,7 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
             factory: makeAddr("factory"),
             usdcTargetOracle: makeAddr("usdcTargetOracle"),
             usdtTargetOracle: makeAddr("usdtTargetOracle"),
-            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
-            usdcFraxNetDeposit: makeAddr("usdcFraxNetDeposit"),
-            usdtFraxNetDeposit: makeAddr("usdtFraxNetDeposit")
+            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle")
         });
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
 
@@ -34,8 +32,6 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         assertEq(proposal.frxUsdBackingOracle(), deployment.frxUsdUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcTargetOracle);
         assertEq(proposal.usdtOracle(), deployment.usdtTargetOracle);
-        assertEq(proposal.usdcFraxNetDeposit(), deployment.usdcFraxNetDeposit);
-        assertEq(proposal.usdtFraxNetDeposit(), deployment.usdtFraxNetDeposit);
 
         vm.removeFile(TEST_OUTPUT);
     }

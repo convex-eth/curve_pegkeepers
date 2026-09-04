@@ -8,13 +8,9 @@ import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
-import {IFraxNetDeposit} from "../src/interfaces/IFraxNetDeposit.sol";
-import {IFraxNetDepositFactory} from "../src/interfaces/IFraxNetDepositFactory.sol";
 
 /// @notice Monotonic mainnet deployer for every PegKeeperV3 release dependency.
-/// @dev Deploys Curve target adapters for USDC/USDT, the canonical frxUSD/USD
-///      Chainlink adapter used by all three keepers' final-token accounting, and
-///      canonical FraxNet accounts bound to the predicted USDC/USDT keepers.
+/// @dev Deploys the keeper implementation/factory and the release oracle adapters.
 contract DeployPegKeeperV3 is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
 
@@ -29,9 +25,6 @@ contract DeployPegKeeperV3 is Script {
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address public constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address public constant FRXUSD_CUSTODIAN = 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
-    address public constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
-    uint32 public constant ETHEREUM_LAYERZERO_EID = 30_101;
 
     address public constant USDC_USDT_ORACLE_POOL = 0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85;
 
@@ -41,8 +34,7 @@ contract DeployPegKeeperV3 is Script {
 
     uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
     uint256 public constant TARGET_AMM_EXECUTION_BUFFER_BPS = 3;
-    uint256 public constant MIN_DOWNSTREAM_ATTEMPT_GAS = 1_500_000;
-    uint256 public constant FALLBACK_SETTLEMENT_GAS_RESERVE = 300_000;
+    uint256 public constant YIELD_AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant EXPANSION_MAX_ROUTE_LOSS_BPS = 5;
 
     struct Config {
@@ -53,8 +45,7 @@ contract DeployPegKeeperV3 is Script {
         address feeReceiver;
         uint256 maxDeployedCrvUsd;
         uint256 targetAmmExecutionBufferBps;
-        uint256 minDownstreamAttemptGas;
-        uint256 fallbackSettlementGasReserve;
+        uint256 yieldAmmExecutionBufferBps;
         uint256 expansionMaxRouteLossBps;
         address usdcUsdtPool;
         address usdc;
@@ -70,8 +61,6 @@ contract DeployPegKeeperV3 is Script {
         address usdcTargetOracle;
         address usdtTargetOracle;
         address frxUsdUsdOracle;
-        address usdcFraxNetDeposit;
-        address usdtFraxNetDeposit;
     }
 
     function run() external returns (Deployment memory deployment) {
@@ -81,7 +70,6 @@ contract DeployPegKeeperV3 is Script {
 
         vm.startBroadcast();
         deployment = deploy(config);
-        deployment = prepareFraxNetAccounts(deployment);
         vm.stopBroadcast();
 
         writeDeploymentJson(deployment, DEPLOYMENT_OUTPUT_PATH);
@@ -96,8 +84,7 @@ contract DeployPegKeeperV3 is Script {
         config.feeReceiver = FEE_SPLITTER;
         config.maxDeployedCrvUsd = INITIAL_MAX_DEPLOYED_CRVUSD;
         config.targetAmmExecutionBufferBps = TARGET_AMM_EXECUTION_BUFFER_BPS;
-        config.minDownstreamAttemptGas = MIN_DOWNSTREAM_ATTEMPT_GAS;
-        config.fallbackSettlementGasReserve = FALLBACK_SETTLEMENT_GAS_RESERVE;
+        config.yieldAmmExecutionBufferBps = YIELD_AMM_EXECUTION_BUFFER_BPS;
         config.expansionMaxRouteLossBps = EXPANSION_MAX_ROUTE_LOSS_BPS;
         config.usdcUsdtPool = USDC_USDT_ORACLE_POOL;
         config.usdc = USDC;
@@ -129,30 +116,6 @@ contract DeployPegKeeperV3 is Script {
         _verifyDeployment(deployment, config);
     }
 
-    /// @notice Creates or validates the two FraxNet accounts used by the release keepers.
-    function prepareFraxNetAccounts(Deployment memory deployment)
-        public
-        returns (Deployment memory)
-    {
-        IPegKeeperV3Factory keeperFactory = IPegKeeperV3Factory(deployment.factory);
-        require(keeperFactory.keeperCount() == 0, "keepers already deployed");
-
-        deployment.usdcFraxNetDeposit =
-            prepareFraxNetAccount(_computeCreateAddress(deployment.factory, 2));
-        deployment.usdtFraxNetDeposit =
-            prepareFraxNetAccount(_computeCreateAddress(deployment.factory, 3));
-        return deployment;
-    }
-
-    /// @notice Creates or validates one Ethereum FraxNet account for a keeper.
-    function prepareFraxNetAccount(address keeper) public returns (address) {
-        IFraxNetDepositFactory fraxNetFactory = IFraxNetDepositFactory(FRAXNET_DEPOSIT_FACTORY);
-        require(!fraxNetFactory.isPaused(), "FraxNet factory paused");
-        require(fraxNetFactory.frxUSDCustodian() == FRXUSD_CUSTODIAN, "FraxNet custodian mismatch");
-        require(fraxNetFactory.rwaRedeemer() != address(0), "FraxNet RWA route missing");
-        return _prepareFraxNetAccount(fraxNetFactory, keeper);
-    }
-
     function writeDeploymentJson(Deployment memory deployment, string memory outputPath) public {
         string memory objectKey = "pegKeeperV3Deployment";
         vm.serializeUint(objectKey, "chainId", block.chainid);
@@ -161,42 +124,9 @@ contract DeployPegKeeperV3 is Script {
         vm.serializeAddress(objectKey, "factory", deployment.factory);
         vm.serializeAddress(objectKey, "usdcTargetOracle", deployment.usdcTargetOracle);
         vm.serializeAddress(objectKey, "usdtTargetOracle", deployment.usdtTargetOracle);
-        vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
-        vm.serializeAddress(objectKey, "usdcFraxNetDeposit", deployment.usdcFraxNetDeposit);
         string memory json =
-            vm.serializeAddress(objectKey, "usdtFraxNetDeposit", deployment.usdtFraxNetDeposit);
+            vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         vm.writeJson(json, outputPath);
-    }
-
-    function _prepareFraxNetAccount(IFraxNetDepositFactory factory, address keeper)
-        internal
-        returns (address account)
-    {
-        bytes32 recipient = bytes32(uint256(uint160(keeper)));
-        account = factory.getDeploymentAddress(ETHEREUM_LAYERZERO_EID, recipient, bytes32(0));
-        if (account.code.length == 0) {
-            require(
-                factory.createFraxNetDeposit(ETHEREUM_LAYERZERO_EID, recipient, bytes32(0))
-                    == account,
-                "FraxNet account mismatch"
-            );
-        }
-        require(factory.isFraxNetDeposit(account), "unknown FraxNet account");
-        IFraxNetDeposit deposit = IFraxNetDeposit(account);
-        require(deposit.asset() == FRXUSD, "FraxNet asset mismatch");
-        require(deposit.frxUSD() == FRXUSD, "FraxNet frxUSD mismatch");
-        require(deposit.USDC() == USDC, "FraxNet USDC mismatch");
-        require(deposit.factory() == address(factory), "FraxNet factory mismatch");
-        require(deposit.targetEid() == ETHEREUM_LAYERZERO_EID, "FraxNet EID mismatch");
-        require(deposit.targetAddress() == recipient, "FraxNet recipient mismatch");
-    }
-
-    function _computeCreateAddress(address creator, uint256 nonce) internal pure returns (address) {
-        require(nonce > 0 && nonce <= 0x7f, "unsupported nonce");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        bytes1 encodedNonce = bytes1(uint8(nonce));
-        return
-            address(uint160(uint256(keccak256(abi.encodePacked(hex"d694", creator, encodedNonce)))));
     }
 
     function _deployPreviewModule() internal returns (address deployed) {
@@ -234,8 +164,7 @@ contract DeployPegKeeperV3 is Script {
                 feeReceiver: config.feeReceiver,
                 maxDeployedCrvUsd: config.maxDeployedCrvUsd,
                 targetAmmExecutionBufferBps: config.targetAmmExecutionBufferBps,
-                minDownstreamAttemptGas: config.minDownstreamAttemptGas,
-                fallbackSettlementGasReserve: config.fallbackSettlementGasReserve,
+                yieldAmmExecutionBufferBps: config.yieldAmmExecutionBufferBps,
                 expansionMaxRouteLossBps: config.expansionMaxRouteLossBps
             });
         bytes memory creationCode = vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
@@ -318,12 +247,8 @@ contract DeployPegKeeperV3 is Script {
             "default AMM buffer mismatch"
         );
         require(
-            defaults_.minDownstreamAttemptGas == config.minDownstreamAttemptGas,
-            "default attempt gas mismatch"
-        );
-        require(
-            defaults_.fallbackSettlementGasReserve == config.fallbackSettlementGasReserve,
-            "default fallback gas mismatch"
+            defaults_.yieldAmmExecutionBufferBps == config.yieldAmmExecutionBufferBps,
+            "default yield AMM buffer mismatch"
         );
         require(
             defaults_.expansionMaxRouteLossBps == config.expansionMaxRouteLossBps,
@@ -375,8 +300,7 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Fee receiver", config.feeReceiver);
         console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
         console2.log("Target AMM execution buffer (bps)", config.targetAmmExecutionBufferBps);
-        console2.log("Minimum downstream attempt gas", config.minDownstreamAttemptGas);
-        console2.log("Fallback settlement gas reserve", config.fallbackSettlementGasReserve);
+        console2.log("Yield AMM execution buffer (bps)", config.yieldAmmExecutionBufferBps);
         console2.log("Expansion max route loss (bps)", config.expansionMaxRouteLossBps);
         console2.log("USDC", config.usdc);
         console2.log("USDT", config.usdt);
@@ -393,8 +317,6 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Curve USDC target oracle", deployment.usdcTargetOracle);
         console2.log("Curve USDT target oracle", deployment.usdtTargetOracle);
         console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
-        console2.log("USDC keeper FraxNet account", deployment.usdcFraxNetDeposit);
-        console2.log("USDT keeper FraxNet account", deployment.usdtFraxNetDeposit);
         console2.log("Deployment JSON", DEPLOYMENT_OUTPUT_PATH);
     }
 }

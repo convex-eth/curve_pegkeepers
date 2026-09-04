@@ -1,30 +1,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @notice Lists the estimate functions used by PegKeeperV3 contracts.
+/// @notice Detached preview logic used by PegKeeperV3 proxies.
 interface IPegKeeperV3PreviewModule {
-    /// @notice Estimates an expansion for the calling keeper; actual results may differ.
-    function previewExpansion(address keeper, uint256 amount)
+    /// @notice Estimates an all-or-nothing expansion into the fixed yield AMM.
+    /// @dev Must be called by `keeper` because the module treats msg.sender as the keeper.
+    function previewExpansion(address keeper, uint256 crvUsdAmount)
         external
         view
         returns (
-            uint256 targetOut,
-            uint256 backingAssetOut,
-            uint256 grossProfit,
-            uint256 keeperReward,
-            uint256 yieldTokenOut,
-            bool deployToYield
+            uint256 expectedTargetOut,
+            uint256 expectedCrvUsdMatched,
+            uint256 expectedGrossProfit,
+            uint256 expectedKeeperRewardLp,
+            uint256 expectedLpTokensOut,
+            bool directDeposit
         );
-
-    /// @notice Estimates selling the calling keeper's target tokens from current data; actual results may differ.
-    function previewUndeployedContraction(address keeper, uint256 amount)
-        external
-        view
-        returns (uint256 expectedCrvUsd, uint256 grossProfit, uint256 keeperReward, bool earlyExit);
-
-    /// @notice Estimates selling the calling keeper's final tokens from current data; actual results may differ.
-    function previewKeeperBuyback(address keeper, uint256 amount)
-        external
-        view
-        returns (uint256 expectedCrvUsd, uint256 grossProfit, uint256 keeperReward, bool earlyExit);
 }

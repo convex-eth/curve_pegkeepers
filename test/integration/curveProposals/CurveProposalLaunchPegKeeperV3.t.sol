@@ -17,32 +17,6 @@ import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.s
 import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {ICurveStablecoinOracle} from "../../../src/interfaces/ICurveStablecoinOracle.sol";
 
-interface IFraxNetDepositView {
-    function asset() external view returns (address);
-    function frxUSD() external view returns (address);
-    function USDC() external view returns (address);
-    function factory() external view returns (address);
-    function targetEid() external view returns (uint32);
-    function targetAddress() external view returns (bytes32);
-}
-
-contract FraxNetDepositHarness {
-    address public immutable asset;
-    address public immutable frxUSD;
-    address public immutable USDC;
-    address public immutable factory;
-    uint32 public constant targetEid = 30_101;
-    bytes32 public immutable targetAddress;
-
-    constructor(address frxUsd, address usdc, address factory_, address recipient) {
-        asset = frxUsd;
-        frxUSD = frxUsd;
-        USDC = usdc;
-        factory = factory_;
-        targetAddress = bytes32(uint256(uint160(recipient)));
-    }
-}
-
 contract CurveEDAOProxyHarness {
     function execute(address target, bytes calldata data)
         external
@@ -70,7 +44,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant CONVEX_VOTEPROXY = 0x989AEb4d175e16225E39E87d0D97A3360524AD80;
     address internal constant YEARN_VOTEPROXY = 0xF147b8125d2ef93FB6965Db97D6746952a133934;
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
-    address internal constant FRAXNET_DEPOSIT_FACTORY = 0xA3D62f83C433e2A56Af392E08a705A52DEd63696;
 
     uint256 internal constant FRXUSD_CAP = 20_000_000e18;
     uint256 internal constant USDC_CAP = 20_000_000e18;
@@ -108,41 +81,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);
         expectedUsdcKeeper = proposal.expectedKeeper(2);
         expectedUsdtKeeper = proposal.expectedKeeper(3);
-
-        address usdcAccount = address(
-            new FraxNetDepositHarness(
-                proposal.FRXUSD(), proposal.USDC(), FRAXNET_DEPOSIT_FACTORY, expectedUsdcKeeper
-            )
-        );
-        address usdtAccount = address(
-            new FraxNetDepositHarness(
-                proposal.FRXUSD(), proposal.USDC(), FRAXNET_DEPOSIT_FACTORY, expectedUsdtKeeper
-            )
-        );
-        proposal.setFraxNetDeposits(usdcAccount, usdtAccount);
-        vm.mockCall(
-            FRAXNET_DEPOSIT_FACTORY, abi.encodeWithSignature("isPaused()"), abi.encode(false)
-        );
-        vm.mockCall(
-            FRAXNET_DEPOSIT_FACTORY,
-            abi.encodeWithSignature("isFraxNetDeposit(address)", usdcAccount),
-            abi.encode(true)
-        );
-        vm.mockCall(
-            FRAXNET_DEPOSIT_FACTORY,
-            abi.encodeWithSignature("isFraxNetDeposit(address)", usdtAccount),
-            abi.encode(true)
-        );
-        vm.mockCall(
-            FRAXNET_DEPOSIT_FACTORY,
-            abi.encodeWithSignature("frxUSDCustodian()"),
-            abi.encode(proposal.FRXUSD_CUSTODIAN())
-        );
-        vm.mockCall(
-            FRAXNET_DEPOSIT_FACTORY,
-            abi.encodeWithSignature("rwaRedeemer()"),
-            abi.encode(address(0x19D7))
-        );
     }
 
     function test_ProposalActionsOnlyConfigureNewV3Keepers() public view {
@@ -228,6 +166,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.FRXUSD(),
             proposal.FRXUSD(),
             proposal.FRXUSD(),
+            proposal.FRXUSD_CRVUSD_POOL(),
             false,
             proposal.frxUsdOracle(),
             proposal.frxUsdBackingOracle(),
@@ -239,6 +178,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDC(),
             proposal.FRXUSD(),
             proposal.FRXUSD(),
+            proposal.FRXUSD_CRVUSD_POOL(),
             false,
             proposal.usdcOracle(),
             proposal.frxUsdBackingOracle(),
@@ -250,6 +190,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDT(),
             proposal.FRXUSD(),
             proposal.FRXUSD(),
+            proposal.FRXUSD_CRVUSD_POOL(),
             false,
             proposal.usdtOracle(),
             proposal.frxUsdBackingOracle(),
@@ -284,17 +225,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         IPegKeeperV3 frxUsdKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
         assertEq(frxUsdKeeper.expansion_path_length(), 0);
-        assertEq(frxUsdKeeper.contraction_path_length(), 1);
-        _assertStep(
-            frxUsdKeeper.contraction_path_step(0),
-            0,
-            proposal.FRXUSD_CRVUSD_POOL(),
-            proposal.FRXUSD(),
-            proposal.CRVUSD(),
-            0,
-            1,
-            3
-        );
+        assertEq(frxUsdKeeper.yield_amm(), proposal.FRXUSD_CRVUSD_POOL());
 
         _assertFrxUsdRoutes(IPegKeeperV3(expectedUsdcKeeper), proposal.USDC(), 1);
         _assertFrxUsdRoutes(IPegKeeperV3(expectedUsdtKeeper), proposal.USDT(), 2);
@@ -309,8 +240,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(defaults_.feeReceiver, proposal.FEE_SPLITTER());
         assertEq(defaults_.maxDeployedCrvUsd, USDT_CAP);
         assertEq(defaults_.targetAmmExecutionBufferBps, 3);
-        assertEq(defaults_.minDownstreamAttemptGas, 1_500_000);
-        assertEq(defaults_.fallbackSettlementGasReserve, 300_000);
+        assertEq(defaults_.yieldAmmExecutionBufferBps, 3);
         assertEq(defaults_.expansionMaxRouteLossBps, 5);
 
         _assertPolicy(IPegKeeperV3(expectedFrxUsdKeeper), FRXUSD_CAP);
@@ -346,6 +276,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         address targetAsset,
         address backingAsset,
         address yieldToken,
+        address yieldAmm,
         bool yieldTokenIsErc4626,
         address targetOracle,
         address yieldOracle,
@@ -356,6 +287,8 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.target_asset(), targetAsset);
         assertEq(keeper.backing_asset(), backingAsset);
         assertEq(keeper.yield_token(), yieldToken);
+        assertEq(keeper.yield_amm(), yieldAmm);
+        assertEq(keeper.coins(1), yieldAmm);
         assertEq(keeper.yield_token_is_erc4626(), yieldTokenIsErc4626);
         assertEq(keeper.target_oracle(), targetOracle);
         assertEq(keeper.yield_oracle(), yieldOracle);
@@ -368,9 +301,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.available_expansion_velocity(), cap * 500 / 10_000);
         assertEq(factory.implementationOf(keeperAddress), factory.implementation());
         assertTrue(keeper.expansion_paused());
-        assertTrue(keeper.backing_deployment_paused());
-        assertTrue(keeper.direct_buyback_paused());
-        assertTrue(keeper.undeployed_contraction_paused());
         assertTrue(keeper.yield_contraction_paused());
         assertTrue(keeper.all_execution_paused());
     }
@@ -427,7 +357,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     {
         bool isUsdt = targetAsset == proposal.USDT();
         assertEq(keeper.expansion_path_length(), isUsdt ? 2 : 1);
-        assertEq(keeper.contraction_path_length(), isUsdt ? 3 : 2);
         uint256 mintIndex;
         if (isUsdt) {
             _assertStep(
@@ -451,49 +380,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             0,
             0,
             1
-        );
-        address fraxNetAccount =
-            isUsdt ? proposal.usdtFraxNetDeposit() : proposal.usdcFraxNetDeposit();
-        _assertStep(
-            keeper.contraction_path_step(0),
-            5,
-            fraxNetAccount,
-            proposal.FRXUSD(),
-            proposal.USDC(),
-            0,
-            0,
-            2
-        );
-        IFraxNetDepositView deposit = IFraxNetDepositView(fraxNetAccount);
-        assertEq(deposit.asset(), proposal.FRXUSD());
-        assertEq(deposit.frxUSD(), proposal.FRXUSD());
-        assertEq(deposit.USDC(), proposal.USDC());
-        assertEq(deposit.factory(), FRAXNET_DEPOSIT_FACTORY);
-        assertEq(deposit.targetEid(), 30_101);
-        assertEq(deposit.targetAddress(), bytes32(uint256(uint160(address(keeper)))));
-        uint256 targetAmmIndex = 1;
-        if (isUsdt) {
-            _assertStep(
-                keeper.contraction_path_step(1),
-                0,
-                proposal.THREE_POOL(),
-                proposal.USDC(),
-                proposal.USDT(),
-                1,
-                threePoolIndex,
-                3
-            );
-            targetAmmIndex = 2;
-        }
-        _assertStep(
-            keeper.contraction_path_step(targetAmmIndex),
-            0,
-            keeper.target_amm(),
-            targetAsset,
-            proposal.CRVUSD(),
-            0,
-            1,
-            3
         );
     }
 

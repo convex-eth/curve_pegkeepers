@@ -32,6 +32,7 @@ library PegKeeperV3TestDeployer {
         address targetAsset;
         address backingAsset;
         address yieldToken;
+        address yieldAmm;
         uint256 maxDeployed;
         uint256 keeperIndex;
         address targetOracle;
@@ -54,6 +55,7 @@ library PegKeeperV3TestDeployer {
                 targetAsset: targetAsset,
                 backingAsset: backingAsset,
                 yieldToken: yieldToken,
+                yieldAmm: targetAmm,
                 maxDeployed: maxDeployed,
                 keeperIndex: keeperIndex,
                 targetOracle: address(new PegKeeperV3TestOracle()),
@@ -80,6 +82,35 @@ library PegKeeperV3TestDeployer {
                 targetAsset: targetAsset,
                 backingAsset: backingAsset,
                 yieldToken: yieldToken,
+                yieldAmm: targetAmm,
+                maxDeployed: maxDeployed,
+                keeperIndex: keeperIndex,
+                targetOracle: targetOracle,
+                yieldOracle: yieldOracle
+            })
+        );
+    }
+
+    function deploy(
+        address factory,
+        address targetAmm,
+        address targetAsset,
+        address backingAsset,
+        address yieldToken,
+        address yieldAmm,
+        uint256 maxDeployed,
+        uint256 keeperIndex,
+        address targetOracle,
+        address yieldOracle
+    ) internal returns (IPegKeeperV3 keeper) {
+        keeper = _deploy(
+            Config({
+                factory: factory,
+                targetAmm: targetAmm,
+                targetAsset: targetAsset,
+                backingAsset: backingAsset,
+                yieldToken: yieldToken,
+                yieldAmm: yieldAmm,
                 maxDeployed: maxDeployed,
                 keeperIndex: keeperIndex,
                 targetOracle: targetOracle,
@@ -98,6 +129,7 @@ library PegKeeperV3TestDeployer {
                 config.targetAsset,
                 config.backingAsset,
                 config.yieldToken,
+                config.yieldAmm,
                 config.maxDeployed,
                 config.keeperIndex,
                 config.targetOracle,

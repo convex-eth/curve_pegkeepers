@@ -1,261 +1,178 @@
-# PegKeeper V3 suggested launch parameters and routes
+# PegKeeper V3 LP-yield suggested launch parameters
 
-Status: governance launch proposal only. This document does not authorize deployment, allocation, broadcast, or activation.
+Status: unreleased `lp-yield` candidate. This document does not authorize deployment, allocation, registration, activation, governance execution, or broadcast.
 
-Implementation:
+## Candidate scope
 
-- Curve ownership proposal: [`../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](../script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol)
-- Mainnet-fork proposal test: [`../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol`](../test/integration/curveProposals/CurveProposalLaunchPegKeeperV3.t.sol)
+All three candidate keepers hold the same frxUSD/crvUSD Curve StableSwap-NG LP token.
 
-`script/DeployPegKeeperV3.s.sol` performs one explicit six-CREATE deployment of the preview module, locked implementation, immutable EIP-1167 factory, two Curve EMA target adapters for USDC/USDT, and one canonical-proxy Chainlink adapter for frxUSD/USD. It uses hardcoded public mainnet configuration and writes every created address to `deployments/mainnet/PegKeeperV3-deployment.json`. The proposal reads those exact dependencies from the file, deploys and funds the three keepers below, registers each with both aggregate monetary policies currently used by crvUSD mint-market Controllers, and leaves all execution directions paused. Activation remains a separate governance step after deployment verification.
+| Keeper | Target AMM | Target asset | Yield token | Yield AMM / held LP | Candidate cap |
+|---|---|---|---|---|---:|
+| frxUSD | `0x13e12...43e1` | frxUSD | frxUSD | `0x13e12...43e1` | 20m crvUSD |
+| USDC | `0x4DEcE...61F30` | USDC | frxUSD | `0x13e12...43e1` | 20m crvUSD |
+| USDT | `0x390f3...97BF4` | USDT | frxUSD | `0x13e12...43e1` | 20m crvUSD |
 
-## Initial launch scope
+Full addresses:
 
-Deploy three PegKeeper V3 instances with a plain ERC-20 frxUSD final endpoint:
+```text
+crvUSD                 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E
+frxUSD                 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29
+USDC                   0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+USDT                   0xdAC17F958D2ee523a2206206994597C13D831ec7
+frxUSD/crvUSD yield AMM 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1
+USDC/crvUSD target AMM  0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E
+USDT/crvUSD target AMM  0x390f3595bCa2Df7d23783dFd126427CCeb997BF4
+Curve 3pool             0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7
+Frax mint custodian     0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c
+```
 
-| Keeper | Target asset | Final token | Endpoint mode | Backing asset | Suggested `maxDeployedCrvUsd` | ControllerFactory debt ceiling |
-|---|---|---|---|---|---:|---:|
-| frxUSD | frxUSD | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
-| USDC | USDC | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
-| USDT | USDT | frxUSD | vanilla ERC-20 | frxUSD | 20,000,000 crvUSD | 20,000,000 crvUSD |
+The yield AMM coin order is:
 
-GHO and PYUSD are not included in the initial launch scope. ERC-4626 final endpoints and the Dai/USDS route adapter remain supported by the implementation but are not selected for these three launch keepers.
+```text
+frxUSD[0]
+crvUSD[1]
+```
 
-`maxDeployedCrvUsd` and the ControllerFactory debt ceiling should match at launch. The factory owner must set the intended deployment default before creating each keeper; changing the factory default afterward does not change an existing keeper's local capacity.
+The pool address is also the 18-decimal LP token. Its deposit ABI uses dynamic arrays:
 
-Each new V3 is added to `0x07491D124ddB3Ef59a8938fCB3EE50F9FA0b9251`, used by the eight current mint-market Controllers, and `0xc684432FD6322c6D58b6bC5d28B18569aA0AD0A1`, still used by the legacy sfrxETH Controller. Registration occurs only after deployment, policy configuration, and debt-ceiling allocation. Both monetary policies read `debt()`, which returns V3's current `deployedCrvUsd` exposure; the initially paused keepers therefore contribute zero until expansion occurs. Proposal construction verifies that both policies are administered by the Curve Ownership Agent and point to the canonical crvUSD ControllerFactory.
+```solidity
+calc_token_amount(uint256[] amounts, bool isDeposit)
+add_liquidity(uint256[] amounts, uint256 minLp)
+```
 
-## Shared factory configuration
+## Shared Factory defaults
 
-| Parameter | Suggested value |
-|---|---|
+| Parameter | Candidate value |
+|---|---:|
 | ControllerFactory | `0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC` |
-| Factory owner | Curve Ownership Agent — `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
-| `admin()` | Curve Ownership Agent — `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
-| `emergency_admin()` | Curve Emergency Admin — `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
-| `fee_receiver()` | crvUSD FeeSplitter — `0x2dFd89449faff8a532790667baB21cF733C064f2` |
-| `targetAmmExecutionBufferBps` | `3` bps |
-| `minDownstreamAttemptGas` | `1,500,000` gas |
-| `fallbackSettlementGasReserve` | `300,000` gas |
-| `expansionMaxRouteLossBps` | `5` bps |
+| owner/admin | Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
+| emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
+| fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
+| `maxDeployedCrvUsd` | `20_000_000e18` |
+| `targetAmmExecutionBufferBps` | `3` |
+| `yieldAmmExecutionBufferBps` | `3` |
+| `expansionMaxRouteLossBps` | `5` |
 
-The three role and receiver values are live factory policy. Existing V3 keepers created by this factory read them dynamically. Capacity and execution defaults are copied into each keeper at deployment. Every configured Curve swap, including target-AMM legs, uses a `3 bps` total-loss step buffer. Frax mint and redemption steps use `1 bps`. Every configured downstream deployment route uses the `5 bps` complete-route loss limit. Monetary contraction remains subject to its stricter positive normal or early exit-profit floor.
+Removed defaults:
+
+- downstream attempt gas;
+- fallback settlement gas reserve;
+- contraction-route loss limit.
+
+Expansion no longer accepts a fallback target-inventory state. A failed route or LP deposit reverts atomically.
 
 ## Common keeper policy
 
-Use the built-in V3 policy defaults for all three keepers:
+| Parameter | Value |
+|---|---:|
+| `entryMinProfitPpm` | `10` |
+| `normalExitMinProfitPpm` | `1_000` |
+| `earlyExitMinProfitPpm` | `5_000` |
+| `keeperProfitShareBps` | `3_000` |
+| `minDeploymentTime` | `172_800` seconds |
+| `minExpansionAmount` | `10_000e18` |
+| velocity max burst | `5%` of cap |
+| velocity full refill | `300` seconds |
 
-| Parameter | Value | Human value |
-|---|---:|---:|
-| `entryMinProfitPpm` | `10` | `0.1` bps retained after keeper reward |
-| `normalExitMinProfitPpm` | `1,000` | `10` bps |
-| `earlyExitMinProfitPpm` | `5,000` | `50` bps |
-| `keeperProfitShareBps` | `3,000` | `30%` of realized profit |
-| `minDeploymentTime` | `172,800` seconds | `2 days` |
-| `minExpansionAmount` | `10,000e18` | `10,000 crvUSD` |
-| `maxKeeperReward` | absent | no flat reward cap |
+The velocity bucket counts total crvUSD committed to the LP, not just the first target-AMM leg. A normal expansion around par therefore consumes approximately twice its `expand()` input.
 
-The keeper reward remains:
+## Oracles
 
-```text
-keeperReward = floor(realizedProfit * 3,000 / 10,000)
-```
-
-## Mandatory oracle and velocity configuration
-
-Every deployment requires nonzero target and final-token adapters. Both launch floors are `0.9997e18`; favorable prices receive no more than par credit. Governance may replace code-bearing adapters and set nonzero floors up to par without resetting velocity pressure. Target failure blocks expansion. Final-token oracle failure retains the acquired target asset rather than entering the expansion route. Contraction and recovery remain available.
-
-| Keeper | Target adapter | Final-token adapter |
+| Keeper | Target oracle | Yield-token oracle |
 |---|---|---|
-| frxUSD → frxUSD | Chainlink frxUSD/USD | Chainlink frxUSD/USD |
-| USDC → frxUSD | USDC/USDT EMA, USDC orientation | Chainlink frxUSD/USD |
-| USDT → frxUSD | USDC/USDT EMA, USDT orientation | Chainlink frxUSD/USD |
+| frxUSD | canonical frxUSD/USD Chainlink adapter | same adapter |
+| USDC | USDC/USDT Curve EMA, USDC orientation | frxUSD/USD adapter |
+| USDT | USDC/USDT Curve EMA, USDT orientation | frxUSD/USD adapter |
 
-Launch oracle pool:
+Both floors remain `0.9997e18`. Oracle health gates expansion. Contraction remains executable from the held LP because executable output and final solvency are enforced directly.
 
-| Pool | Address | Current depth snapshot | EMA window |
-|---|---|---:|---:|
-| USDC/USDT | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | approximately `$5.44m` | `866s` |
+## Expansion paths
 
-The USDC/USDT EMA remains a relative target-health check for those two keepers. Route execution remains protected separately by quote floors, measured output, and route-loss limits.
-
-### Selected Chainlink source
-
-The launch proposal selects one direct canonical-proxy Chainlink adapter for frxUSD/USD. It serves as both the frxUSD target check and the final-token check for all three keepers.
-
-| Pair | Canonical ENS | Canonical proxy | Deviation | Heartbeat |
-|---|---|---|---:|---:|
-| frxUSD/USD | `frxusd-usd.data.eth` | `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83` | 0.5% | 24 hours |
-
-The canonical proxy reports 8 decimals and normalizes to `1e18`. Fork tests confirm direct `latestRoundData()` reads through the proxy. The immutable adapter address therefore remains stable when Chainlink rotates the proxy's underlying aggregator. The unified deployer and proposal require a provisional `26 hours` maximum delay: the listed 24-hour heartbeat plus two hours of grace. Governance must reconfirm this before broadcast.
-
-Every increase to `deployedCrvUsd`, including `expand()` and `claimSurplus()`, shares one keeper-local leaky bucket:
+### frxUSD keeper
 
 ```text
-maxBurst = 5% of maxDeployedCrvUsd
-fullRefillPeriod = 300 seconds
+targetAmm == yieldAmm
+expansion path = []
 ```
 
-| Keeper | Max burst | Linear refill rate |
-|---|---:|---:|
-| frxUSD | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
-| USDC | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
-| USDT | `1,000,000 crvUSD` | `200,000 crvUSD/minute` |
+No target swap occurs. Requested crvUSD is deposited directly into the frxUSD/crvUSD LP. Any donated frxUSD is included in that deposit with an equal additional amount of crvUSD.
 
-Pressure is shared across callers and calls. Splitting cannot bypass it; contraction does not refund it; configuration changes do not reset it; reverted transactions consume nothing.
+### USDC keeper
 
-## Address registry
-
-### Tokens
-
-| Token | Address |
-|---|---|
-| crvUSD | `0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E` |
-| frxUSD | `0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29` |
-| USDC | `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48` |
-| USDT | `0xdAC17F958D2ee523a2206206994597C13D831ec7` |
-
-### Venues
-
-| Venue | Address | Coin order / function |
-|---|---|---|
-| frxUSD/crvUSD target AMM | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | `frxUSD[0], crvUSD[1]` |
-| USDC/crvUSD target AMM | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | `USDC[0], crvUSD[1]` |
-| USDT/crvUSD target AMM | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | `USDT[0], crvUSD[1]` |
-| Curve 3pool | `0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7` | `DAI[0], USDC[1], USDT[2]` |
-| Frax frxUSD mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` | USDC → frxUSD mint |
-| FraxNet deposit factory | `0xA3D62f83C433e2A56Af392E08a705A52DEd63696` | creates keeper-specific Ethereum redemption accounts |
-| Current factory-configured RWA redeemer | `0x19D7Df1387e7722FcCcE2aab4B7FfC72e6592934` | downstream observation only; not stored in V3 route calldata |
-| USDC/USDT oracle pool | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` | `USDC[0], USDT[1]` |
-
-Minting and redemption remain separate typed route kinds. Minting calls the direct custodian. Redemption calls one factory-recognized FraxNet account per keeper, with Ethereum endpoint `30101` and the keeper fixed as the USDC recipient. That account checks the factory at execution time, uses direct custodian USDC first, and sends any remainder through the factory's configured RWA redeemer. V3 therefore follows future factory routing changes instead of hard-coding the current RWA coordinator.
-
-The FraxNet step uses decimal-normalized par as its advisory quote because `processRedemption()` exposes no preview. Execution transfers the exact frxUSD amount, measures the USDC balance delta, and enforces a `2` bps floor. Current immediate capacity remains bounded by direct USDC plus atomically reachable downstream USDC after fees, caps, prices, rounding, authorization, and settlement rules. Raw downstream balances and delayed offchain RWA settlement are not immediate liquidity.
-
-## Target-AMM configuration
-
-Each target AMM is fixed to its exact target/crvUSD pair:
-
-| Keeper | Expansion target-AMM leg | Target-AMM indices | Buffer |
-|---|---|---|---:|
-| frxUSD | crvUSD → frxUSD | `1 → 0` | `3` bps |
-| USDC | crvUSD → USDC | `1 → 0` | `3` bps |
-| USDT | crvUSD → USDT | `1 → 0` | `3` bps |
-
-The target-AMM expansion leg is executed by `expand()` before the configured expansion path. The contraction path includes the final target → crvUSD target-AMM step.
-
-## frxUSD keeper routes
-
-Fixed endpoint configuration:
-
-```text
-targetAsset             = frxUSD
-backingAsset            = frxUSD
-yieldToken              = frxUSD
-yieldTokenIsErc4626     = false
-```
-
-### Expansion path
-
-The expansion path is empty because the target asset is already the configured final token.
-
-```text
-crvUSD → frxUSD through the target AMM
-frxUSD remains as final-token backing
-```
-
-### Contraction path
-
-| Step | Kind | Venue | Token in | Token out | Indices | Buffer |
-|---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | frxUSD/crvUSD target AMM | frxUSD | crvUSD | `0 → 1` | `3` bps |
-
-## USDC keeper routes
-
-Fixed endpoint configuration:
-
-```text
-targetAsset             = USDC
-backingAsset            = frxUSD
-yieldToken              = frxUSD
-yieldTokenIsErc4626     = false
-```
-
-### Expansion path
-
-| Step | Kind | Venue | Token in | Token out | Indices | Buffer |
-|---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_MINT` | Frax custodian | USDC | frxUSD | `0 → 0` | `1` bps |
+| Step | Kind | Venue | Token in | Token out | Buffer |
+|---:|---|---|---|---|---:|
+| 1 | `FRXUSD_MINT` | Frax mint custodian | USDC | frxUSD | `1` bp |
 
 Complete expansion:
 
 ```text
-crvUSD → USDC through the target AMM
-USDC → frxUSD through the Frax custodian
+X crvUSD -> USDC
+USDC -> frxUSD
+all frxUSD + equal-value additional crvUSD -> frxUSD/crvUSD LP
 ```
 
-### Contraction path
+### USDT keeper
 
 | Step | Kind | Venue | Token in | Token out | Indices | Buffer |
 |---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_REDEEM` | keeper-specific FraxNet account | frxUSD | USDC | `0 → 0` | `2` bps |
-| 2 | `CURVE_SWAP` | USDC/crvUSD target AMM | USDC | crvUSD | `0 → 1` | `3` bps |
-
-## USDT keeper routes
-
-Fixed endpoint configuration:
-
-```text
-targetAsset             = USDT
-backingAsset            = frxUSD
-yieldToken              = frxUSD
-yieldTokenIsErc4626     = false
-```
-
-### Expansion path
-
-| Step | Kind | Venue | Token in | Token out | Indices | Buffer |
-|---:|---|---|---|---|---|---:|
-| 1 | `CURVE_SWAP` | Curve 3pool | USDT | USDC | `2 → 1` | `3` bps |
-| 2 | `FRXUSD_MINT` | Frax custodian | USDC | frxUSD | `0 → 0` | `1` bps |
+| 1 | `CURVE_SWAP` | Curve 3pool | USDT | USDC | `2 -> 1` | `3` bps |
+| 2 | `FRXUSD_MINT` | Frax mint custodian | USDC | frxUSD | `0 -> 0` | `1` bp |
 
 Complete expansion:
 
 ```text
-crvUSD → USDT through the target AMM
-USDT → USDC through Curve 3pool
-USDC → frxUSD through the Frax custodian
+X crvUSD -> USDT
+USDT -> USDC
+USDC -> frxUSD
+all frxUSD + equal-value additional crvUSD -> frxUSD/crvUSD LP
 ```
 
-### Contraction path
+## Contraction
 
-| Step | Kind | Venue | Token in | Token out | Indices | Buffer |
-|---:|---|---|---|---|---|---:|
-| 1 | `FRXUSD_REDEEM` | keeper-specific FraxNet account | frxUSD | USDC | `0 → 0` | `2` bps |
-| 2 | `CURVE_SWAP` | Curve 3pool | USDC | USDT | `1 → 2` | `3` bps |
-| 3 | `CURVE_SWAP` | USDT/crvUSD target AMM | USDT | crvUSD | `0 → 1` | `3` bps |
+There are no deployment-specific contraction paths or FraxNet redemption accounts.
 
-## Suggested activation sequence
-
-Every keeper is deployed fully paused.
-
-1. Verify the implementation core hash, preview-module hash, 45-byte proxy runtime and embedded target, factory, ControllerFactory, oracle pool/orientation, aggregate monetary-policy membership, target AMM, explicit final-token mode, fixed endpoints, path hashes, role getters, fee receiver, local capacity, zero launch pressure, and ControllerFactory debt ceiling.
-2. Reconfirm the Frax mint custodian and FraxNet factory/account identities, account recipients, beacon implementation, direct custodian, configured RWA redeemer, fees, limits, and pause state at the intended execution block.
-3. Separate immediate direct USDC, atomically reachable RWA-route USDC, and delayed/offchain RWA capacity. Run bounded fork execution through both the direct and RWA branches; a quote alone is insufficient.
-4. While global execution remains paused, unpause backing deployment, direct buyback, undeployed-backing contraction, and yield contraction.
-5. Unpause global execution.
-6. Confirm live previews and execute bounded contraction/maintenance canaries.
-7. Unpause expansion last.
-
-Final intended launch state:
+Every keeper uses the same static operation against the held LP:
 
 ```text
-allExecutionPaused             = false
-expansionPaused                = false
-backingDeploymentPaused        = false
-directBuybackPaused            = false
-undeployedContractionPaused    = false
-yieldContractionPaused         = false
+frxUSD/crvUSD LP
+    -> remove_liquidity_one_coin(lpAmount, crvUsdIndex = 1, minCrvUsd)
+    -> crvUSD
 ```
 
-Any failed endpoint, custodian inventory, fee, limit, authorization, allowance, quote, route, accounting, debt-ceiling, or backing-invariant check leaves expansion paused. The proposal only installs paused keepers; it does not assert that Frax redemption capacity will still exist at activation time.
+`yieldAmmExecutionBufferBps = 3` protects the executable one-coin quote. The normal/early exit floor and whole-position virtual-price delta remain independent checks.
+
+## Deployment/proposal sequence
+
+The deployer performs six monotonic CREATEs:
+
+1. preview module;
+2. locked implementation;
+3. immutable EIP-1167 Factory;
+4. USDC target oracle;
+5. USDT target oracle;
+6. frxUSD Chainlink oracle.
+
+The proposal:
+
+1. validates deployed bytecode and oracle identities;
+2. deploys each keeper with `yieldToken = frxUSD` and the fixed frxUSD/crvUSD `yieldAmm`;
+3. installs only the expansion path;
+4. allocates the candidate Factory debt ceiling;
+5. registers `debt()` with both aggregate monetary policies;
+6. leaves expansion, LP contraction, and global execution paused.
+
+No FraxNet account creation, contraction path, undeployed backing action, direct buyback, activation, or broadcast is included.
+
+## Activation order
+
+If governance later authorizes activation:
+
+1. Reconfirm implementation/preview hashes, proxy targets, oracles, pool coin order, StableSwap-NG dynamic-array ABI, virtual price, fees, balances, and one-coin quote behavior.
+2. Reconfirm Frax mint capacity for USDC/USDT expansion.
+3. Confirm all keepers start with directions `0`, `1`, and `2` paused.
+4. Unpause LP contraction (`1`) while global remains paused.
+5. Unpause global execution (`2`).
+6. Run bounded expansion and contraction canaries.
+7. Unpause expansion (`0`) last.
+
+The branch's pinned non-broadcasting canary already exercises the real USDT expansion path, matched LP deposit, allowance cleanup, and fixed one-coin LP contraction at block `25,868,730`. A current-block canary is still mandatory before any production action.

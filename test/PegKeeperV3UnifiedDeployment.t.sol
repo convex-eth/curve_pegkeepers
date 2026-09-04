@@ -10,64 +10,7 @@ import {ICurveStablecoinOracle} from "../src/interfaces/ICurveStablecoinOracle.s
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockCurveOraclePool} from "./CurveStablecoinOracle.t.sol";
 import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
-import {MockFactory, MockToken} from "./PegKeeperV3Foundation.t.sol";
-
-contract DeploymentFraxNetAccount {
-    address public constant asset = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address public constant frxUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-    address public immutable factory;
-    uint32 public constant targetEid = 30_101;
-    bytes32 public immutable targetAddress;
-
-    constructor(bytes32 targetAddress_) {
-        factory = msg.sender;
-        targetAddress = targetAddress_;
-    }
-}
-
-contract DeploymentFraxNetFactoryHarness {
-    mapping(address => bool) public isFraxNetDeposit;
-
-    function isPaused() external pure returns (bool) {
-        return false;
-    }
-
-    function frxUSDCustodian() external pure returns (address) {
-        return 0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c;
-    }
-
-    function rwaRedeemer() external pure returns (address) {
-        return address(0x19D7);
-    }
-
-    function getDeploymentAddress(uint32 targetEid, bytes32 targetAddress, bytes32 targetUsdcAta)
-        external
-        view
-        returns (address)
-    {
-        bytes32 salt = keccak256(abi.encode(targetEid, targetAddress, targetUsdcAta));
-        bytes32 initCodeHash = keccak256(
-            abi.encodePacked(type(DeploymentFraxNetAccount).creationCode, abi.encode(targetAddress))
-        );
-        return address(
-            uint160(
-                uint256(
-                    keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash))
-                )
-            )
-        );
-    }
-
-    function createFraxNetDeposit(uint32 targetEid, bytes32 targetAddress, bytes32 targetUsdcAta)
-        external
-        returns (address account)
-    {
-        bytes32 salt = keccak256(abi.encode(targetEid, targetAddress, targetUsdcAta));
-        account = address(new DeploymentFraxNetAccount{salt: salt}(targetAddress));
-        isFraxNetDeposit[account] = true;
-    }
-}
+import {LpYieldFactory, LpYieldToken} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3UnifiedDeploymentTest is Test {
     string internal constant TEST_OUTPUT = "deployments/mainnet/PegKeeperV3-deployment.test.json";
@@ -76,9 +19,9 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
     address internal usdt = makeAddr("USDT");
 
     function test_deploysCompleteReleaseAndWritesEveryAddressToJson() public {
-        MockToken crvUsd = new MockToken(18);
-        MockFactory controllerFactory =
-            new MockFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
+        LpYieldToken crvUsd = new LpYieldToken(18);
+        LpYieldFactory controllerFactory =
+            new LpYieldFactory(address(crvUsd), address(this), address(0xBEEF), address(0xFEE));
         MockCurveOraclePool usdcUsdtPool = new MockCurveOraclePool(usdc, usdt);
         MockChainlinkAggregator chainlinkAggregator = new MockChainlinkAggregator();
         MockChainlinkProxy chainlinkProxy = new MockChainlinkProxy(chainlinkAggregator);
@@ -94,8 +37,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             feeReceiver: makeAddr("feeReceiver"),
             maxDeployedCrvUsd: 2_500_000e18,
             targetAmmExecutionBufferBps: 5,
-            minDownstreamAttemptGas: 1_500_000,
-            fallbackSettlementGasReserve: 300_000,
+            yieldAmmExecutionBufferBps: 7,
             expansionMaxRouteLossBps: 100,
             usdcUsdtPool: address(usdcUsdtPool),
             usdc: usdc,
@@ -105,9 +47,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         });
 
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
-        DeploymentFraxNetFactoryHarness fraxNetHarness = new DeploymentFraxNetFactoryHarness();
-        vm.etch(deployer.FRAXNET_DEPOSIT_FACTORY(), address(fraxNetHarness).code);
-        deployment = deployer.prepareFraxNetAccounts(deployment);
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
 
         assertGt(deployment.previewModule.code.length, 0);
@@ -125,8 +64,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(defaults_.feeReceiver, config.feeReceiver);
         assertEq(defaults_.maxDeployedCrvUsd, config.maxDeployedCrvUsd);
         assertEq(defaults_.targetAmmExecutionBufferBps, config.targetAmmExecutionBufferBps);
-        assertEq(defaults_.minDownstreamAttemptGas, config.minDownstreamAttemptGas);
-        assertEq(defaults_.fallbackSettlementGasReserve, config.fallbackSettlementGasReserve);
+        assertEq(defaults_.yieldAmmExecutionBufferBps, config.yieldAmmExecutionBufferBps);
         assertEq(defaults_.expansionMaxRouteLossBps, config.expansionMaxRouteLossBps);
 
         assertEq(deployment.previewModule, vm.computeCreateAddress(address(deployer), 1));
@@ -135,16 +73,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(deployment.usdcTargetOracle, vm.computeCreateAddress(address(deployer), 4));
         assertEq(deployment.usdtTargetOracle, vm.computeCreateAddress(address(deployer), 5));
         assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 6));
-        assertGt(deployment.usdcFraxNetDeposit.code.length, 0);
-        assertGt(deployment.usdtFraxNetDeposit.code.length, 0);
-        assertEq(
-            DeploymentFraxNetAccount(deployment.usdcFraxNetDeposit).targetAddress(),
-            bytes32(uint256(uint160(vm.computeCreateAddress(deployment.factory, 2))))
-        );
-        assertEq(
-            DeploymentFraxNetAccount(deployment.usdtFraxNetDeposit).targetAddress(),
-            bytes32(uint256(uint160(vm.computeCreateAddress(deployment.factory, 3))))
-        );
         _assertCurveOracle(
             deployment.usdcTargetOracle, config.usdcUsdtPool, config.usdc, config.usdt, true
         );
@@ -163,8 +91,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(vm.parseJsonAddress(json, ".usdcTargetOracle"), deployment.usdcTargetOracle);
         assertEq(vm.parseJsonAddress(json, ".usdtTargetOracle"), deployment.usdtTargetOracle);
         assertEq(vm.parseJsonAddress(json, ".frxUsdUsdOracle"), deployment.frxUsdUsdOracle);
-        assertEq(vm.parseJsonAddress(json, ".usdcFraxNetDeposit"), deployment.usdcFraxNetDeposit);
-        assertEq(vm.parseJsonAddress(json, ".usdtFraxNetDeposit"), deployment.usdtFraxNetDeposit);
         vm.removeFile(TEST_OUTPUT);
     }
 
@@ -179,8 +105,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
         assertEq(config.targetAmmExecutionBufferBps, 3);
-        assertEq(config.minDownstreamAttemptGas, 1_500_000);
-        assertEq(config.fallbackSettlementGasReserve, 300_000);
+        assertEq(config.yieldAmmExecutionBufferBps, 3);
         assertEq(config.expansionMaxRouteLossBps, 5);
         assertEq(config.usdcUsdtPool, deployer.USDC_USDT_ORACLE_POOL());
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
