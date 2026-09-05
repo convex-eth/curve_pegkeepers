@@ -53,7 +53,7 @@ contract DeployPegKeeperV3 is Script {
         address frxUsdUsdOracle;
     }
 
-    function run() external returns (Deployment memory deployment) {
+    function run() external virtual returns (Deployment memory deployment) {
         require(block.chainid == 1, "mainnet required");
         Config memory config = mainnetConfig();
         _logPlan(config);

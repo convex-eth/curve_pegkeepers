@@ -75,7 +75,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     address public deploymentFactory;
     address public frxUsdOracle;
 
-    function run() external returns (uint256 proposalId) {
+    function run() external virtual returns (uint256 proposalId) {
         loadDeployment(DEPLOYMENT_INPUT_PATH);
         vm.startBroadcast();
         bytes memory script = buildProposalScript();
@@ -109,11 +109,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         return _computeCreateAddress(deploymentFactory, keeperNumber);
     }
 
-    function buildProposalScript() public view override returns (bytes memory script) {
+    function buildProposalScript() public view virtual override returns (bytes memory script) {
         script = buildScript(CURVE_OWNERSHIP_AGENT, buildProposalActions());
     }
 
-    function buildProposalActions() public view returns (Action[] memory actions) {
+    function buildProposalActions() public view virtual returns (Action[] memory actions) {
         _validateFactory();
         _validateOracles();
         _validateMonetaryPolicies();
@@ -205,6 +205,13 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     }
 
     function _validateChainlinkOracle(address adapter, address expectedFeed) internal view {
+        _validateChainlinkOracle(adapter, expectedFeed, CHAINLINK_MAX_DELAY);
+    }
+
+    function _validateChainlinkOracle(address adapter, address expectedFeed, uint256 maxDelay)
+        internal
+        view
+    {
         require(adapter.code.length == CHAINLINK_ORACLE_RUNTIME_SIZE, "chainlink oracle size");
         bytes32 coreHash;
         assembly {
@@ -216,7 +223,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         IChainlinkStablecoinOracle oracle = IChainlinkStablecoinOracle(adapter);
         require(oracle.feed() == expectedFeed, "oracle feed");
         require(oracle.feed_decimals() == 8, "oracle decimals");
-        require(oracle.max_delay() == CHAINLINK_MAX_DELAY, "oracle delay");
+        require(oracle.max_delay() == maxDelay, "oracle delay");
         require(oracle.price() >= MIN_YIELD_ORACLE_PRICE, "oracle price");
     }
 
