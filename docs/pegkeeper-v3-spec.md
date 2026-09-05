@@ -1,6 +1,6 @@
 # PegKeeper V3 LP-yield specification
 
-Status: unreleased `3.2.0` candidate on the `lp-yield` branch. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
+Status: unreleased `3.3.0` candidate on the `lp-yield` branch. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
 
 ## Model
 
@@ -13,7 +13,7 @@ Each deployment fixes:
 - `yieldToken`: the non-crvUSD coin paired with crvUSD in the backing pool;
 - `yieldAmm`: the Curve backing pool and its ERC-20 LP token;
 - `backingAsset`: `yieldToken` in vanilla mode or `yieldToken.asset()` in ERC-4626 mode;
-- mandatory target and yield-token oracle adapters.
+- one mandatory retained-backing oracle for `yieldToken`.
 
 The Factory stores the shared aggregate crvUSD price oracle used by every keeper. Factory ownership may replace it through `setAggregateCrvUsdOracle()`; replacement addresses must contain code.
 
@@ -66,7 +66,7 @@ For an ERC-4626 `yieldToken`, the pool's virtual price is still the sole persist
 
 `yield_token_assets()` and `yield_token_units()` remain route and matching helpers. They are not applied to held LP tokens.
 
-Mandatory target and yield-token oracles gate new expansion and conservatively haircut `oracle_backing_value()`. The Factory's aggregate crvUSD oracle gates monetary direction. `trusted_backing_value()` uses LP virtual price directly. Virtual price is an accounting value, not an executable withdrawal quote.
+The mandatory yield-token oracle gates operations that settle retained backing and conservatively haircuts `oracle_backing_value()`. Its default and proposed launch floor is `0.999e18`, ten basis points below par. Transient target assets have no oracle configuration or gate because successful expansion must route them completely into `yieldToken` and then atomically settle into LP; route quotes, absolute-value floors, measured deltas, and route-loss bounds protect that transit. The Factory's aggregate crvUSD oracle gates monetary direction. `trusted_backing_value()` uses LP virtual price directly. Virtual price is an accounting value, not an executable withdrawal quote.
 
 Aggregate direction boundaries are exact:
 
@@ -118,7 +118,7 @@ Expansion is keeper-driven and all-or-nothing.
 
 For an input `X`:
 
-1. Verify expansion/global pause state, aggregate crvUSD price at least `1e18`, shared intervention delay, local target-pool allowance, amount floor, target oracle, and yield-token oracle.
+1. Verify expansion/global pause state, aggregate crvUSD price at least `1e18`, shared intervention delay, local target-pool allowance, amount floor, and yield-token oracle.
 2. Swap exactly `X` crvUSD through `targetAmm` and verify measured input/output deltas.
 3. Execute the configured typed expansion path from `targetAsset` to `yieldToken` synchronously.
 4. Revert the whole transaction if any target swap, route step, allowance reset, measured delta, route-loss bound, or endpoint check fails.
@@ -175,7 +175,7 @@ Direct LP-token donations increase backing and surplus immediately through the l
 
 ## Dedicated yield-token donation sweep
 
-`sweepDonatedYield(maxYieldTokenAmount)` is a permissionless LP-deployment action for loose `yieldToken` received outside an expansion. It is independent of the target AMM, target oracle, and typed expansion path, so a target-market downturn does not prevent donated frxUSD from entering the fixed LP.
+`sweepDonatedYield(maxYieldTokenAmount)` is a permissionless LP-deployment action for loose `yieldToken` received outside an expansion. It is independent of the target AMM and typed expansion path, so target-market conditions do not prevent donated frxUSD from entering the fixed LP.
 
 Let `D` be the normalized value of the selected donation, `C` the yield AMM's crvUSD balance, and `Y` the normalized value of its yield-token balance. The desired crvUSD match is:
 
@@ -332,25 +332,23 @@ function set_intervention_policy(
 
 ## Deployment and release state
 
-The environment-free deployer creates six contracts: preview module, locked implementation, Factory, two Curve EMA adapters, and one frxUSD Chainlink adapter. The Factory is initialized with the existing canonical aggregate crvUSD oracle. It no longer creates FraxNet redemption accounts.
+The environment-free deployer creates four contracts: preview module, locked implementation, Factory, and one frxUSD Chainlink adapter. The Factory is initialized with the existing canonical aggregate crvUSD oracle. It no longer creates target-token oracle adapters or FraxNet redemption accounts.
 
 The launch proposal deploys three paused keepers. Each receives the same fixed `yieldAmm` and `yieldToken = frxUSD`; USDC and USDT retain their typed expansion paths. No contraction path calldata exists.
 
 Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
 
 ```text
-implementation initcode: 22,500 bytes
-implementation runtime:  22,367 bytes
-Factory core runtime:      3,830 bytes
-Factory deployed runtime:  3,894 bytes
+implementation initcode: 22,237 bytes
+implementation runtime:  22,104 bytes
+Factory core runtime:      3,780 bytes
+Factory deployed runtime:  3,844 bytes
 Chainlink oracle core:        460 bytes
 Chainlink oracle runtime:     556 bytes
-Curve oracle core:            329 bytes
-Curve oracle runtime:         457 bytes
-preview initcode:         5,972 bytes
-preview runtime:          5,936 bytes
+preview initcode:         5,781 bytes
+preview runtime:          5,745 bytes
 minimal proxy runtime:       45 bytes
-EIP-170 headroom:          2,209 bytes
+EIP-170 headroom:          2,472 bytes
 ```
 
 The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch. `make check-release-evidence`, included by `make check`, proves those files and their verifier still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`. Full manifest verification remains intentionally checkout-sensitive.
@@ -363,6 +361,6 @@ Before this variant can replace the released baseline:
 2. Run unit, Factory, deployment, proposal, ABI-parity, and runtime-size checks.
 3. Run the pinned mainnet canary through real StableSwap-NG dynamic-array deposits and one-coin withdrawal.
 4. Re-run stateful invariants for LP backing, donations, capacity, velocity, pauses, exact approvals, and debt reduction.
-5. Re-pin current mainnet routes, oracle state, pool coin order, liquidity, fees, virtual price, and one-coin exit economics.
+5. Re-pin current mainnet routes, retained-backing oracle state, pool coin order, liquidity, fees, virtual price, and one-coin exit economics.
 6. Generate a new release manifest rather than mutating `3.0.0` evidence.
 7. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.

@@ -86,13 +86,15 @@ The velocity bucket remains active and counts total crvUSD committed to the LP, 
 
 ## Oracles
 
-| Keeper | Target oracle | Yield-token oracle |
-|---|---|---|
-| frxUSD | canonical frxUSD/USD Chainlink adapter | same adapter |
-| USDC | USDC/USDT Curve EMA, USDC orientation | frxUSD/USD adapter |
-| USDT | USDC/USDT Curve EMA, USDT orientation | frxUSD/USD adapter |
+| Keeper | Retained-backing oracle | Minimum price |
+|---|---|---:|
+| frxUSD | canonical frxUSD/USD Chainlink adapter | `0.999e18` |
+| USDC | canonical frxUSD/USD Chainlink adapter | `0.999e18` |
+| USDT | canonical frxUSD/USD Chainlink adapter | `0.999e18` |
 
-Both target/yield floors remain `0.9997e18`. The Factory points every keeper at the canonical aggregate crvUSD oracle and governance may update that address. Expansion requires aggregate price `>= 1e18`; contraction requires aggregate price `<= 1e18`; both are allowed exactly at `1e18`. Previews enforce the same gates. Aggregate and yield-oracle returndata must be exactly 32 bytes.
+There is no target-token oracle configuration or gate. USDC and USDT exist only during atomic expansion routing; successful execution requires their balances to return to baseline before the acquired frxUSD and matched crvUSD settle into held LP. Immediate quotes, per-step absolute value floors, measured deltas, allowance cleanup, and the `5` bp total route-loss bound reject bad transit execution. The persistent frxUSD backing check uses a ten-basis-point floor, `0.999e18`.
+
+The Factory points every keeper at the canonical aggregate crvUSD oracle and governance may update that address. Expansion requires aggregate price `>= 1e18`; contraction requires aggregate price `<= 1e18`; both are allowed exactly at `1e18`. Previews enforce the same gates. Aggregate and yield-oracle returndata must be exactly 32 bytes.
 
 ## Expansion paths
 
@@ -151,24 +153,23 @@ frxUSD/crvUSD LP
 
 ## Deployment/proposal sequence
 
-The deployer performs six monotonic CREATEs:
+The deployer performs four monotonic CREATEs:
 
 1. preview module;
 2. locked implementation;
 3. EIP-1167 Factory initialized with the canonical aggregate crvUSD oracle;
-4. USDC target oracle;
-5. USDT target oracle;
-6. frxUSD Chainlink oracle.
+4. frxUSD Chainlink oracle.
 
 The proposal:
 
 1. validates deployed bytecode and oracle identities;
 2. deploys each keeper with `yieldToken = frxUSD` and the fixed frxUSD/crvUSD `yieldAmm`;
 3. installs only the expansion path;
-4. sets economic policy plus the `3_333` share and `12`-second intervention delay;
-5. allocates the candidate Factory debt ceiling;
-6. registers `debt()` with both aggregate monetary policies;
-7. leaves expansion, LP contraction, and global execution paused.
+4. explicitly sets the frxUSD oracle and `0.999e18` retained-backing floor;
+5. sets economic policy plus the `3_333` share and `12`-second intervention delay;
+6. allocates the candidate Factory debt ceiling;
+7. registers `debt()` with both aggregate monetary policies;
+8. leaves expansion, LP contraction, and global execution paused.
 
 No FraxNet account creation, contraction path, undeployed backing action, direct buyback, activation, or broadcast is included.
 
@@ -176,7 +177,7 @@ No FraxNet account creation, contraction path, undeployed backing action, direct
 
 If governance later authorizes activation:
 
-1. Reconfirm implementation/preview hashes, proxy targets, the Factory's aggregate crvUSD oracle, target/yield oracles, pool coin order, StableSwap-NG dynamic-array ABI, virtual price, fees, balances, and one-coin quote behavior.
+1. Reconfirm implementation/preview hashes, proxy targets, the Factory's aggregate crvUSD oracle, retained-backing oracle, pool coin order, StableSwap-NG dynamic-array ABI, virtual price, fees, balances, and one-coin quote behavior.
 2. Reconfirm Frax mint capacity for USDC/USDT expansion.
 3. Confirm all keepers start with directions `0`, `1`, and `2` paused.
 4. Unpause LP contraction (`1`) while global remains paused.

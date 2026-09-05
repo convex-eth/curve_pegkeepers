@@ -167,22 +167,20 @@ event PathsUpdated:
     expansion_path_hash: indexed(bytes32)
     expansion_max_route_loss_bps: uint256
 
-event OraclePolicyUpdated:
-    target_oracle: indexed(address)
+event YieldOraclePolicyUpdated:
     yield_oracle: indexed(address)
-    min_target_price: uint256
     min_yield_price: uint256
 
 
 
-version: public(constant(String[8])) = "3.2.0"
+version: public(constant(String[8])) = "3.3.0"
 name: public(String[88])
 keeper_index: public(uint256)
 
 BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
-DEFAULT_MIN_ORACLE_PRICE: constant(uint256) = 999_700_000_000_000_000
+DEFAULT_MIN_YIELD_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
 max_expansion_burst_bps: public(constant(uint256)) = 500
 expansion_refill_period: public(constant(uint256)) = 5 * 60
 MAX_ROUTE_STEPS: public(constant(uint256)) = 16
@@ -208,9 +206,7 @@ yield_amm: public(YieldAmm)
 yield_token_is_erc4626: public(bool)
 target_multiplier: uint256
 backing_multiplier: uint256
-target_oracle: public(PriceOracle)
 yield_oracle: public(PriceOracle)
-min_target_oracle_price: public(uint256)
 min_yield_oracle_price: public(uint256)
 initialized: public(bool)
 
@@ -265,7 +261,6 @@ def initialize(
     _yield_amm: YieldAmm,
     _max_deployed_crvusd: uint256,
     _keeper_index: uint256,
-    _target_oracle: PriceOracle,
     _yield_oracle: PriceOracle,
 ):
     """
@@ -282,9 +277,7 @@ def initialize(
     assert _yield_amm.address.codesize > 0
     assert _max_deployed_crvusd > 0
     assert _keeper_index > 0
-    assert _target_oracle.address != empty(address)
     assert _yield_oracle.address != empty(address)
-    assert _target_oracle.address.codesize > 0
     assert _yield_oracle.address.codesize > 0
 
     controller_factory: address = PegKeeperFactory(msg.sender).controllerFactory()
@@ -340,10 +333,8 @@ def initialize(
     self.yield_token_is_erc4626 = is_erc4626
     self.target_multiplier = 10 ** (18 - target_decimals)
     self.backing_multiplier = 10 ** (18 - backing_decimals)
-    self.target_oracle = _target_oracle
     self.yield_oracle = _yield_oracle
-    self.min_target_oracle_price = DEFAULT_MIN_ORACLE_PRICE
-    self.min_yield_oracle_price = DEFAULT_MIN_ORACLE_PRICE
+    self.min_yield_oracle_price = DEFAULT_MIN_YIELD_ORACLE_PRICE
 
     self.keeper_index = _keeper_index
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
@@ -551,14 +542,6 @@ def coins(_index: uint256) -> address:
 def _oracle_value(_value: uint256, _price: uint256) -> uint256:
     price: uint256 = min(_price, PRECISION)
     return _value / PRECISION * price + _value % PRECISION * price / PRECISION
-
-
-@internal
-@view
-def _target_price() -> uint256:
-    price: uint256 = self.target_oracle.price()
-    assert price >= self.min_target_oracle_price
-    return price
 
 
 @internal
@@ -1010,31 +993,22 @@ def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256)
 
 
 @external
-def set_oracles(
-    _target_oracle: PriceOracle,
+def set_yield_oracle_policy(
     _yield_oracle: PriceOracle,
-    _min_target_price: uint256,
     _min_yield_price: uint256,
 ):
     """
-    @notice Changes the price sources and the lowest accepted prices.
+    @notice Changes the retained-backing price source and lowest accepted price.
     """
     assert self._is_admin(msg.sender)
-    assert _target_oracle.address != empty(address)
     assert _yield_oracle.address != empty(address)
-    assert _target_oracle.address.codesize > 0
     assert _yield_oracle.address.codesize > 0
-    assert _min_target_price > 0 and _min_target_price <= PRECISION
     assert _min_yield_price > 0 and _min_yield_price <= PRECISION
 
-    self.target_oracle = _target_oracle
     self.yield_oracle = _yield_oracle
-    self.min_target_oracle_price = _min_target_price
     self.min_yield_oracle_price = _min_yield_price
-    log OraclePolicyUpdated(
-        _target_oracle.address,
+    log YieldOraclePolicyUpdated(
         _yield_oracle.address,
-        _min_target_price,
         _min_yield_price,
     )
 
@@ -1141,7 +1115,6 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
     self._require_expansion_regime()
     assert self._intervention_delay_elapsed()
     assert _crv_usd_amount <= self._local_expansion_limit()
-    self._target_price()
     self._yield_price()
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)

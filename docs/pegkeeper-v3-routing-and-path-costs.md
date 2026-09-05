@@ -85,6 +85,8 @@ The full target-to-yield route also enforces `expansionMaxRouteLossBps`. Route o
 
 Any failure reverts the initial target swap, path execution, LP deposit, debt accounting, velocity pressure, and rewards. There is no target-retention fallback.
 
+V3 therefore has no target-token oracle gate. USDC and USDT are transient route inputs, never accepted as final inventory; their balances must return to the pre-action baseline in the same transaction. The retained frxUSD backing has a separate oracle gate with a proposed `0.999e18` floor.
+
 Before the target swap, the requested crvUSD first leg must fit within `maxInterventionShareBps` of the target AMM's normalized target-asset excess over crvUSD. The launch candidate uses `3_333` bps. Matched crvUSD added alongside acquired or donated yield tokens is balance-neutral in `yieldAmm`; it does not consume this local share, though it still consumes capacity and leaky-bucket velocity.
 
 ## Matched-liquidity cost
@@ -142,7 +144,7 @@ The pinned canary makes crvUSD sufficiently abundant in the backing pool before 
 | USDT/crvUSD target AMM | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` |
 | Curve 3pool | `0xbEbc44782C7dB0a1A60Cb6fe97d0b483032FF1C7` |
 | Frax mint custodian | `0x4F95C5bA0C7c69FB2f9340E190cCeE890B3bd87c` |
-| USDC/USDT oracle pool | `0x4f493B7dE8aAC7d55F71853688b1F7C8F0243C85` |
+| frxUSD/USD oracle proxy | `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83` |
 
 FraxNet redemption accounts and RWA redemption capacity are irrelevant to this architecture because contraction never redeems frxUSD through a configured route.
 

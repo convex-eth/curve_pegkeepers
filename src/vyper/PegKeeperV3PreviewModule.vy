@@ -36,9 +36,6 @@ interface YieldAmm:
 interface ControllerFactory:
     def debt_ceiling(_keeper: address) -> uint256: view
 
-interface PriceOracle:
-    def price() -> uint256: view
-
 interface ERC4626Route:
     def convertToAssets(_shares: uint256) -> uint256: view
     def previewDeposit(_assets: uint256) -> uint256: view
@@ -60,8 +57,6 @@ interface PegKeeperV3:
     def available_expansion_velocity() -> uint256: view
     def max_deployed_crvusd() -> uint256: view
     def controller_factory() -> address: view
-    def target_oracle() -> address: view
-    def min_target_oracle_price() -> uint256: view
     def expansion_path_length() -> uint256: view
     def expansion_path_step(_index: uint256) -> RouteStep: view
     def backing_asset() -> address: view
@@ -110,7 +105,6 @@ def _preview_expansion(
     _crv_usd_amount: uint256,
 ) -> ExpansionPreview:
     assert _crv_usd_amount >= _keeper.min_expansion_amount()
-    self._assert_oracle(_keeper.target_oracle(), _keeper.min_target_oracle_price())
     self._assert_yield_oracle(_keeper.yield_oracle(), _keeper.min_yield_oracle_price())
 
     quote: ExpansionPreview = empty(ExpansionPreview)
@@ -259,12 +253,6 @@ def _lp_value(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
         _lp_tokens / PRECISION * _virtual_price
         + _lp_tokens % PRECISION * _virtual_price / PRECISION
     )
-
-@internal
-@view
-def _assert_oracle(_oracle: address, _minimum: uint256):
-    assert PriceOracle(_oracle).price() >= _minimum
-
 
 @internal
 @view

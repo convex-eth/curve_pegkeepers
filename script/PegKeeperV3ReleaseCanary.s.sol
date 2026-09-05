@@ -192,7 +192,6 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
                 FRXUSD,
                 FRXUSD_CRVUSD_POOL,
                 false,
-                deployment.usdtTargetOracle,
                 deployment.frxUsdUsdOracle,
                 _expansionPath()
             )

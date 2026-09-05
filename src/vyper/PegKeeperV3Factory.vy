@@ -38,7 +38,6 @@ interface PegKeeperV3:
         _yield_amm: address,
         _max_deployed_crvusd: uint256,
         _keeper_index: uint256,
-        _target_oracle: address,
         _yield_oracle: address,
     ): nonpayable
     def initialized() -> bool: view
@@ -102,7 +101,7 @@ BPS: constant(uint256) = 10_000
 CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
 CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
 INITIALIZE_SELECTOR: constant(Bytes[4]) = method_id(
-    "initialize(address,address,address,address,address,uint256,uint256,address,address)"
+    "initialize(address,address,address,address,address,uint256,uint256,address)"
 )
 
 CONTROLLER_FACTORY: immutable(address)
@@ -207,7 +206,6 @@ def deployPegKeeper(
     _yieldToken: address,
     _yieldAmm: address,
     _yieldTokenIsErc4626: bool,
-    _targetOracle: address,
     _yieldOracle: address,
     _expansionSteps: DynArray[RouteStep, 16],
 ) -> address:
@@ -236,7 +234,6 @@ def deployPegKeeper(
         _yieldAmm,
         config.maxDeployedCrvUsd,
         index,
-        _targetOracle,
         _yieldOracle,
     )
 
@@ -365,7 +362,6 @@ def _deploy_keeper(
     _yieldAmm: address,
     _maxDeployedCrvUsd: uint256,
     _index: uint256,
-    _targetOracle: address,
     _yieldOracle: address,
 ) -> address:
     succeeded: bool = False
@@ -390,7 +386,6 @@ def _deploy_keeper(
             _yieldAmm,
             _maxDeployedCrvUsd,
             _index,
-            _targetOracle,
             _yieldOracle,
             method_id=INITIALIZE_SELECTOR,
         ),

@@ -55,6 +55,7 @@ The unreleased `lp-yield` branch changes V3 from loose-token backing to Curve LP
 - **Expansion through another pool:** `X` crvUSD is sold through the target AMM and the existing typed expansion path ends in `yieldToken`. V3 then sweeps the complete live yield-token balance into the fixed `yieldAmm` with equal-value additional crvUSD. Total recorded exposure is `X + matchedCrvUsd`.
 - **Shared target/yield pool:** when `targetAmm == yieldAmm`, V3 skips the swap and expansion path and deposits crvUSD directly. Donated yield tokens are still swept with equal-value additional crvUSD.
 - **Aggregate direction:** every keeper reads one governance-updatable Factory oracle. Expansion requires aggregate crvUSD price `>= $1`; contraction requires `<= $1`; both are allowed exactly at `$1`.
+- **Retained-backing oracle:** every keeper checks the canonical frxUSD/USD adapter before settling frxUSD into held LP. The candidate minimum is `0.999e18`. USDC and USDT have no target-token oracle gate because they are transient route assets that must be eliminated atomically under quote, measured-delta, and route-loss checks.
 - **Local intervention envelope:** `max_intervention_share_bps = 3_333` limits each expansion first leg and each contraction's quoted and measured crvUSD output to one third of the relevant normalized local imbalance. `min_intervention_delay = 12` spaces successful monetary interventions symmetrically and may be set to zero.
 - **Dedicated donation sweep:** `sweepDonatedYield(maxAmount)` deposits loose yield-token donations without touching the target AMM or expansion route. At or above `$1` it matches the full donation. Below `$1` it deposits one-sided until crvUSD excess is removed, then matches only the donation remainder that would otherwise overshoot normalized pool balance. Debt increases only by the actual match.
 - **Contraction:** V3 burns held LP tokens and calls the fixed yield AMM's `remove_liquidity_one_coin(..., crvUsdIndex, minCrvUsd)`. There is no configurable contraction path or early-exit tier; every contraction requires a `5 bp` gross edge before the caller share. At the `30%` caller share, the keeper receives `1.5 bp` and the protocol retains `3.5 bp` at the boundary.
@@ -81,6 +82,7 @@ The branch removes:
 - undeployed target backing and its contraction/deployment maintenance actions;
 - downstream fallback gas configuration and deployment pause;
 - FraxNet redemption-account deployment and proposal dependencies.
+- target-token oracle storage, gates, adapters, and deployment dependencies.
 
 Only three pause directions remain: expansion (`0`), LP contraction (`1`), and all execution (`2`). Every Factory-created keeper starts fully paused.
 
@@ -88,7 +90,7 @@ The complete design is in [`docs/pegkeeper-v3-spec.md`](docs/pegkeeper-v3-spec.m
 
 ## V3 deployment factory
 
-`PegKeeperV3Factory` deploys non-upgradeable EIP-1167 proxies against one locked implementation. The owner supplies `targetAmm`, `yieldToken`, `yieldAmm`, endpoint mode, two mandatory oracle adapters, and only an expansion path. The Factory derives target/backing assets, validates keeper initialization, assigns the keeper index, and copies capacity, target-AMM buffer, yield-AMM buffer, and expansion-route loss defaults.
+`PegKeeperV3Factory` deploys non-upgradeable EIP-1167 proxies against one locked implementation. The owner supplies `targetAmm`, `yieldToken`, `yieldAmm`, endpoint mode, one mandatory retained-backing oracle adapter, and only an expansion path. The Factory derives target/backing assets, validates keeper initialization, assigns the keeper index, and copies capacity, target-AMM buffer, yield-AMM buffer, and expansion-route loss defaults.
 
 Shared `admin`, `emergency_admin`, `fee_receiver`, and `aggregateCrvUsdOracle` remain dynamic Factory policy. Factory ownership may replace the aggregate oracle; all keepers use the new address immediately. All endpoint, route, pause, accounting, intervention-share, delay, and velocity state remains local to each proxy. The launch retains the leaky bucket alongside the new share and delay controls; it is not removed without later simulation and a separate decision.
 
@@ -96,12 +98,12 @@ Shared `admin`, `emergency_admin`, `fee_receiver`, and `aggregateCrvUsdOracle` r
 
 The LP-yield candidate has not been deployed. It includes:
 
-- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-free six-CREATE deployment of preview, implementation, Factory, and three oracle adapters;
+- [`script/DeployPegKeeperV3.s.sol`](script/DeployPegKeeperV3.s.sol): environment-free four-CREATE deployment of preview, implementation, Factory, and the frxUSD oracle adapter;
 - [`script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol`](script/proposals/curve/CurveProposalLaunchPegKeeperV3.s.sol): paused three-keeper proposal using one shared frxUSD/crvUSD backing pool and no contraction route;
 - [`script/PegKeeperV3ReleaseCanary.s.sol`](script/PegKeeperV3ReleaseCanary.s.sol): non-broadcasting pinned-mainnet USDT expansion, expansion-regime donation sweep, contraction-regime donation settlement plus surplus claim, and static one-coin LP contraction;
 - runtime-size and Vyper/Solidity ABI gates.
 
-The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json) and release checklist remain evidence for the earlier `3.0.0` candidate, not this unreleased `3.2.0` branch. A new release manifest is required before this variant can be proposed for deployment. `make check-release-evidence` proves those historical files still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`; the full manifest verifier remains intentionally checkout-sensitive.
+The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainnet/PegKeeperV3-release.json) and release checklist remain evidence for the earlier `3.0.0` candidate, not this unreleased `3.3.0` branch. A new release manifest is required before this variant can be proposed for deployment. `make check-release-evidence` proves those historical files still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`; the full manifest verifier remains intentionally checkout-sensitive.
 
 ## Toolchain
 
@@ -110,7 +112,7 @@ The existing [`deployments/mainnet/PegKeeperV3-release.json`](deployments/mainne
 - Vyper `0.3.10`
 - Shanghai EVM target, which is supported by both pinned compilers
 
-Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The LP-yield implementation core is `22,335` bytes; its deployed runtime with the immutable preview-module address is `22,367` bytes, leaving `2,209` bytes below EIP-170. Full implementation initcode is `22,500` bytes. The Factory semantic core is `3,830` bytes and its two-immutable deployed runtime is `3,894` bytes. The Chainlink adapter core/runtime is `460`/`556` bytes; the Curve adapter core/runtime is `329`/`457` bytes. The stateless Vyper preview module is `5,936` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`; the executable proposal pins Factory, implementation, preview, and adapter identity; and `make check` compares the Vyper ABIs against their Solidity interfaces.
+Foundry compiles both `src/**/*.sol` and `src/**/*.vy`. The Vyper executable is pinned in `foundry.toml` to `.venv/bin/vyper`; there is no FFI compilation path. Production Vyper compilation uses the `codesize` optimizer. The LP-yield implementation core is `22,072` bytes; its deployed runtime with the immutable preview-module address is `22,104` bytes, leaving `2,472` bytes below EIP-170. Full implementation initcode is `22,237` bytes. The Factory semantic core is `3,780` bytes and its two-immutable deployed runtime is `3,844` bytes. The Chainlink adapter core/runtime is `460`/`556` bytes. The stateless Vyper preview module is `5,745` bytes. Every minimal proxy has 55-byte initcode and a 45-byte runtime. Exact limits are asserted in `test/PegKeeperV3RuntimeSize.t.sol`; the executable proposal pins Factory, implementation, preview, and adapter identity; and `make check` compares the Vyper ABIs against their Solidity interfaces.
 
 Vyper `0.3.10` expands `Error(string)` assertion payloads heavily. To keep the implementation in one auditable contract, V3 uses bare Vyper assertions for contract-owned guards. Revert data from an owner `execute()` target is still bubbled unchanged. Integrators must treat success/revert as the contract boundary and must not depend on V3 revert text.
 
@@ -195,11 +197,11 @@ Current V2 PegKeepers covered by the retirement test:
 
 ### Oracle adapters
 
-`CurveStablecoinOracleTest` covers pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection. `PegKeeperV3UnifiedDeploymentTest` and the launch-proposal fork suite validate the two selected USDC/USDT Curve orientations. `ChainlinkStablecoinOracleTest` covers direct proxy binding, decimal normalization, underlying-aggregator rotation through the same proxy, round completeness, positive answers, timestamp direction, and staleness. `ChainlinkStablecoinOracleForkTest` runs the unified deployment against the selected canonical frxUSD/USD proxy. Proposal tests reject proxy or maximum-delay drift.
+`CurveStablecoinOracleTest` preserves coverage for the historical standalone adapter's pool/coin validation, orientation, inversion, rate-provider normalization, and zero-output rejection; the LP-V3 candidate no longer deploys or configures that adapter. `ChainlinkStablecoinOracleTest` covers direct proxy binding, decimal normalization, underlying-aggregator rotation through the same proxy, round completeness, positive answers, timestamp direction, and staleness. `ChainlinkStablecoinOracleForkTest` runs the unified deployment against the selected canonical frxUSD/USD proxy. Proposal tests reject proxy or maximum-delay drift.
 
 ### `PegKeeperV3LpYieldTest`
 
-Covers the LP-backed state machine against deterministic local pools: yield-AMM pinning and coin indices; StableSwap-NG dynamic-array deposits; separate-pool target routing; aggregate crvUSD direction boundaries; regime-aware donation matching; donation settlement before surplus claims; matched crvUSD debt and velocity; donation-funded LP costs without donation reward leakage; direct shared-pool deposits; ERC-4626 non-double-counting; exact LP accounting; execution-complete previews; malformed-oracle returndata; same-block round-trip rejection; static one-coin contraction; executable quote protection; and removal of obsolete early-exit, undeployed, and contraction-path selectors.
+Covers the LP-backed state machine against deterministic local pools: yield-AMM pinning and coin indices; StableSwap-NG dynamic-array deposits; separate-pool target routing without target-token oracle state; the inclusive `0.999e18` retained-backing floor; aggregate crvUSD direction boundaries; regime-aware donation matching; donation settlement before surplus claims; matched crvUSD debt and velocity; donation-funded LP costs without donation reward leakage; direct shared-pool deposits; ERC-4626 non-double-counting; exact LP accounting; execution-complete previews; malformed-oracle returndata; same-block round-trip rejection; static one-coin contraction; executable quote protection; and removal of obsolete early-exit, undeployed, and contraction-path selectors.
 
 ### `PegKeeperV3LpFactoryTest`
 
@@ -215,11 +217,11 @@ Deploys the locked implementation with its immutable preview-module address, ver
 
 ### `PegKeeperV3UnifiedDeploymentTest`
 
-Runs the six-CREATE deployment against deterministic local dependencies. It verifies locked implementation/preview binding, Factory and aggregate-oracle wiring, LP-yield defaults, both Curve target-oracle orientations, the selected frxUSD Chainlink adapter, hardcoded mainnet configuration, no FraxNet account deployment, and complete JSON readback.
+Runs the four-CREATE deployment against deterministic local dependencies. It verifies locked implementation/preview binding, Factory and aggregate-oracle wiring, LP-yield defaults, the selected frxUSD Chainlink adapter, hardcoded mainnet configuration, no target-oracle or FraxNet deployment, and complete JSON readback.
 
 ### Proposal tests
 
-`PegKeeperV3ProposalDeploymentJsonTest` verifies chain-bound deployment JSON loading. The mainnet-fork `CurveProposalLaunchPegKeeperV3Test` validates Factory, implementation, preview, Chainlink-adapter, and Curve-adapter semantic-core identity pins; rejects spoof contracts with correct getters, same-size mutated adapter code, or a pending Factory ownership transfer; checks the canonical live aggregate crvUSD oracle; validates three paused LP-backed keeper deployments, the shared frxUSD/crvUSD yield AMM, exact expansion paths, policy defaults, debt ceilings, and monetary-policy registration; and confirms the proposal contains no activation actions.
+`PegKeeperV3ProposalDeploymentJsonTest` verifies chain-bound deployment JSON loading. The mainnet-fork `CurveProposalLaunchPegKeeperV3Test` validates Factory, implementation, preview, and Chainlink-adapter semantic-core identity pins; rejects spoof contracts with correct getters, same-size mutated adapter code, or a pending Factory ownership transfer; checks the canonical live aggregate crvUSD oracle; validates three paused LP-backed keeper deployments, the shared frxUSD/crvUSD yield AMM, exact expansion paths, explicit `0.999e18` retained-backing policy, debt ceilings, and monetary-policy registration; and confirms the proposal contains no activation actions.
 
 ### ABI gates
 

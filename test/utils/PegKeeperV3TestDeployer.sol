@@ -35,7 +35,6 @@ library PegKeeperV3TestDeployer {
         address yieldAmm;
         uint256 maxDeployed;
         uint256 keeperIndex;
-        address targetOracle;
         address yieldOracle;
     }
 
@@ -58,7 +57,6 @@ library PegKeeperV3TestDeployer {
                 yieldAmm: targetAmm,
                 maxDeployed: maxDeployed,
                 keeperIndex: keeperIndex,
-                targetOracle: address(new PegKeeperV3TestOracle()),
                 yieldOracle: address(new PegKeeperV3TestOracle())
             })
         );
@@ -72,7 +70,6 @@ library PegKeeperV3TestDeployer {
         address yieldToken,
         uint256 maxDeployed,
         uint256 keeperIndex,
-        address targetOracle,
         address yieldOracle
     ) internal returns (IPegKeeperV3 keeper) {
         keeper = _deploy(
@@ -85,7 +82,6 @@ library PegKeeperV3TestDeployer {
                 yieldAmm: targetAmm,
                 maxDeployed: maxDeployed,
                 keeperIndex: keeperIndex,
-                targetOracle: targetOracle,
                 yieldOracle: yieldOracle
             })
         );
@@ -100,7 +96,6 @@ library PegKeeperV3TestDeployer {
         address yieldAmm,
         uint256 maxDeployed,
         uint256 keeperIndex,
-        address targetOracle,
         address yieldOracle
     ) internal returns (IPegKeeperV3 keeper) {
         keeper = _deploy(
@@ -113,7 +108,6 @@ library PegKeeperV3TestDeployer {
                 yieldAmm: yieldAmm,
                 maxDeployed: maxDeployed,
                 keeperIndex: keeperIndex,
-                targetOracle: targetOracle,
                 yieldOracle: yieldOracle
             })
         );
@@ -132,7 +126,6 @@ library PegKeeperV3TestDeployer {
                 config.yieldAmm,
                 config.maxDeployed,
                 config.keeperIndex,
-                config.targetOracle,
                 config.yieldOracle
             );
         keeper = IPegKeeperV3(proxy);

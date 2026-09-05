@@ -23,7 +23,6 @@ interface ILpPegKeeperV3 {
         address yieldAmm,
         uint256 maxDeployedCrvUsd,
         uint256 keeperIndex,
-        address targetOracle,
         address yieldOracle
     ) external;
 
@@ -50,12 +49,9 @@ interface ILpPegKeeperV3 {
         uint256 targetAmmExecutionBufferBps,
         uint256 yieldAmmExecutionBufferBps
     ) external;
-    function set_oracles(
-        address targetOracle,
-        address yieldOracle,
-        uint256 minTargetPrice,
-        uint256 minYieldPrice
-    ) external;
+    function yield_oracle() external view returns (address);
+    function min_yield_oracle_price() external view returns (uint256);
+    function set_yield_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
@@ -431,7 +427,6 @@ contract PegKeeperV3LpYieldTest is Test {
     LpYieldTargetAmm internal targetAmm;
     LpYieldAmm internal yieldAmm;
     LpYieldRoutePool internal routePool;
-    LpYieldOracle internal targetOracle;
     LpYieldOracle internal yieldOracle;
     LpYieldOracle internal aggregateCrvUsdOracle;
 
@@ -446,7 +441,6 @@ contract PegKeeperV3LpYieldTest is Test {
         targetAmm = new LpYieldTargetAmm(crvUsd, targetAsset);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         routePool = new LpYieldRoutePool(targetAsset, yieldToken);
-        targetOracle = new LpYieldOracle();
         yieldOracle = new LpYieldOracle();
     }
 
@@ -487,6 +481,38 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.set_intervention_policy(10_001, 0);
         vm.stopPrank();
+    }
+
+    function test_yieldOraclePolicyDefaultsToTenBasisPointFloorAndAdminCanUpdate() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(targetAmm));
+
+        assertEq(keeper.yield_oracle(), address(yieldOracle));
+        assertEq(keeper.min_yield_oracle_price(), 0.999e18);
+
+        LpYieldOracle replacement = new LpYieldOracle();
+        vm.prank(makeAddr("unauthorized"));
+        vm.expectRevert();
+        keeper.set_yield_oracle_policy(address(replacement), 0.998e18);
+
+        vm.prank(governance);
+        keeper.set_yield_oracle_policy(address(replacement), 0.998e18);
+        assertEq(keeper.yield_oracle(), address(replacement));
+        assertEq(keeper.min_yield_oracle_price(), 0.998e18);
+    }
+
+    function test_yieldOracleTenBasisPointFloorIsInclusive() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 20_000e18);
+
+        yieldOracle.setPrice(0.999e18);
+        keeper.previewExpansion(10_000e18);
+
+        yieldOracle.setPrice(0.999e18 - 1);
+        vm.expectRevert();
+        keeper.previewExpansion(10_000e18);
+        vm.expectRevert();
+        keeper.expand(10_000e18);
     }
 
     function test_lpVirtualPriceIsSoleBackingRateForErc4626YieldToken() public {
@@ -721,9 +747,8 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.deployed_crvusd(), 12_000e18);
     }
 
-    function test_sweepDonatedYieldWorksWithoutTargetTradeDuringTargetDownturn() public {
+    function test_sweepDonatedYieldWorksWithoutTargetTrade() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
-        targetOracle.setPrice(0.5e18);
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 15_000e18);
         yieldToken.mint(address(keeper), 25_000e18);
@@ -751,7 +776,6 @@ contract PegKeeperV3LpYieldTest is Test {
 
     function test_sweepUsesDonationToAbsorbLpCostWithoutRewardingDonation() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
-        targetOracle.setPrice(0.5e18);
         yieldAmm.setLpMintBps(9_990);
         crvUsd.mint(address(keeper), 12_000e18);
         yieldToken.mint(address(keeper), 12_000e18);
@@ -1177,7 +1201,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         LpYieldOversizedOracle oversizedOracle = new LpYieldOversizedOracle();
         vm.prank(governance);
-        keeper.set_oracles(address(targetOracle), address(oversizedOracle), 0.9997e18, 0.9997e18);
+        keeper.set_yield_oracle_policy(address(oversizedOracle), 0.999e18);
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
 
@@ -1350,9 +1374,13 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.set_direction_paused(2, true);
     }
 
-    function test_obsoleteContractionPathAndUndeployedGettersAreRemoved() public {
+    function test_obsoleteOracleContractionPathAndUndeployedSurfaceIsRemoved() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(targetAmm));
 
+        (bool targetOracleGetter,) =
+            address(keeper).staticcall(abi.encodeWithSignature("target_oracle()"));
+        (bool targetFloorGetter,) =
+            address(keeper).staticcall(abi.encodeWithSignature("min_target_oracle_price()"));
         (bool contractionPathGetter,) =
             address(keeper).staticcall(abi.encodeWithSignature("contraction_path_length()"));
         (bool undeployedGetter,) =
@@ -1368,6 +1396,8 @@ contract PegKeeperV3LpYieldTest is Test {
         (bool lastExpansionGetter,) =
             address(keeper).staticcall(abi.encodeWithSignature("last_expansion_at()"));
 
+        assertFalse(targetOracleGetter);
+        assertFalse(targetFloorGetter);
         assertFalse(contractionPathGetter);
         assertFalse(undeployedGetter);
         assertFalse(looseYieldGetter);
@@ -1375,6 +1405,19 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(earlyMarginGetter);
         assertFalse(deploymentTimeGetter);
         assertFalse(lastExpansionGetter);
+
+        vm.prank(governance);
+        (bool oldOracleSetter,) = address(keeper)
+            .call(
+                abi.encodeWithSignature(
+                    "set_oracles(address,address,uint256,uint256)",
+                    address(yieldOracle),
+                    address(yieldOracle),
+                    1e18,
+                    1e18
+                )
+            );
+        assertFalse(oldOracleSetter);
 
         ILpPegKeeperV3.RouteStep[] memory obsoleteFraxRedemption = _singleExpansionStep();
         obsoleteFraxRedemption[0].kind = 5;
@@ -1515,7 +1558,6 @@ contract PegKeeperV3LpYieldTest is Test {
             yieldAmm_,
             MAX_DEPLOYED,
             1,
-            address(targetOracle),
             address(yieldOracle)
         );
         factory.setDebtCeiling(proxy, MAX_DEPLOYED);

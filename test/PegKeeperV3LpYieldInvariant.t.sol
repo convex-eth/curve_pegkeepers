@@ -128,7 +128,6 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
             address(yieldAmm),
             MAX_DEPLOYED,
             1,
-            address(oracle),
             address(oracle)
         );
         factory.setDebtCeiling(address(keeper), MAX_DEPLOYED);

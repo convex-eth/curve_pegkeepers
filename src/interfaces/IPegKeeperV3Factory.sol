@@ -65,7 +65,6 @@ interface IPegKeeperV3Factory {
         address yieldToken,
         address yieldAmm,
         bool yieldTokenIsErc4626,
-        address targetOracle,
         address yieldOracle,
         IPegKeeperV3.RouteStep[] calldata expansionSteps
     ) external returns (address pegKeeper);

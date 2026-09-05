@@ -26,7 +26,6 @@ contract PegKeeperV3LpFactoryTest is Test {
     LpYieldAmm internal yieldAmm;
     LpYieldRoutePool internal route;
     LpYieldFactory internal controllerFactory;
-    LpYieldOracle internal targetOracle;
     LpYieldOracle internal yieldOracle;
     LpYieldOracle internal aggregateCrvUsdOracle;
     IPegKeeperV3Factory internal factory;
@@ -39,7 +38,6 @@ contract PegKeeperV3LpFactoryTest is Test {
         targetAmm = new LpYieldTargetAmm(crvUsd, target);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         route = new LpYieldRoutePool(target, yieldToken);
-        targetOracle = new LpYieldOracle();
         yieldOracle = new LpYieldOracle();
         aggregateCrvUsdOracle = new LpYieldOracle();
         controllerFactory = new LpYieldFactory(
@@ -85,7 +83,6 @@ contract PegKeeperV3LpFactoryTest is Test {
             address(yieldToken),
             address(yieldAmm),
             false,
-            address(targetOracle),
             address(yieldOracle),
             path
         );
@@ -115,7 +112,6 @@ contract PegKeeperV3LpFactoryTest is Test {
             address(yieldToken),
             address(yieldAmm),
             false,
-            address(targetOracle),
             address(yieldOracle),
             _path()
         );

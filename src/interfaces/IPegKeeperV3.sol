@@ -72,12 +72,7 @@ interface IPegKeeperV3 {
     );
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
     event PathsUpdated(bytes32 indexed expansionPathHash, uint256 expansionMaxRouteLossBps);
-    event OraclePolicyUpdated(
-        address indexed targetOracle,
-        address indexed yieldOracle,
-        uint256 minTargetPrice,
-        uint256 minYieldPrice
-    );
+    event YieldOraclePolicyUpdated(address indexed yieldOracle, uint256 minYieldPrice);
 
     function version() external view returns (string memory);
     function name() external view returns (string memory);
@@ -97,9 +92,7 @@ interface IPegKeeperV3 {
     function yield_token_is_erc4626() external view returns (bool);
     function yield_token_assets(uint256 units) external view returns (uint256);
     function yield_token_units(uint256 assets) external view returns (uint256);
-    function target_oracle() external view returns (address);
     function yield_oracle() external view returns (address);
-    function min_target_oracle_price() external view returns (uint256);
     function min_yield_oracle_price() external view returns (uint256);
     function max_expansion_burst_bps() external view returns (uint256);
     function expansion_refill_period() external view returns (uint256);
@@ -143,7 +136,6 @@ interface IPegKeeperV3 {
         address yieldAmm,
         uint256 maxDeployedCrvUsd,
         uint256 keeperIndex,
-        address targetOracle,
         address yieldOracle
     ) external;
 
@@ -152,12 +144,7 @@ interface IPegKeeperV3 {
     function all_execution_paused() external view returns (bool);
     function set_direction_paused(uint256 direction, bool paused) external;
     function set_target_amm(address newTargetAmm, uint256 executionBufferBps) external;
-    function set_oracles(
-        address targetOracle,
-        address yieldOracle,
-        uint256 minTargetPrice,
-        uint256 minYieldPrice
-    ) external;
+    function set_yield_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
     function set_expansion_config(
         uint256 targetAmmExecutionBufferBps,
         uint256 yieldAmmExecutionBufferBps
