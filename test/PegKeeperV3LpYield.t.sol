@@ -37,6 +37,7 @@ interface ILpPegKeeperV3 {
     function accounted_lp_tokens() external view returns (uint256);
     function trusted_backing_value() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
+    function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function max_intervention_share_bps() external view returns (uint256);
     function min_intervention_delay() external view returns (uint256);
@@ -481,6 +482,16 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.set_intervention_policy(10_001, 0);
         vm.stopPrank();
+    }
+
+    function test_policyAllowsExitProfitFloorBelowEntryProfitFloor() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(targetAmm));
+
+        vm.prank(governance);
+        keeper.set_policy(500, 100, 3_000, 10_000e18, 100_000_000e18);
+
+        assertEq(keeper.entry_min_profit_ppm(), 500);
+        assertEq(keeper.normal_exit_min_profit_ppm(), 100);
     }
 
     function test_yieldOraclePolicyDefaultsToTenBasisPointFloorAndAdminCanUpdate() public {

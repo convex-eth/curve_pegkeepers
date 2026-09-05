@@ -339,8 +339,8 @@ The launch proposal deploys three paused keepers. Each receives the same fixed `
 Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
 
 ```text
-implementation initcode: 22,237 bytes
-implementation runtime:  22,104 bytes
+implementation initcode: 22,226 bytes
+implementation runtime:  22,093 bytes
 Factory core runtime:      3,780 bytes
 Factory deployed runtime:  3,844 bytes
 Chainlink oracle core:        460 bytes
@@ -348,7 +348,7 @@ Chainlink oracle runtime:     556 bytes
 preview initcode:         5,781 bytes
 preview runtime:          5,745 bytes
 minimal proxy runtime:       45 bytes
-EIP-170 headroom:          2,472 bytes
+EIP-170 headroom:          2,483 bytes
 ```
 
 The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch. `make check-release-evidence`, included by `make check`, proves those files and their verifier still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`. Full manifest verification remains intentionally checkout-sensitive.

@@ -1750,7 +1750,6 @@ def set_policy(
     """
     assert self._is_admin(msg.sender)
     assert _normal_exit_min_profit_ppm <= PPM
-    assert _normal_exit_min_profit_ppm >= _entry_min_profit_ppm
     assert _keeper_profit_share_bps <= BPS
     assert _min_expansion_amount > 0
     assert _max_deployed_crvusd > 0
