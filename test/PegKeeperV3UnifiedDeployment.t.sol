@@ -4,8 +4,8 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {DeployPegKeeperV3} from "../script/DeployPegKeeperV3.s.sol";
-import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
+import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
 import {LpYieldFactory, LpYieldOracle, LpYieldToken} from "./PegKeeperV3LpYield.t.sol";
@@ -36,50 +36,67 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             admin: makeAddr("admin"),
             emergencyAdmin: makeAddr("emergencyAdmin"),
             feeReceiver: makeAddr("feeReceiver"),
+            primaryUtilizationBps: 8_000,
             maxDeployedCrvUsd: 2_500_000e18,
-            targetAmmExecutionBufferBps: 5,
-            yieldAmmExecutionBufferBps: 7,
-            expansionMaxRouteLossBps: 100,
+            ammExecutionBufferBps: 7,
             frxUsdProxy: address(chainlinkProxy),
-            frxUsdMaxDelay: 26 hours
+            frxUsdMaxDelay: 26 hours,
+            usdeProxy: address(chainlinkProxy),
+            usdeMaxDelay: 25 hours,
+            usdcProxy: address(chainlinkProxy),
+            usdcMaxDelay: 26 hours,
+            usdtProxy: address(chainlinkProxy),
+            usdtMaxDelay: 26 hours
         });
 
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
+        IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
 
-        assertGt(deployment.previewModule.code.length, 0);
         assertGt(deployment.implementation.code.length, 0);
+        assertGt(deployment.policy.code.length, 0);
         assertGt(deployment.factory.code.length, 0);
         assertEq(factory.implementation(), deployment.implementation);
-        assertEq(IPegKeeperV3(deployment.implementation).preview_module(), deployment.previewModule);
         assertEq(factory.owner(), config.owner);
         assertEq(factory.controllerFactory(), config.controllerFactory);
-        assertEq(factory.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
+        assertEq(factory.policy(), deployment.policy);
+        assertEq(policy.owner(), config.owner);
+        assertEq(policy.factory(), address(0));
+        assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
+        assertEq(policy.primaryUtilizationBps(), config.primaryUtilizationBps);
         assertEq(factory.admin(), config.admin);
-        assertEq(factory.keeperCount(), 0);
+        assertEq(factory.activePegKeeperCount(), 0);
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
         assertEq(defaults_.admin, config.admin);
         assertEq(defaults_.emergencyAdmin, config.emergencyAdmin);
         assertEq(defaults_.feeReceiver, config.feeReceiver);
         assertEq(defaults_.maxDeployedCrvUsd, config.maxDeployedCrvUsd);
-        assertEq(defaults_.targetAmmExecutionBufferBps, config.targetAmmExecutionBufferBps);
-        assertEq(defaults_.yieldAmmExecutionBufferBps, config.yieldAmmExecutionBufferBps);
-        assertEq(defaults_.expansionMaxRouteLossBps, config.expansionMaxRouteLossBps);
+        assertEq(defaults_.ammExecutionBufferBps, config.ammExecutionBufferBps);
 
-        assertEq(deployment.previewModule, vm.computeCreateAddress(address(deployer), 1));
-        assertEq(deployment.implementation, vm.computeCreateAddress(address(deployer), 2));
+        assertEq(deployment.implementation, vm.computeCreateAddress(address(deployer), 1));
+        assertEq(deployment.policy, vm.computeCreateAddress(address(deployer), 2));
         assertEq(deployment.factory, vm.computeCreateAddress(address(deployer), 3));
         assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 4));
+        assertEq(deployment.usdeUsdOracle, vm.computeCreateAddress(address(deployer), 5));
+        assertEq(deployment.usdcUsdOracle, vm.computeCreateAddress(address(deployer), 6));
+        assertEq(deployment.usdtUsdOracle, vm.computeCreateAddress(address(deployer), 7));
         _assertChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
+        _assertChainlinkOracle(deployment.usdeUsdOracle, config.usdeProxy, config.usdeMaxDelay);
+        _assertChainlinkOracle(deployment.usdcUsdOracle, config.usdcProxy, config.usdcMaxDelay);
+        _assertChainlinkOracle(deployment.usdtUsdOracle, config.usdtProxy, config.usdtMaxDelay);
 
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
         string memory json = vm.readFile(TEST_OUTPUT);
-        assertEq(vm.parseJsonAddress(json, ".previewModule"), deployment.previewModule);
+        assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
         assertEq(vm.parseJsonAddress(json, ".implementation"), deployment.implementation);
+        assertEq(vm.parseJsonAddress(json, ".policy"), deployment.policy);
         assertEq(vm.parseJsonAddress(json, ".factory"), deployment.factory);
         assertEq(vm.parseJsonAddress(json, ".frxUsdUsdOracle"), deployment.frxUsdUsdOracle);
+        assertEq(vm.parseJsonAddress(json, ".usdeUsdOracle"), deployment.usdeUsdOracle);
+        assertEq(vm.parseJsonAddress(json, ".usdcUsdOracle"), deployment.usdcUsdOracle);
+        assertEq(vm.parseJsonAddress(json, ".usdtUsdOracle"), deployment.usdtUsdOracle);
         vm.removeFile(TEST_OUTPUT);
     }
 
@@ -91,20 +108,19 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.controllerFactory, deployer.CRVUSD_CONTROLLER_FACTORY());
         assertEq(config.aggregateCrvUsdOracle, deployer.CRVUSD_AGGREGATE_ORACLE());
         assertEq(config.admin, deployer.CURVE_OWNERSHIP_AGENT());
-        assertEq(config.emergencyAdmin, deployer.CURVE_EMERGENCY_ADMIN());
+        assertEq(config.emergencyAdmin, deployer.EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
+        assertEq(config.primaryUtilizationBps, 8_000);
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
-        assertEq(config.targetAmmExecutionBufferBps, 3);
-        assertEq(config.yieldAmmExecutionBufferBps, 3);
-        assertEq(config.expansionMaxRouteLossBps, 5);
+        assertEq(config.ammExecutionBufferBps, 3);
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
+        assertEq(config.usdeProxy, deployer.USDE_USD_PROXY());
+        assertEq(config.usdcProxy, deployer.USDC_USD_PROXY());
+        assertEq(config.usdtProxy, deployer.USDT_USD_PROXY());
         assertEq(config.frxUsdMaxDelay, 26 hours);
-    }
-
-    function test_mainnetConfigurationUsesCanonicalFrxUsdChainlinkProxyFeed() public {
-        DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
-
-        assertEq(deployer.FRXUSD_USD_PROXY(), 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83);
+        assertEq(config.usdeMaxDelay, 25 hours);
+        assertEq(config.usdcMaxDelay, 26 hours);
+        assertEq(config.usdtMaxDelay, 26 hours);
     }
 
     function _assertChainlinkOracle(address adapter, address feed, uint256 maxDelay) internal view {

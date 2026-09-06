@@ -19,20 +19,12 @@ interface YieldToken:
     def asset() -> address: view
 
 
-struct RouteStep:
-    kind: uint256
-    venue: address
-    tokenIn: address
-    tokenOut: address
-    poolIndexIn: int128
-    poolIndexOut: int128
-    executionBufferBps: uint256
+interface PegKeeperPolicy:
+    def factory() -> address: view
 
 
 interface PegKeeperV3:
     def initialize(
-        _target_amm: address,
-        _target_asset: address,
         _backing_asset: address,
         _yield_token: address,
         _yield_amm: address,
@@ -41,15 +33,7 @@ interface PegKeeperV3:
         _yield_oracle: address,
     ): nonpayable
     def initialized() -> bool: view
-    def preview_module() -> address: view
-    def setPaths(
-        _expansion_steps: DynArray[RouteStep, 16],
-        _expansion_max_route_loss_bps: uint256,
-    ): nonpayable
-    def set_expansion_config(
-        _target_amm_execution_buffer_bps: uint256,
-        _yield_amm_execution_buffer_bps: uint256,
-    ): nonpayable
+    def set_amm_execution_buffer(_execution_buffer_bps: uint256): nonpayable
 
 
 struct DeploymentDefaults:
@@ -57,9 +41,7 @@ struct DeploymentDefaults:
     emergencyAdmin: address
     feeReceiver: address
     maxDeployedCrvUsd: uint256
-    targetAmmExecutionBufferBps: uint256
-    yieldAmmExecutionBufferBps: uint256
-    expansionMaxRouteLossBps: uint256
+    ammExecutionBufferBps: uint256
 
 
 
@@ -68,18 +50,15 @@ event DefaultsUpdated:
     emergencyAdmin: indexed(address)
     feeReceiver: indexed(address)
     maxDeployedCrvUsd: uint256
-    targetAmmExecutionBufferBps: uint256
-    yieldAmmExecutionBufferBps: uint256
-    expansionMaxRouteLossBps: uint256
+    ammExecutionBufferBps: uint256
 
 
 event PegKeeperDeployed:
     index: indexed(uint256)
     pegKeeper: indexed(address)
     implementation: indexed(address)
-    targetAmm: address
+    amm: address
     yieldToken: address
-    yieldAmm: address
 
 
 event OwnershipTransferStarted:
@@ -92,16 +71,21 @@ event OwnershipTransferred:
     newOwner: indexed(address)
 
 
-event AggregateCrvUsdOracleUpdated:
-    oldOracle: indexed(address)
-    newOracle: indexed(address)
+event PolicyUpdated:
+    oldPolicy: indexed(address)
+    newPolicy: indexed(address)
+
+
+event ActiveStatusUpdated:
+    pegKeeper: indexed(address)
+    active: bool
 
 
 BPS: constant(uint256) = 10_000
 CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
 CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
 INITIALIZE_SELECTOR: constant(Bytes[4]) = method_id(
-    "initialize(address,address,address,address,address,uint256,uint256,address)"
+    "initialize(address,address,address,uint256,uint256,address)"
 )
 
 CONTROLLER_FACTORY: immutable(address)
@@ -109,13 +93,15 @@ IMPLEMENTATION: immutable(address)
 
 owner: public(address)
 pendingOwner: public(address)
-aggregateCrvUsdOracle: public(address)
+policy: public(address)
 _defaults: DeploymentDefaults
 
-keeperCount: public(uint256)
-keeperAt: public(HashMap[uint256, address])
-isPegKeeper: public(HashMap[address, bool])
-implementationOf: public(HashMap[address, address])
+_keeperCount: uint256
+activePegKeeperCount: public(uint256)
+activePegKeeperAt: public(HashMap[uint256, address])
+is_active: public(HashMap[address, bool])
+_activeIndexPlusOne: HashMap[address, uint256]
+_isDeployed: HashMap[address, bool]
 
 
 @external
@@ -123,27 +109,27 @@ def __init__(
     _initialOwner: address,
     _controllerFactory: address,
     _implementation: address,
-    _aggregateCrvUsdOracle: address,
+    _policy: address,
     _defaults: DeploymentDefaults,
 ):
     """
-    @notice Sets the owner, controller factory, base keeper code, aggregate oracle, and defaults.
+    @notice Sets the owner, controller factory, base keeper code, policy, and defaults.
     """
     if _initialOwner == empty(address) or _controllerFactory == empty(address):
         raw_revert(method_id("InvalidOwner()"))
-    if _aggregateCrvUsdOracle == empty(address) or _aggregateCrvUsdOracle.codesize == 0:
-        raw_revert(method_id("InvalidOracle()"))
+    if _policy == empty(address) or _policy.codesize == 0:
+        raw_revert(method_id("InvalidPolicy()"))
 
     CONTROLLER_FACTORY = _controllerFactory
     if not self._is_locked_implementation(_implementation):
         raw_revert(method_id("InvalidImplementation()"))
     IMPLEMENTATION = _implementation
     self.owner = _initialOwner
-    self.aggregateCrvUsdOracle = _aggregateCrvUsdOracle
+    self.policy = _policy
     self._set_defaults(_defaults)
 
     log OwnershipTransferred(empty(address), _initialOwner)
-    log AggregateCrvUsdOracleUpdated(empty(address), _aggregateCrvUsdOracle)
+    log PolicyUpdated(empty(address), _policy)
 
 
 @external
@@ -202,56 +188,41 @@ def fee_receiver() -> address:
 
 @external
 def deployPegKeeper(
-    _targetAmm: address,
-    _yieldToken: address,
-    _yieldAmm: address,
+    _amm: address,
     _yieldTokenIsErc4626: bool,
     _yieldOracle: address,
-    _expansionSteps: DynArray[RouteStep, 16],
 ) -> address:
     """
-    @notice Lets the owner deploy a paused keeper, set its token paths, and record it.
+    @notice Lets the owner deploy and record a paused direct-liquidity keeper.
     """
     self._check_owner()
+    if PegKeeperPolicy(self.policy).factory() != self:
+        raw_revert(method_id("InvalidPolicy()"))
 
-    target_asset: address = empty(address)
+    yield_token: address = empty(address)
     backing_asset: address = empty(address)
-    target_asset, backing_asset = self._resolve_assets(
-        _targetAmm,
-        _yieldToken,
-        _yieldTokenIsErc4626,
-    )
+    yield_token, backing_asset = self._resolve_assets(_amm, _yieldTokenIsErc4626)
 
-    index: uint256 = self.keeperCount + 1
+    index: uint256 = self._keeperCount + 1
     implementation: address = IMPLEMENTATION
     config: DeploymentDefaults = self._defaults
     peg_keeper: address = self._deploy_keeper(
         implementation,
-        _targetAmm,
-        target_asset,
         backing_asset,
-        _yieldToken,
-        _yieldAmm,
+        yield_token,
+        _amm,
         config.maxDeployedCrvUsd,
         index,
         _yieldOracle,
     )
 
-    PegKeeperV3(peg_keeper).setPaths(
-        _expansionSteps,
-        config.expansionMaxRouteLossBps,
-    )
-    PegKeeperV3(peg_keeper).set_expansion_config(
-        config.targetAmmExecutionBufferBps,
-        config.yieldAmmExecutionBufferBps,
-    )
+    PegKeeperV3(peg_keeper).set_amm_execution_buffer(config.ammExecutionBufferBps)
 
-    self.keeperCount = index
-    self.keeperAt[index] = peg_keeper
-    self.isPegKeeper[peg_keeper] = True
-    self.implementationOf[peg_keeper] = implementation
+    self._keeperCount = index
+    self._isDeployed[peg_keeper] = True
+    self._add_active(peg_keeper)
 
-    log PegKeeperDeployed(index, peg_keeper, implementation, _targetAmm, _yieldToken, _yieldAmm)
+    log PegKeeperDeployed(index, peg_keeper, implementation, _amm, yield_token)
     return peg_keeper
 
 
@@ -265,17 +236,36 @@ def setDefaults(_newDefaults: DeploymentDefaults):
 
 
 @external
-def setAggregateCrvUsdOracle(_newOracle: address):
+def setPolicy(_newPolicy: address):
     """
-    @notice Changes the aggregate crvUSD price source used by every keeper.
+    @notice Replaces the expansion and direction policy used by every keeper.
     """
     self._check_owner()
-    if _newOracle == empty(address) or _newOracle.codesize == 0:
-        raw_revert(method_id("InvalidOracle()"))
+    if _newPolicy == empty(address) or _newPolicy.codesize == 0:
+        raw_revert(method_id("InvalidPolicy()"))
+    if PegKeeperPolicy(_newPolicy).factory() != self:
+        raw_revert(method_id("InvalidPolicy()"))
 
-    old_oracle: address = self.aggregateCrvUsdOracle
-    self.aggregateCrvUsdOracle = _newOracle
-    log AggregateCrvUsdOracleUpdated(old_oracle, _newOracle)
+    old_policy: address = self.policy
+    self.policy = _newPolicy
+    log PolicyUpdated(old_policy, _newPolicy)
+
+
+@external
+def set_active(_peg_keeper: address, _active: bool):
+    """
+    @notice Adds or removes a factory-deployed keeper from the active policy set.
+    """
+    self._check_owner()
+    if not self._isDeployed[_peg_keeper]:
+        raw_revert(method_id("InvalidKeeper()"))
+    if self.is_active[_peg_keeper] == _active:
+        return
+
+    if _active:
+        self._add_active(_peg_keeper)
+    else:
+        self._remove_active(_peg_keeper)
 
 
 @external
@@ -330,33 +320,30 @@ def _check_owner():
 @internal
 @view
 def _resolve_assets(
-    _targetAmm: address,
-    _yieldToken: address,
+    _amm: address,
     _yieldTokenIsErc4626: bool,
 ) -> (address, address):
     crv_usd: address = ControllerFactory(CONTROLLER_FACTORY).stablecoin()
-    coin_0: address = TwoCoinPool(_targetAmm).coins(0)
-    coin_1: address = TwoCoinPool(_targetAmm).coins(1)
-    target_asset: address = empty(address)
+    coin_0: address = TwoCoinPool(_amm).coins(0)
+    coin_1: address = TwoCoinPool(_amm).coins(1)
+    yield_token: address = empty(address)
 
     if coin_0 == crv_usd and coin_1 != crv_usd:
-        target_asset = coin_1
+        yield_token = coin_1
     elif coin_1 == crv_usd and coin_0 != crv_usd:
-        target_asset = coin_0
+        yield_token = coin_0
     else:
-        raw_revert(method_id("InvalidTargetAmm()"))
+        raw_revert(method_id("InvalidAmm()"))
 
-    backing_asset: address = _yieldToken
+    backing_asset: address = yield_token
     if _yieldTokenIsErc4626:
-        backing_asset = YieldToken(_yieldToken).asset()
-    return target_asset, backing_asset
+        backing_asset = YieldToken(yield_token).asset()
+    return yield_token, backing_asset
 
 
 @internal
 def _deploy_keeper(
     _implementation: address,
-    _targetAmm: address,
-    _targetAsset: address,
     _backingAsset: address,
     _yieldToken: address,
     _yieldAmm: address,
@@ -379,8 +366,6 @@ def _deploy_keeper(
     initialized: bool = raw_call(
         peg_keeper,
         _abi_encode(
-            _targetAmm,
-            _targetAsset,
             _backingAsset,
             _yieldToken,
             _yieldAmm,
@@ -397,6 +382,34 @@ def _deploy_keeper(
 
 
 @internal
+def _add_active(_peg_keeper: address):
+    index: uint256 = self.activePegKeeperCount
+    self.activePegKeeperAt[index] = _peg_keeper
+    self._activeIndexPlusOne[_peg_keeper] = index + 1
+    self.activePegKeeperCount = index + 1
+    self.is_active[_peg_keeper] = True
+    log ActiveStatusUpdated(_peg_keeper, True)
+
+
+@internal
+def _remove_active(_peg_keeper: address):
+    index_plus_one: uint256 = self._activeIndexPlusOne[_peg_keeper]
+    assert index_plus_one != 0
+    index: uint256 = index_plus_one - 1
+    last_index: uint256 = self.activePegKeeperCount - 1
+    if index != last_index:
+        moved: address = self.activePegKeeperAt[last_index]
+        self.activePegKeeperAt[index] = moved
+        self._activeIndexPlusOne[moved] = index + 1
+
+    self.activePegKeeperAt[last_index] = empty(address)
+    self._activeIndexPlusOne[_peg_keeper] = 0
+    self.activePegKeeperCount = last_index
+    self.is_active[_peg_keeper] = False
+    log ActiveStatusUpdated(_peg_keeper, False)
+
+
+@internal
 def _set_defaults(_newDefaults: DeploymentDefaults):
     if (
         _newDefaults.admin == empty(address)
@@ -407,9 +420,7 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
         or _newDefaults.emergencyAdmin == self
         or _newDefaults.feeReceiver == self
         or _newDefaults.maxDeployedCrvUsd == 0
-        or _newDefaults.targetAmmExecutionBufferBps > BPS
-        or _newDefaults.yieldAmmExecutionBufferBps > BPS
-        or _newDefaults.expansionMaxRouteLossBps > BPS
+        or _newDefaults.ammExecutionBufferBps > BPS
     ):
         raw_revert(method_id("InvalidDefaults()"))
 
@@ -419,9 +430,7 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
         _newDefaults.emergencyAdmin,
         _newDefaults.feeReceiver,
         _newDefaults.maxDeployedCrvUsd,
-        _newDefaults.targetAmmExecutionBufferBps,
-        _newDefaults.yieldAmmExecutionBufferBps,
-        _newDefaults.expansionMaxRouteLossBps,
+        _newDefaults.ammExecutionBufferBps,
     )
 
 
@@ -439,16 +448,6 @@ def _is_locked_implementation(_candidate: address) -> bool:
         is_static_call=True,
         revert_on_failure=False,
     )
-    if not ok or len(response) != 32 or not _abi_decode(response, bool):
-        return False
-    ok, response = raw_call(
-        _candidate,
-        method_id("preview_module()"),
-        max_outsize=32,
-        is_static_call=True,
-        revert_on_failure=False,
-    )
     if not ok or len(response) != 32:
         return False
-    module: address = _abi_decode(response, address)
-    return module != empty(address) and module.codesize > 0
+    return _abi_decode(response, bool)

@@ -1,260 +1,286 @@
-# PegKeeper V3 LP-yield specification
+# PegKeeper V3 direct-liquidity specification
 
-Status: unreleased `3.3.0` candidate on the `lp-yield` branch. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
+Status: unreleased `3.4.0` candidate on branch `lp-yield`. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
 
-## Model
+## 1. Scope
 
-PegKeeper V3 holds a Curve two-coin pool's LP token as backing.
+PegKeeperV3 owns and accounts for liquidity in exactly one Curve two-coin pool containing crvUSD and one paired token.
 
-Each deployment fixes:
+Each proxy fixes:
 
-- `targetAmm`: the crvUSD/target pool used to detect and execute expansion;
-- `targetAsset`: the non-crvUSD coin in `targetAmm`;
-- `yieldToken`: the non-crvUSD coin paired with crvUSD in the backing pool;
-- `yieldAmm`: the Curve backing pool and its ERC-20 LP token;
-- `backingAsset`: `yieldToken` in vanilla mode or `yieldToken.asset()` in ERC-4626 mode;
-- one mandatory retained-backing oracle for `yieldToken`.
+- `yield_amm`: the pool and its LP token;
+- `yield_token`: the non-crvUSD pool coin;
+- `backing_asset`: `yield_token`, or `yield_token.asset()` in ERC-4626 mode;
+- `yield_oracle`: an independent USD oracle for retained backing;
+- local capacity, intervention, profit, velocity, role, and pause state.
 
-The Factory stores the shared aggregate crvUSD price oracle used by every keeper. Factory ownership may replace it through `setAggregateCrvUsdOracle()`; replacement addresses must contain code.
+The core contains no target AMM, swap operation, route struct, path storage, route loss bound, DAI/USDS adapter, ERC-4626 route operation, Frax minter operation, or detached preview module.
 
-`yieldAmm` must:
+The AMM must:
 
-- contain exactly crvUSD and `yieldToken`;
-- expose an 18-decimal ERC-20 LP token at the pool address;
+- contain exactly crvUSD and `yield_token`;
+- expose its 18-decimal LP token at the pool address;
 - implement StableSwap-NG dynamic-array `calc_token_amount(uint256[],bool)` and `add_liquidity(uint256[],uint256)`;
-- implement `get_virtual_price()`, `calc_withdraw_one_coin(uint256,int128)`, and `remove_liquidity_one_coin(uint256,int128,uint256)`.
+- implement `balances(uint256)`, `get_virtual_price()`, `calc_withdraw_one_coin(uint256,int128)`, and `remove_liquidity_one_coin(uint256,int128,uint256)`.
 
-The initial configuration uses the frxUSD/crvUSD StableSwap-NG pool for every keeper:
+## 2. Shared contracts
 
-```text
-yieldAmm   = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1
-yieldToken = frxUSD
-yield coins: frxUSD[0], crvUSD[1]
+### 2.1 PegKeeperV3Factory
+
+The Factory is responsible for:
+
+- the immutable ControllerFactory and locked implementation;
+- dynamic `admin`, `emergency_admin`, and `fee_receiver` roles;
+- deployment defaults;
+- the active policy pointer exposed as `policy()`;
+- deploying EIP-1167 proxies;
+- an indexed active-keeper list and `is_active(address)` membership;
+- owner-controlled keeper activation/deactivation and policy replacement.
+
+It does not own the aggregate oracle or expansion-direction logic.
+
+The public active registry is:
+
+```solidity
+function activePegKeeperCount() external view returns (uint256);
+function activePegKeeperAt(uint256 index) external view returns (address);
+function is_active(address keeper) external view returns (bool);
 ```
 
-The keeper does not hold a configurable contraction route. It does not retain target assets after a failed expansion. It does not expose undeployed-backing maintenance or direct inventory buyback.
+Deactivation uses pop-and-swap list removal and updates the moved keeper's index. A previously deployed keeper can be reactivated exactly once without duplicate list entries.
 
-## Supply accounting
+Deployment is blocked until `policy.factory() == address(factory)`. Factory policy replacement requires the replacement to contain code and already be bound to this Factory.
 
-`deployedCrvUsd` records crvUSD externalized by successful expansion, donation matching, or a surplus claim. Idle crvUSD held by the keeper is not counted as deployed debt.
+### 2.2 PegKeeperPolicy
 
-A normal expansion spends two crvUSD amounts:
+`PegKeeperPolicy` owns configurable cross-keeper admission rules:
 
-```text
-X = crvUSD sold in targetAmm
-Y = normalized backing-asset value of all yieldToken deposited into yieldAmm
-principal increase = X + Y
-```
+- aggregate crvUSD oracle;
+- primary utilization threshold;
+- one primary;
+- multiple indexed secondaries;
+- multiple indexed tertiaries;
+- `can_allocate`, `can_expand`, `can_contract`, and `expansion_regime` decisions.
 
-`Y` includes both freshly acquired yield tokens and pre-existing donated yield tokens. This means the matched crvUSD is part of exposure, capacity, Factory debt-ceiling, idle-balance, and leaky-bucket checks. Counting only `X` would understate supply.
+It binds to one Factory once. Its owner and the Factory owner are independently transferable through two-step ownership.
 
-Contraction reduces `deployedCrvUsd` by the crvUSD retained after the keeper reward. Any terminal amount above remaining debt is transferred to the Factory's current fee receiver.
+The policy may be replaced without redeploying keepers because each keeper reads `factory.policy()` dynamically.
 
-`debt()` returns `deployedCrvUsd` for aggregate monetary-policy integration.
+## 3. Expansion admission
 
-## LP backing value
+A keeper exposes `can_expand_without_policy()`. This is a non-recursive local probe covering:
 
-The complete held LP position is authoritative:
+- global and expansion pauses;
+- shared intervention delay;
+- normalized local pool deficit;
+- minimum expansion amount;
+- idle crvUSD;
+- local and ControllerFactory capacity;
+- velocity availability;
+- retained-backing oracle floor;
+- direct AMM quote, entry-profit floor, reward, and final solvency preview.
 
-```text
-lpValue = floor(yieldAmm.balanceOf(keeper) * yieldAmm.get_virtual_price() / 1e18)
-```
+Expected economic failure returns `false`. A malformed or reverting external dependency may revert; policy calls the probe with a low-level static call and treats failure as unavailable.
 
-This convention is valid only under the approved equivalent-asset/rate-aware-pool assumption. Governance is responsible for choosing a pool whose virtual price correctly incorporates its coins' exchange rates and whose assets are acceptable nominal backing.
+`policy.can_expand(keeper)` requires:
 
-For an ERC-4626 `yieldToken`, the pool's virtual price is still the sole persistent LP valuation rate. V3 must not apply `convertToAssets()` again to the LP value. That would double-count share appreciation already incorporated by the pool.
+1. a valid aggregate crvUSD price at least `1e18`;
+2. Factory active membership;
+3. a configured tier and satisfied priority rule;
+4. a successful local keeper probe.
 
-`yield_token_assets()` and `yield_token_units()` remain route and matching helpers. They are not applied to held LP tokens.
+### 3.1 Priority rules
 
-The mandatory yield-token oracle gates operations that settle retained backing and conservatively haircuts `oracle_backing_value()`. Its default and proposed launch floor is `0.999e18`, ten basis points below par. Transient target assets have no oracle configuration or gate because successful expansion must route them completely into `yieldToken` and then atomically settle into LP; route quotes, absolute-value floors, measured deltas, and route-loss bounds protect that transit. The Factory's aggregate crvUSD oracle gates monetary direction. `trusted_backing_value()` uses LP virtual price directly. Virtual price is an accounting value, not an executable withdrawal quote.
-
-Aggregate direction boundaries are exact:
-
-```text
-aggregate crvUSD price < 1e18: expansion forbidden; contraction allowed
-aggregate crvUSD price = 1e18: expansion and contraction allowed
-aggregate crvUSD price > 1e18: expansion allowed; contraction forbidden
-```
-
-Both execution and previews use the same boundary. Oracle failure or returndata other than exactly 32 bytes fails closed.
-
-## Local intervention share and pacing
-
-Two keeper-local parameters bound price-moving monetary intervention independently from capacity and velocity:
+Tier values are:
 
 ```text
-maxInterventionShareBps = 3_333
-minInterventionDelay    = 12 seconds
+0 none
+1 primary
+2 secondary
+3 tertiary
 ```
 
-For expansion, let `C` be the target AMM's crvUSD balance and `T` its normalized target-asset balance. Plain target assets use their decimal multiplier. When `targetAsset == yieldToken`, the balance is valued through the same trusted yield-token conversion, including `convertToAssets` for ERC-4626 shares. The requested first leg is bounded by:
+Primary:
 
 ```text
-expansionDeficit   = max(T - C, 0)
-expansionAllowance = floor(expansionDeficit * maxInterventionShareBps / 10_000)
-require requestedCrvUsd <= expansionAllowance
+candidate must be active and locally expandable
 ```
 
-For contraction, let `C` be the yield AMM's crvUSD balance and `Y` the trusted normalized value of its yield-token balance:
+Secondary:
 
 ```text
-contractionExcess    = max(C - Y, 0)
-contractionAllowance = floor(contractionExcess * maxInterventionShareBps / 10_000)
-require quotedCrvUsdOut <= contractionAllowance
-require actualCrvUsdOut <= contractionAllowance
+candidate must be active and locally expandable
+AND
+(
+    primary is not locally expandable
+    OR
+    primary utilization >= primaryUtilizationBps
+)
 ```
 
-Checking both the quote and measured receipt prevents favorable execution from crossing the pre-action cap. The allowance multiplication uses integer-floor rounding in preview and execution.
-
-`lastInterventionAt` records only successful `expand()` and `contractViaAmm()` calls after every accounting and solvency check passes. The first intervention is immediately available; later interventions in either direction require at least `minInterventionDelay` seconds since the last one. Governance may set the delay to zero. This is a shared operation-pacing control, not LP maturity or a holding period: it never assigns age to fungible LP.
-
-Acquired-yield matching and donation settlement are not counted against the local share. `sweepDonatedYield()` and donation settlement inside `claimSurplus()` do not update `lastInterventionAt`; dust cannot postpone a monetary intervention. Their existing regime-aware exact-balance rule independently prevents donation settlement from overshooting the yield pool.
-
-## Expansion
-
-Expansion is keeper-driven and all-or-nothing.
-
-### Separate target and yield pools
-
-For an input `X`:
-
-1. Verify expansion/global pause state, aggregate crvUSD price at least `1e18`, shared intervention delay, local target-pool allowance, amount floor, and yield-token oracle.
-2. Swap exactly `X` crvUSD through `targetAmm` and verify measured input/output deltas.
-3. Execute the configured typed expansion path from `targetAsset` to `yieldToken` synchronously.
-4. Revert the whole transaction if any target swap, route step, allowance reset, measured delta, route-loss bound, or endpoint check fails.
-5. Read the complete live `yieldToken` balance. This sweeps freshly acquired and donated yield tokens in the same operation.
-6. Convert that balance to normalized backing value `Y` and require an additional `Y` crvUSD.
-7. Count `X + Y` against idle crvUSD, local capacity, Factory debt ceiling, and expansion velocity.
-8. Add `Y` crvUSD and all yield tokens to `yieldAmm` using its dynamic-array StableSwap-NG ABI.
-9. Enforce a quote-derived `minLp`, exact crvUSD/yield-token spending, measured LP receipt, retained-profit floor, and final solvency.
-10. Pay the keeper reward in LP tokens and increase `deployedCrvUsd` by `X + Y`.
-
-Example:
+Tertiary:
 
 ```text
-500 crvUSD -> 500 USDT -> 500 frxUSD
-then add 500 frxUSD + 500 additional crvUSD
-total LP notional: 1,000
-deployedCrvUsd increase: 1,000
+candidate must be active and locally expandable
+AND primary is not locally expandable
+AND every active secondary is not locally expandable
 ```
 
-### Shared target and yield pool
-
-When `targetAmm == yieldAmm`, `targetAsset` must equal `yieldToken` and the expansion path must be empty. V3 does not swap before providing liquidity.
-
-For requested amount `X` and pre-existing donated yield value `D`:
+The `80%` primary utilization check uses:
 
 ```text
-pool deposit = (X + D) crvUSD + donated yieldToken
-principal increase = X + D
+used = primary.debt()
+cap  = min(
+    primary.max_deployed_crvusd(),
+    ControllerFactory.debt_ceiling(primary)
+)
+require used >= ceil(cap * 8_000 / 10_000)
 ```
 
-With no donated yield token, V3 deposits only `X` crvUSD. This is the direct-pool special case. Donations are still swept and matched; they are not stranded.
+Raw crvUSD token balance is excluded. Reconstructing capacity as `balance + debt` would allow direct token donations to raise the denominator and delay lower tiers.
 
-## Donation and reward attribution
+The policy permits at most 256 configured secondaries. Tertiary admission loops over exactly that bounded set, so no configured secondary can sit beyond the checked iteration range.
 
-A yield-token donation is protocol property, not keeper-created profit. Expansion therefore uses this baseline:
+No priority logic is hard-coded in the Factory or keeper.
+
+### 3.2 Allocation admission
+
+`can_allocate(keeper)` applies active membership and tier ordering without requiring the candidate's direct AMM probe. This is used for debt-increasing donation matches. A lower-priority keeper may always settle a donation one-sided, but it may increase crvUSD debt only when allocation priority allows.
+
+## 4. Aggregate direction
+
+The policy reads the aggregate oracle with exact 32-byte returndata checks.
 
 ```text
-baseline = LP value before + normalized donated yieldToken value before
-principal = all crvUSD spent by this expansion
-position gain = LP value after - baseline
-realized profit = max(position gain - principal, 0)
+aggregate price < 1e18: can_expand = false; can_contract = true
+aggregate price = 1e18: can_expand = true;  can_contract = true
+aggregate price > 1e18: can_expand = true;  can_contract = false
 ```
 
-The keeper receives:
+Aggregate-oracle failure fails closed. Contraction verifies that the caller keeper belongs to the bound Factory but deliberately does not require active membership. Offboarding must not trap unwind.
+
+## 5. Direct expansion
+
+For requested crvUSD `X` and selected donated paired-token value `D`:
 
 ```text
-rewardValue = floor(realizedProfit * keeperProfitShareBps / 10_000)
-rewardLp    = floor(rewardValue * 1e18 / postDepositVirtualPrice)
+crvUSD deposited = X + D
+paired token deposited = loose paired-token balance
+recorded debt increase = X + D
 ```
 
-After reward, retained LP value above the donation-adjusted baseline must cover principal plus the entry margin. A caller cannot donate yield tokens and claim a percentage of the donation as action profit.
-
-Direct LP-token donations increase backing and surplus immediately through the live LP balance. They are not action-local expansion output.
-
-## Dedicated yield-token donation sweep
-
-`sweepDonatedYield(maxYieldTokenAmount)` is a permissionless LP-deployment action for loose `yieldToken` received outside an expansion. It is independent of the target AMM and typed expansion path, so target-market conditions do not prevent donated frxUSD from entering the fixed LP.
-
-Let `D` be the normalized value of the selected donation, `C` the yield AMM's crvUSD balance, and `Y` the normalized value of its yield-token balance. The desired crvUSD match is:
-
-```text
-aggregate price >= 1e18: desiredMatch = D
-aggregate price <  1e18: desiredMatch = min(D, max(Y + D - C, 0))
-actualMatch = min(desiredMatch, available crvUSD/capacity/velocity budget)
-```
-
-Below peg, the donation is deposited one-sided while it reduces an existing crvUSD excess. Only the portion that would otherwise overshoot balance is matched. For example, `500 crvUSD / 450 frxUSD` plus a `100 frxUSD` donation deposits `50 crvUSD / 100 frxUSD`, ending at `550 / 550`.
+With no donation, expansion is a one-sided `X` crvUSD deposit into the keeper's own pool.
 
 The call:
 
-1. selects at most `maxYieldTokenAmount` from the live donated yield-token balance;
-2. requires its normalized value to meet `minExpansionAmount`;
-3. requires a healthy yield-token oracle;
-4. determines the regime-aware, balance-restoring crvUSD match above;
-5. consumes expansion capacity and velocity by only that matched crvUSD;
-6. deposits both assets atomically into `yieldAmm` and measures exact token and LP deltas;
-7. increases `deployedCrvUsd` by only the matched crvUSD.
+1. checks pauses, amount floor, `policy.can_expand(self)`, intervention delay, and local deficit share;
+2. checks retained-backing oracle health;
+3. values loose paired tokens;
+4. checks idle balance, local/Factory cap, and velocity for total matched crvUSD;
+5. quotes and performs direct `add_liquidity` with one AMM execution buffer;
+6. measures exact crvUSD, paired-token, and LP deltas;
+7. computes gross action profit before caller reward;
+8. pays the configured reward in LP;
+9. increases `deployed_crvusd` by actual matched crvUSD;
+10. checks final retained backing and records intervention time.
 
-The amount bound allows a large donation to be swept in executable chunks rather than forcing an all-balance operation. Expansion and global pauses still block the action. The selected donation is always LP-settled atomically; only its crvUSD match consumes capacity and velocity or increases debt.
+`previewExpansion` executes the same direct accounting and safety predicates without state changes.
 
-Donation value is excluded from keeper-profit attribution. It may absorb LP deposit cost because it is free protocol equity, but after any reward the LP-value increase must still cover the newly matched crvUSD plus the configured entry margin. Any failure reverts the complete sweep.
+## 6. LP and ERC-4626 valuation
 
-## Static LP contraction
-
-`contractViaAmm(lpTokenAmount)` requires aggregate crvUSD price at most `1e18` and has one fixed path:
-
-```text
-held yieldAmm LP
-    -> remove_liquidity_one_coin(lpTokenAmount, crvUsdIndex, minCrvUsd)
-    -> crvUSD
-```
-
-Execution uses:
+Persistent backing is the complete held LP balance:
 
 ```text
-quote       = yieldAmm.calc_withdraw_one_coin(lpTokenAmount, crvUsdIndex)
-minCrvUsd   = floor(quote * (10_000 - yieldAmmExecutionBufferBps) / 10_000)
-valueBefore = floor(lpBefore * vpBefore / 1e18)
-valueAfter  = floor(lpAfter  * vpAfter  / 1e18)
-valueRemoved = valueBefore - valueAfter
+lpValue = floor(yieldAmm.balanceOf(keeper) * get_virtual_price() / 1e18)
 ```
 
-The call requires:
+For an ERC-4626 paired token:
 
-- exact requested LP burn by measured balance delta;
-- quoted and measured crvUSD output no greater than the pre-action local contraction allowance;
-- measured crvUSD receipt at least `minCrvUsd`;
-- `valueBefore >= valueAfter` and positive `valueRemoved`;
-- realized gross profit at least `500 ppm` (`5 bp`) of `valueRemoved`, before the caller share is paid;
-- remaining LP value at least remaining `deployedCrvUsd`.
+- loose share balances and pool-balance normalization use `convertToAssets()`;
+- persistent LP uses only `get_virtual_price()`;
+- the ERC-4626 rate must not be applied again to LP value.
 
-Virtual price is deliberately not used as `minCrvUsd`. The executable one-coin quote provides slippage protection; whole-position virtual-price deltas provide accounting.
+This is valid only for certified pools whose rates and virtual price coherently represent the underlying assets.
 
-`previewKeeperBuyback(lpTokenAmount)` estimates the same fixed one-coin withdrawal and enforces pause state, aggregate direction, intervention delay, local contraction allowance, the gross exit margin, and final backing-versus-debt solvency before returning. Its input is LP tokens and no configurable path executes.
+The retained-backing oracle is independent of pool virtual price and caps its valuation contribution at `$1`. The proposed floor is `0.999e18`.
 
-At the exact `5 bp` gross boundary, a `30%` caller share pays `1.5 bp` to the keeper and leaves `3.5 bp` for the protocol. Deficit recovery is principal rather than gross profit, so any required solvency recovery must occur before this split. Same-block direct expansion, routed expansion, and donation-sweep round trips without `5 bp` of realized gross edge fail in both preview and execution. Curve entry/exit fees and slippage reduce rather than create the required edge.
+## 7. Donations and profit attribution
 
-## Typed expansion routes
+A paired-token donation is protocol property, not caller-created profit.
 
-Only the expansion path remains configurable. Supported route kinds are:
+```text
+accounting baseline = LP value before + normalized donated token value
+principal           = crvUSD deposited
+realized gross       = max(LP value after - baseline - principal, 0)
+```
 
-| Kind | Operation |
-|---:|---|
-| `0` | Curve exact-input swap |
-| `1` | Dai <-> USDS |
-| `2` | ERC-4626 deposit |
-| `3` | ERC-4626 redeem |
-| `4` | Frax USDC -> frxUSD mint |
+Caller reward is calculated only from realized gross profit. The retained LP must still satisfy the entry floor and cover resulting debt.
 
-A nonempty path must start with `targetAsset`, preserve token continuity, and end with `yieldToken`. It is empty only when `targetAsset == yieldToken`. The route is exact-input, uses temporary exact approvals reset to zero, enforces per-step quote floors and normalized loss bounds, and reverts the complete expansion on failure.
+`sweepDonatedYield(maxAmount)`:
 
-There is no isolated downstream subcall, fallback settlement gas reserve, downstream-deployment pause, contraction path, or later undeployed-backing action.
+- settles selected loose paired tokens into the AMM;
+- requires oracle health and amount floor;
+- matches crvUSD only when `policy.can_allocate(self)`;
+- at/above aggregate `$1`, targets a full value match;
+- below aggregate `$1`, matches only the amount needed to avoid overshooting normalized pool balance;
+- consumes capacity and velocity only for actual crvUSD matched;
+- does not update the monetary-intervention timestamp.
 
-## Pauses and roles
+`claimSurplus()` performs the same donation settlement before transferring claimable idle crvUSD to the live Factory fee receiver.
 
-Directions are:
+## 8. Static contraction
+
+`contractViaAmm(lpAmount)` has one path:
+
+```text
+held LP
+  -> remove_liquidity_one_coin(lpAmount, crvUsdIndex, minCrvUsd)
+  -> crvUSD
+```
+
+It requires:
+
+- contraction/global pauses open;
+- `policy.can_contract(self)`;
+- shared intervention delay;
+- quote and measured output within the normalized local crvUSD excess share;
+- measured output at least the quote-buffer minimum;
+- positive value removed;
+- configured gross exit profit before reward;
+- final retained LP backing at least remaining debt.
+
+Contraction reduces debt by crvUSD retained after reward. Any amount above remaining debt is terminal surplus transferred to the fee receiver.
+
+Entry and normal-exit profit floors are independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`.
+
+## 9. Policy-gated external draw
+
+The Factory admin may call:
+
+```solidity
+borrow_crvusd(uint256 amount, address receiver)
+```
+
+The function requires:
+
+- nonzero amount and receiver;
+- expansion/global pauses open and the intervention delay elapsed;
+- amount at least `min_expansion_amount` and within the current normalized local imbalance bound;
+- a healthy retained-backing oracle;
+- `factory.policy().can_expand(address(this))`;
+- resulting debt within the local cap and ControllerFactory ceiling;
+- sufficient idle crvUSD;
+- sufficient velocity.
+
+It increments `deployed_crvusd`, updates the intervention timestamp, transfers exactly `amount`, and emits `CrvUsdBorrowed`.
+
+This enables an external arbitrage/liquidity module without restoring routing to the keeper. The draw itself cannot verify the LP or other backing returned later by that module. Production use must make draw, external execution, LP delivery, and postconditions atomic at the caller/module transaction layer. Governance must not split that workflow across transactions.
+
+`reduce_deployed_crvusd(amount)` remains the admin-only inverse bookkeeping operation.
+
+## 10. Pauses and roles
+
+Directions:
 
 ```text
 0 expansion
@@ -262,105 +288,85 @@ Directions are:
 2 all execution
 ```
 
-Factory `admin()` may pause or unpause. `emergency_admin()` may only pause. Every proxy starts with all three directions paused.
+Factory `admin()` may pause or unpause. `emergency_admin()` may only pause. Every Factory-created keeper starts fully paused.
 
-The Factory's immutable implementation/proxy design, existing dynamic shared roles, `execute()` recovery hook, `reduce_deployed_crvusd()`, ownership transfer, and fee-receiver handling remain unchanged. The aggregate oracle joins the Factory's live shared policy.
+`execute(target,value,data)` remains an admin-only arbitrary execution/recovery hook with bubbled revert data. It is not permissionless and does not silently modify debt.
 
-## Capacity and velocity
+## 11. Capacity and velocity
 
-Expansion consumes pressure by total crvUSD externalized, including matched liquidity. The default bucket remains:
+Expansion, donation matching, surplus claims, and `borrow_crvusd` consume velocity by actual crvUSD debt increase.
+
+Default bucket:
 
 ```text
-max burst = 5% of maxDeployedCrvUsd
+max burst = 5% of max_deployed_crvusd
 full refill = 300 seconds
 ```
 
-A reverted expansion, donation sweep, or surplus claim consumes no pressure. Contraction does not refund pressure. The bucket remains active alongside the local intervention share and delay; none replaces another.
+`available_expansion()` returns zero unless policy admission passes. Otherwise it reports the minimum of local imbalance allowance, idle crvUSD, local/Factory capacity, and velocity.
 
-`available_expansion()` returns zero while expansion/global execution is paused, aggregate crvUSD price is below `1e18`, or the intervention delay has not elapsed. Otherwise it reports the minimum of the local target-pool allowance, idle balance, local/Factory capacity, and velocity. A separate-pool caller must preview its proposed first-leg amount because matched crvUSD makes total consumption larger than the `expand()` input.
+## 12. Factory deployment and active lifecycle
 
-## Surplus
-
-`protocol_surplus()` is LP value above `deployedCrvUsd`. Before calculating claimable profit, `claimSurplus()` LP-settles the complete loose yield-token balance using the same regime-aware matching rule as the dedicated sweep. It reserves capacity and velocity for the requested claim before optional donation matching. It then transfers only idle crvUSD, remains velocity/capacity bounded, increases `deployedCrvUsd`, and must leave LP backing solvent.
-
-`claimSurplus()` is deliberately not aggregate-direction-gated: realized yield remains claimable during contraction cycles. Donation value becomes protocol LP equity rather than a direct token payout. LP tokens and loose yield tokens are never sent as fees.
-
-## Public action surface
+Factory deployment:
 
 ```solidity
-function expand(uint256 crvUsdAmount) external returns (
-    uint256 crvUsdSold,
-    uint256 crvUsdMatched,
-    uint256 lpTokensReceived,
-    uint256 keeperRewardLp,
-    bool directDeposit
-);
-
-function sweepDonatedYield(uint256 maxYieldTokenAmount) external returns (
-    uint256 yieldTokenSwept,
-    uint256 crvUsdMatched,
-    uint256 lpTokensReceived,
-    uint256 keeperRewardLp
-);
-
-function previewExpansion(uint256 crvUsdAmount) external view returns (
-    uint256 expectedTargetOut,
-    uint256 expectedCrvUsdMatched,
-    uint256 expectedGrossProfit,
-    uint256 expectedKeeperRewardLp,
-    uint256 expectedLpTokens,
-    bool directDeposit
-);
-
-function contractViaAmm(uint256 lpTokenAmount) external returns (
-    uint256 lpTokensBurned,
-    uint256 crvUsdReceived,
-    uint256 keeperReward
-);
-
-function previewKeeperBuyback(uint256 lpTokenAmount) external view returns (
-    uint256 expectedCrvUsd,
-    uint256 expectedGrossProfit,
-    uint256 expectedKeeperReward
-);
-
-function set_intervention_policy(
-    uint256 maxInterventionShareBps,
-    uint256 minInterventionDelay
-) external;
+deployPegKeeper(
+    address amm,
+    bool yieldTokenIsErc4626,
+    address yieldOracle
+)
 ```
 
-## Deployment and release state
+The Factory derives the non-crvUSD coin, derives ERC-4626 backing when requested, creates one minimal proxy, initializes it, applies roles/defaults, adds it to the active list, and emits `PegKeeperDeployed`.
 
-The environment-free deployer creates four contracts: preview module, locked implementation, Factory, and one frxUSD Chainlink adapter. The Factory is initialized with the existing canonical aggregate crvUSD oracle. It no longer creates target-token oracle adapters or FraxNet redemption accounts.
+Historical deployment membership is private. The public policy-facing registry contains only active keepers.
 
-The launch proposal deploys three paused keepers. Each receives the same fixed `yieldAmm` and `yieldToken = frxUSD`; USDC and USDT retain their typed expansion paths. No contraction path calldata exists.
+## 13. Candidate launch
 
-Current compiled bounds under Vyper `0.3.10 --optimize codesize`, Shanghai:
+| Tier | AMM | Paired token | Backing oracle | Local max | Initial Factory ceiling |
+|---|---|---|---|---:|---:|
+| Primary | frxUSD/crvUSD | frxUSD | frxUSD/USD | 20m | 20m |
+| Secondary | crvUSD/sUSDe | sUSDe | USDe/USD | provisional 20m | 0 |
+| Tertiary | USDC/crvUSD | USDC | USDC/USD | 20m | 20m |
+| Tertiary | USDT/crvUSD | USDT | USDT/USD | 20m | 20m |
+
+All keepers are deployed, registered in both aggregate monetary policies, tiered, and left fully paused. There is no sUSDe production allocation action.
+
+The dependency deployer creates implementation, policy, Factory, and four Chainlink adapters. The governance proposal first binds policy, then deploys/configures keepers.
+
+## 14. Compiled identity
+
+Pinned Vyper `0.3.10`, codesize optimization, Shanghai:
 
 ```text
-implementation initcode: 22,226 bytes
-implementation runtime:  22,093 bytes
-Factory core runtime:      3,780 bytes
-Factory deployed runtime:  3,844 bytes
-Chainlink oracle core:        460 bytes
-Chainlink oracle runtime:     556 bytes
-preview initcode:         5,781 bytes
-preview runtime:          5,745 bytes
-minimal proxy runtime:       45 bytes
-EIP-170 headroom:          2,483 bytes
+PegKeeperV3 version:       3.4.0
+implementation initcode: 17,809 bytes
+implementation runtime:  17,728 bytes
+implementation hash:
+0x761bda3d95295abaf70c2eae5958fda8131239975b8095963f81ebd25f60483a
+EIP-170 headroom:          6,848 bytes
+
+PegKeeperPolicy runtime:   4,394 bytes
+policy hash:
+0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078
+
+Factory semantic runtime:  3,839 bytes
+Factory deployed runtime:  3,903 bytes
+Factory semantic hash:
+0x18ce5dfa53fce0917c30401a04f1e317dda0413be53c19dc5948fccc1c1200fd
 ```
 
-The published `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` describe the earlier `3.0.0` release candidate. They are intentionally not rewritten as evidence for this unreleased branch. `make check-release-evidence`, included by `make check`, proves those files and their verifier still match commit `c3a07b66517d91430c0b739f86e4b7c921d9510f`. Full manifest verification remains intentionally checkout-sensitive.
+The historical `3.0.0` manifest and release checklist remain frozen and are not evidence for this candidate.
 
-## Required verification
+## 15. Required verification before any release
 
-Before this variant can replace the released baseline:
+1. Compile under pinned Vyper/Solidity and Shanghai settings.
+2. Pass unit, policy, Factory, deployment, proposal, runtime, and ABI-parity checks.
+3. Pass stateful backing/capacity/allowance/action-reachability invariants.
+4. Execute the full Curve ownership vote on a pinned fork.
+5. Execute live direct expansion/contraction canaries without oracle mocks.
+6. Reconfirm pool coin order, rate behavior, virtual price, fees, liquidity, oracle heartbeats, and ControllerFactory capacity at a current block.
+7. Generate a new release manifest; never relabel historical evidence.
+8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-1. Compile with pinned Vyper and Shanghai settings.
-2. Run unit, Factory, deployment, proposal, ABI-parity, and runtime-size checks.
-3. Run the pinned mainnet canary through real StableSwap-NG dynamic-array deposits and one-coin withdrawal.
-4. Re-run stateful invariants for LP backing, donations, capacity, velocity, pauses, exact approvals, and debt reduction.
-5. Re-pin current mainnet routes, retained-backing oracle state, pool coin order, liquidity, fees, virtual price, and one-coin exit economics.
-6. Generate a new release manifest rather than mutating `3.0.0` evidence.
-7. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
+The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.

@@ -11,14 +11,19 @@ import {
 contract PegKeeperV3ProposalDeploymentJsonTest is Test {
     string internal constant TEST_OUTPUT =
         "deployments/mainnet/PegKeeperV3-proposal-input.test.json";
+    string internal constant WRONG_CHAIN_OUTPUT =
+        "deployments/mainnet/PegKeeperV3-proposal-input-wrong-chain.test.json";
 
     function test_proposalLoadsFactoryAndSelectedOraclesFromDeploymentJson() public {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = DeployPegKeeperV3.Deployment({
-            previewModule: makeAddr("previewModule"),
             implementation: makeAddr("implementation"),
+            policy: makeAddr("policy"),
             factory: makeAddr("factory"),
-            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle")
+            frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
+            usdeUsdOracle: makeAddr("usdeUsdOracle"),
+            usdcUsdOracle: makeAddr("usdcUsdOracle"),
+            usdtUsdOracle: makeAddr("usdtUsdOracle")
         });
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
 
@@ -26,7 +31,11 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         proposal.loadDeployment(TEST_OUTPUT);
 
         assertEq(proposal.deploymentFactory(), deployment.factory);
+        assertEq(proposal.pegKeeperPolicy(), deployment.policy);
         assertEq(proposal.frxUsdOracle(), deployment.frxUsdUsdOracle);
+        assertEq(proposal.usdeOracle(), deployment.usdeUsdOracle);
+        assertEq(proposal.usdcOracle(), deployment.usdcUsdOracle);
+        assertEq(proposal.usdtOracle(), deployment.usdtUsdOracle);
 
         vm.removeFile(TEST_OUTPUT);
     }
@@ -34,12 +43,12 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
     function test_proposalRejectsDeploymentJsonFromAnotherChain() public {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment;
-        deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
-        vm.writeJson(vm.toString(block.chainid + 1), TEST_OUTPUT, ".chainId");
+        deployer.writeDeploymentJson(deployment, WRONG_CHAIN_OUTPUT);
+        vm.writeJson(vm.toString(block.chainid + 1), WRONG_CHAIN_OUTPUT, ".chainId");
 
         CurveProposalLaunchPegKeeperV3 proposal = new CurveProposalLaunchPegKeeperV3();
         vm.expectRevert(bytes("deployment chain"));
-        proposal.loadDeployment(TEST_OUTPUT);
-        vm.removeFile(TEST_OUTPUT);
+        proposal.loadDeployment(WRONG_CHAIN_OUTPUT);
+        vm.removeFile(WRONG_CHAIN_OUTPUT);
     }
 }

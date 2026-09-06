@@ -1,18 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IPegKeeperV3} from "./IPegKeeperV3.sol";
-
-/// @notice Public ABI for the LP-backed PegKeeperV3 factory.
+/// @notice Public ABI for the direct-liquidity PegKeeperV3 factory.
 interface IPegKeeperV3Factory {
     struct DeploymentDefaults {
         address admin;
         address emergencyAdmin;
         address feeReceiver;
         uint256 maxDeployedCrvUsd;
-        uint256 targetAmmExecutionBufferBps;
-        uint256 yieldAmmExecutionBufferBps;
-        uint256 expansionMaxRouteLossBps;
+        uint256 ammExecutionBufferBps;
     }
 
     error NotOwner();
@@ -20,8 +16,9 @@ interface IPegKeeperV3Factory {
     error InvalidOwner();
     error InvalidImplementation();
     error InvalidDefaults();
-    error InvalidOracle();
-    error InvalidTargetAmm();
+    error InvalidPolicy();
+    error InvalidKeeper();
+    error InvalidAmm();
     error DeploymentFailed();
 
     event DefaultsUpdated(
@@ -29,48 +26,42 @@ interface IPegKeeperV3Factory {
         address indexed emergencyAdmin,
         address indexed feeReceiver,
         uint256 maxDeployedCrvUsd,
-        uint256 targetAmmExecutionBufferBps,
-        uint256 yieldAmmExecutionBufferBps,
-        uint256 expansionMaxRouteLossBps
+        uint256 ammExecutionBufferBps
     );
     event PegKeeperDeployed(
         uint256 indexed index,
         address indexed pegKeeper,
         address indexed implementation,
-        address targetAmm,
-        address yieldToken,
-        address yieldAmm
+        address amm,
+        address yieldToken
     );
     event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
-    event AggregateCrvUsdOracleUpdated(address indexed oldOracle, address indexed newOracle);
+    event PolicyUpdated(address indexed oldPolicy, address indexed newPolicy);
+    event ActiveStatusUpdated(address indexed pegKeeper, bool active);
 
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
     function controllerFactory() external view returns (address);
     function implementation() external view returns (address);
-    function aggregateCrvUsdOracle() external view returns (address);
+    function policy() external view returns (address);
     function defaults() external view returns (DeploymentDefaults memory);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
     function fee_receiver() external view returns (address);
-    function keeperCount() external view returns (uint256);
-    function keeperAt(uint256 index) external view returns (address);
-    function isPegKeeper(address candidate) external view returns (bool);
-    function implementationOf(address pegKeeper) external view returns (address);
+    function activePegKeeperCount() external view returns (uint256);
+    function activePegKeeperAt(uint256 index) external view returns (address);
+    function is_active(address pegKeeper) external view returns (bool);
 
-    /// @notice Deploys a paused keeper holding LP from `yieldAmm` and sets only its expansion path.
-    function deployPegKeeper(
-        address targetAmm,
-        address yieldToken,
-        address yieldAmm,
-        bool yieldTokenIsErc4626,
-        address yieldOracle,
-        IPegKeeperV3.RouteStep[] calldata expansionSteps
-    ) external returns (address pegKeeper);
+    /// @notice Deploys a paused keeper that interacts only with `amm`.
+    /// @dev The paired token is the non-crvUSD coin and the backing asset is derived for ERC-4626.
+    function deployPegKeeper(address amm, bool yieldTokenIsErc4626, address yieldOracle)
+        external
+        returns (address pegKeeper);
 
     function setDefaults(DeploymentDefaults calldata newDefaults) external;
-    function setAggregateCrvUsdOracle(address newOracle) external;
+    function setPolicy(address newPolicy) external;
+    function set_active(address pegKeeper, bool active) external;
     function transferOwnership(address newOwner) external;
     function acceptOwnership() external;
 }

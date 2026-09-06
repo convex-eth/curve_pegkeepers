@@ -2,8 +2,8 @@
 """
 @title PegKeeper V3
 @license MIT
-@notice Buys and sells approved assets to help keep crvUSD near its target price.
-@dev Holds Curve LP backing, limits updates, and uses an admin-selected expansion path.
+@notice Adds and removes direct Curve liquidity to help keep crvUSD near its target price.
+@dev Holds LP backing, accounts crvUSD debt, and delegates admission to Factory policy.
 """
 
 interface ERC20:
@@ -11,7 +11,6 @@ interface ERC20:
     def decimals() -> uint256: view
     def approve(_spender: address, _amount: uint256): nonpayable
     def transfer(_recipient: address, _amount: uint256): nonpayable
-    def transferFrom(_sender: address, _recipient: address, _amount: uint256): nonpayable
 
 interface ControllerFactory:
     def stablecoin() -> address: view
@@ -22,14 +21,13 @@ interface PegKeeperFactory:
     def admin() -> address: view
     def emergency_admin() -> address: view
     def fee_receiver() -> address: view
-    def aggregateCrvUsdOracle() -> address: view
+    def policy() -> address: view
 
-interface TwoCoinPool:
-    def coins(_index: uint256) -> address: view
-    def balances(_index: uint256) -> uint256: view
-    def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
-    def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
-
+interface PegKeeperPolicy:
+    def expansion_regime() -> bool: view
+    def can_allocate(_keeper: address) -> bool: view
+    def can_expand(_keeper: address) -> bool: view
+    def can_contract(_keeper: address) -> bool: view
 
 interface YieldAmm:
     def coins(_index: uint256) -> address: view
@@ -45,32 +43,6 @@ interface YieldAmm:
         _min_amount: uint256,
     ): nonpayable
 
-interface CurveRoutePool:
-    def coins(_index: uint256) -> address: view
-    def get_dy(_i: int128, _j: int128, _dx: uint256) -> uint256: view
-    def exchange(_i: int128, _j: int128, _dx: uint256, _min_dy: uint256): nonpayable
-
-interface DaiUsds:
-    def dai() -> address: view
-    def usds() -> address: view
-    def daiToUsds(_receiver: address, _amount: uint256): nonpayable
-    def usdsToDai(_receiver: address, _amount: uint256): nonpayable
-
-interface ERC4626Route:
-    def asset() -> address: view
-    def convertToAssets(_shares: uint256) -> uint256: view
-    def previewDeposit(_assets: uint256) -> uint256: view
-    def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
-    def previewRedeem(_shares: uint256) -> uint256: view
-    def redeem(_shares: uint256, _receiver: address, _owner: address) -> uint256: nonpayable
-
-interface FrxUsdMinter:
-    def asset() -> address: view
-    def frxUSD() -> address: view
-    def previewDeposit(_assets: uint256) -> uint256: view
-    def deposit(_assets: uint256, _receiver: address) -> uint256: nonpayable
-
-
 interface YieldToken:
     def asset() -> address: view
     def balanceOf(_owner: address) -> uint256: view
@@ -80,19 +52,6 @@ interface YieldToken:
 
 interface PriceOracle:
     def price() -> uint256: view
-
-interface PreviewModule:
-    def previewExpansion(_keeper: address, _amount: uint256) -> (uint256, uint256, uint256, uint256, uint256, bool): view
-
-
-struct RouteStep:
-    kind: uint256
-    venue: address
-    token_in: address
-    token_out: address
-    pool_index_in: int128
-    pool_index_out: int128
-    execution_buffer_bps: uint256
 
 
 event DirectionPaused:
@@ -105,25 +64,15 @@ event Executed:
     selector: indexed(bytes4)
     data_hash: bytes32
 
-event ExpansionConfigUpdated:
-    target_amm_execution_buffer_bps: uint256
-    yield_amm_execution_buffer_bps: uint256
-
-event TargetAmmUpdated:
-    old_target_amm: indexed(address)
-    new_target_amm: indexed(address)
-    crv_usd_index: uint256
-    target_index: uint256
+event AmmExecutionBufferUpdated:
     execution_buffer_bps: uint256
 
 event Expanded:
     keeper: indexed(address)
-    crv_usd_sold: uint256
-    crv_usd_matched: uint256
+    crv_usd_deployed: uint256
     lp_tokens_received: uint256
     gross_profit: uint256
     keeper_reward: uint256
-    direct_deposit: bool
 
 event DonatedYieldSwept:
     keeper: indexed(address)
@@ -152,6 +101,13 @@ event DebtReduced:
     actual_reduction: uint256
     deployed_crv_usd_after: uint256
 
+event CrvUsdBorrowed:
+    caller: indexed(address)
+    receiver: indexed(address)
+    amount: uint256
+    deployed_crv_usd_after: uint256
+
+
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
@@ -163,17 +119,13 @@ event InterventionPolicyUpdated:
     max_intervention_share_bps: uint256
     min_intervention_delay: uint256
 
-event PathsUpdated:
-    expansion_path_hash: indexed(bytes32)
-    expansion_max_route_loss_bps: uint256
-
 event YieldOraclePolicyUpdated:
     yield_oracle: indexed(address)
     min_yield_price: uint256
 
 
 
-version: public(constant(String[8])) = "3.3.0"
+version: public(constant(String[8])) = "3.4.0"
 name: public(String[88])
 keeper_index: public(uint256)
 
@@ -183,35 +135,23 @@ PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_YIELD_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
 max_expansion_burst_bps: public(constant(uint256)) = 500
 expansion_refill_period: public(constant(uint256)) = 5 * 60
-MAX_ROUTE_STEPS: public(constant(uint256)) = 16
-STEP_CURVE_SWAP: constant(uint256) = 0
-STEP_DAI_USDS_CONVERTER: constant(uint256) = 1
-STEP_ERC4626_DEPOSIT: constant(uint256) = 2
-STEP_ERC4626_REDEEM: constant(uint256) = 3
-STEP_FRXUSD_MINT: constant(uint256) = 4
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_YIELD_CONTRACTION: constant(uint256) = 1
 DIRECTION_ALL: constant(uint256) = 2
 
-PREVIEW_MODULE: immutable(PreviewModule)
 _factory: PegKeeperFactory
 _controller_factory: ControllerFactory
 _crv_usd: ERC20
-target_amm: public(TwoCoinPool)
-_target_asset: ERC20
 _backing_asset: ERC20
 _yield_token: YieldToken
 yield_amm: public(YieldAmm)
 yield_token_is_erc4626: public(bool)
-target_multiplier: uint256
 backing_multiplier: uint256
 yield_oracle: public(PriceOracle)
 min_yield_oracle_price: public(uint256)
 initialized: public(bool)
 
-target_amm_crvusd_index: public(uint256)
-target_amm_target_index: public(uint256)
 yield_amm_crvusd_index: public(uint256)
 yield_amm_yield_token_index: public(uint256)
 
@@ -223,10 +163,7 @@ max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
 min_intervention_delay: public(uint256)
 last_intervention_at: public(uint256)
-target_amm_execution_buffer_bps: public(uint256)
 yield_amm_execution_buffer_bps: public(uint256)
-expansion_path: DynArray[RouteStep, 16]
-expansion_max_route_loss_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
 _expansion_pressure: uint256
@@ -238,13 +175,10 @@ all_execution_paused: public(bool)
 
 
 @external
-def __init__(_preview_module: PreviewModule):
+def __init__():
     """
-    @notice Sets the preview contract and prevents the base contract from being set up as a keeper.
+    @notice Prevents the base contract from being set up as a keeper.
     """
-    assert _preview_module.address != empty(address)
-    assert _preview_module.address.codesize > 0
-    PREVIEW_MODULE = _preview_module
     # Lock the standalone implementation. Proxies have independent zeroed storage.
     self.initialized = True
     self.expansion_paused = True
@@ -254,8 +188,6 @@ def __init__(_preview_module: PreviewModule):
 
 @external
 def initialize(
-    _target_amm: TwoCoinPool,
-    _target_asset: ERC20,
     _backing_asset: ERC20,
     _yield_token: YieldToken,
     _yield_amm: YieldAmm,
@@ -264,13 +196,11 @@ def initialize(
     _yield_oracle: PriceOracle,
 ):
     """
-    @notice Sets up a new keeper with its pool, tokens, limits, and price sources.
+    @notice Sets up a new keeper with one direct pool, its paired token, limits, and oracle.
     """
     assert not self.initialized
     self.initialized = True
     assert msg.sender.codesize > 0
-    assert _target_amm.address != empty(address)
-    assert _target_asset.address != empty(address)
     assert _backing_asset.address != empty(address)
     assert _yield_token.address != empty(address)
     assert _yield_amm.address != empty(address)
@@ -284,7 +214,7 @@ def initialize(
     assert controller_factory != empty(address)
     crv_usd: address = ControllerFactory(controller_factory).stablecoin()
     assert crv_usd != empty(address)
-    assert crv_usd != _target_asset.address
+    assert crv_usd != _yield_token.address
     is_erc4626: bool = _yield_token.address != _backing_asset.address
     if is_erc4626:
         assert _yield_token.asset() == _backing_asset.address
@@ -292,30 +222,17 @@ def initialize(
         assert _yield_token.convertToShares(0) == 0
 
     crv_decimals: uint256 = ERC20(crv_usd).decimals()
-    target_decimals: uint256 = _target_asset.decimals()
     backing_decimals: uint256 = _backing_asset.decimals()
     assert crv_decimals == 18
-    assert target_decimals <= 18
     assert backing_decimals <= 18
     assert ERC20(_yield_amm.address).decimals() == 18
 
-    coin_0: address = _target_amm.coins(0)
-    coin_1: address = _target_amm.coins(1)
-    if coin_0 == crv_usd and coin_1 == _target_asset.address:
-        self.target_amm_crvusd_index = 0
-        self.target_amm_target_index = 1
-    elif coin_0 == _target_asset.address and coin_1 == crv_usd:
-        self.target_amm_crvusd_index = 1
-        self.target_amm_target_index = 0
-    else:
-        raise
-
-    yield_coin_0: address = _yield_amm.coins(0)
-    yield_coin_1: address = _yield_amm.coins(1)
-    if yield_coin_0 == crv_usd and yield_coin_1 == _yield_token.address:
+    coin_0: address = _yield_amm.coins(0)
+    coin_1: address = _yield_amm.coins(1)
+    if coin_0 == crv_usd and coin_1 == _yield_token.address:
         self.yield_amm_crvusd_index = 0
         self.yield_amm_yield_token_index = 1
-    elif yield_coin_0 == _yield_token.address and yield_coin_1 == crv_usd:
+    elif coin_0 == _yield_token.address and coin_1 == crv_usd:
         self.yield_amm_crvusd_index = 1
         self.yield_amm_yield_token_index = 0
     else:
@@ -325,13 +242,10 @@ def initialize(
     self._factory = PegKeeperFactory(msg.sender)
     self._controller_factory = ControllerFactory(controller_factory)
     self._crv_usd = ERC20(crv_usd)
-    self.target_amm = _target_amm
-    self._target_asset = _target_asset
     self._backing_asset = _backing_asset
     self._yield_token = _yield_token
     self.yield_amm = _yield_amm
     self.yield_token_is_erc4626 = is_erc4626
-    self.target_multiplier = 10 ** (18 - target_decimals)
     self.backing_multiplier = 10 ** (18 - backing_decimals)
     self.yield_oracle = _yield_oracle
     self.min_yield_oracle_price = DEFAULT_MIN_YIELD_ORACLE_PRICE
@@ -418,23 +332,6 @@ def crv_usd() -> address:
     return self._crv_usd.address
 
 
-@external
-@pure
-def preview_module() -> address:
-    """
-    @notice Returns the contract used to calculate action estimates.
-    """
-    return PREVIEW_MODULE.address
-
-
-@external
-@view
-def target_asset() -> address:
-    """
-    @notice Returns the token paired with crvUSD in the main swap pool.
-    """
-    return self._target_asset.address
-
 
 @external
 @view
@@ -486,12 +383,6 @@ def yield_token_units(_assets: uint256) -> uint256:
     @notice Returns the final-token amount represented by a backing-asset amount.
     """
     return self._yield_token_units(_assets)
-
-
-@internal
-@view
-def _target_inventory() -> uint256:
-    return self._target_asset.balanceOf(self)
 
 
 @internal
@@ -565,34 +456,43 @@ def _yield_price() -> uint256:
 
 @internal
 @view
-def _aggregate_crvusd_price() -> uint256:
-    oracle: address = self._factory.aggregateCrvUsdOracle()
-    assert oracle != empty(address) and oracle.codesize > 0
+def _policy_address() -> address:
+    policy: address = self._factory.policy()
+    assert policy != empty(address) and policy.codesize > 0
+    return policy
+
+
+@internal
+@view
+def _require_expansion_policy():
+    assert PegKeeperPolicy(self._policy_address()).can_expand(self)
+
+
+@internal
+@view
+def _require_contraction_policy():
+    assert PegKeeperPolicy(self._policy_address()).can_contract(self)
+
+
+@internal
+@view
+def _allocation_allowed() -> bool:
+    policy: address = self._factory.policy()
+    if policy == empty(address) or policy.codesize == 0:
+        return False
 
     ok: bool = False
     response: Bytes[64] = empty(Bytes[64])
     ok, response = raw_call(
-        oracle,
-        method_id("price()"),
+        policy,
+        _abi_encode(self, method_id=method_id("can_allocate(address)")),
         max_outsize=64,
         is_static_call=True,
         revert_on_failure=False,
     )
     if not ok or len(response) != 32:
-        raise
-    return convert(slice(response, 0, 32), uint256)
-
-
-@internal
-@view
-def _require_expansion_regime():
-    assert self._aggregate_crvusd_price() >= PRECISION
-
-
-@internal
-@view
-def _require_contraction_regime():
-    assert self._aggregate_crvusd_price() <= PRECISION
+        return False
+    return convert(slice(response, 0, 32), uint256) == 1
 
 
 @internal
@@ -653,12 +553,6 @@ def available_expansion_velocity() -> uint256:
     @notice Returns how much can be expanded now under the short-term rate limit.
     """
     return self._available_velocity()
-
-
-@internal
-@view
-def _normalize_target(_amount: uint256) -> uint256:
-    return _amount * self.target_multiplier
 
 
 @internal
@@ -740,19 +634,13 @@ def _remaining_exposure_capacity() -> uint256:
 @internal
 @view
 def _local_expansion_limit() -> uint256:
-    crv_usd_balance: uint256 = self.target_amm.balances(self.target_amm_crvusd_index)
-    target_balance: uint256 = 0
-    if self._target_asset.address == self._yield_token.address:
-        target_balance = self._trusted_yield_value(
-            self.target_amm.balances(self.target_amm_target_index)
-        )
-    else:
-        target_balance = self._normalize_target(
-            self.target_amm.balances(self.target_amm_target_index)
-        )
-    if target_balance <= crv_usd_balance:
+    crv_usd_balance: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
+    yield_balance: uint256 = self._trusted_yield_value(
+        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    )
+    if yield_balance <= crv_usd_balance:
         return 0
-    return (target_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
+    return (yield_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
 
 
 @internal
@@ -778,15 +666,10 @@ def _intervention_delay_elapsed() -> bool:
     return block.timestamp - last_intervention_at >= self.min_intervention_delay
 
 
-@external
+@internal
 @view
-def available_expansion() -> uint256:
-    """
-    @notice Returns the most crvUSD that can be used for an expansion now.
-    """
+def _available_expansion_without_policy() -> uint256:
     if self.all_execution_paused or self.expansion_paused:
-        return 0
-    if self._aggregate_crvusd_price() < PRECISION:
         return 0
     if not self._intervention_delay_elapsed():
         return 0
@@ -797,6 +680,44 @@ def available_expansion() -> uint256:
             min(self._available_velocity(), self._remaining_exposure_capacity()),
         ),
     )
+
+
+@external
+@view
+def can_expand_without_policy() -> bool:
+    """
+    @notice Reports whether the configured minimum expansion is locally executable, excluding system policy.
+    """
+    amount: uint256 = self.min_expansion_amount
+    if amount == 0 or self._available_expansion_without_policy() < amount:
+        return False
+
+    ok: bool = False
+    oracle_response: Bytes[64] = empty(Bytes[64])
+    ok, oracle_response = raw_call(
+        self.yield_oracle.address,
+        method_id("price()"),
+        max_outsize=64,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not ok or len(oracle_response) != 32:
+        return False
+    if convert(slice(oracle_response, 0, 32), uint256) < self.min_yield_oracle_price:
+        return False
+
+    return self._expansion_preview_viable(amount)
+
+
+@external
+@view
+def available_expansion() -> uint256:
+    """
+    @notice Returns the most crvUSD that can be used for a policy-approved expansion now.
+    """
+    if not PegKeeperPolicy(self._policy_address()).can_expand(self):
+        return 0
+    return self._available_expansion_without_policy()
 
 
 @internal
@@ -823,49 +744,6 @@ def _transfer_exact_to(_token: ERC20, _recipient: address, _amount: uint256):
         recipient_balance_before: uint256 = _token.balanceOf(_recipient)
         _token.transfer(_recipient, _amount)
         assert _token.balanceOf(_recipient) - recipient_balance_before == _amount
-
-
-@internal
-def _target_amm_swap_exact_in(
-    _token_in: ERC20,
-    _token_out: ERC20,
-    _index_in: int128,
-    _index_out: int128,
-    _amount_in: uint256,
-    _input_balance_before: uint256,
-    _output_balance_before: uint256,
-) -> (uint256, uint256):
-    quoted_output: uint256 = self.target_amm.get_dy(
-        _index_in,
-        _index_out,
-        _amount_in,
-    )
-    minimum_output: uint256 = quoted_output * (
-        BPS - self.target_amm_execution_buffer_bps
-    ) / BPS
-
-    _token_in.approve(self.target_amm.address, _amount_in)
-    self.target_amm.exchange(
-        _index_in,
-        _index_out,
-        _amount_in,
-        minimum_output,
-    )
-    _token_in.approve(self.target_amm.address, 0)
-
-    input_balance_after: uint256 = _token_in.balanceOf(self)
-    amount_spent: uint256 = _input_balance_before - input_balance_after
-    assert amount_spent == _amount_in
-
-    output_balance_after: uint256 = _token_out.balanceOf(self)
-    amount_received: uint256 = output_balance_after - _output_balance_before
-    assert amount_received >= minimum_output
-    input_value: uint256 = self._normalize_route_amount(_token_in.address, amount_spent)
-    output_value: uint256 = self._normalize_route_amount(_token_out.address, amount_received)
-    assert output_value >= input_value * (
-        BPS - self.target_amm_execution_buffer_bps
-    ) / BPS
-    return amount_spent, amount_received
 
 
 @internal
@@ -911,7 +789,7 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
     """
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
-    self._require_contraction_regime()
+    self._require_contraction_policy()
     assert self._intervention_delay_elapsed()
 
     accounted: uint256 = self._lp_inventory()
@@ -944,52 +822,16 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
 
 @external
 @view
-def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256, uint256, bool):
+def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256):
     """
     @notice Estimates an expansion from current data; actual results may differ.
     """
     assert not self.all_execution_paused
     assert not self.expansion_paused
-    self._require_expansion_regime()
+    self._require_expansion_policy()
     assert self._intervention_delay_elapsed()
     assert _amount <= self._local_expansion_limit()
-    return PREVIEW_MODULE.previewExpansion(self, _amount)
-
-
-@external
-def set_target_amm(_new_target_amm: TwoCoinPool, _execution_buffer_bps: uint256):
-    """
-    @notice Changes the main crvUSD swap pool and the largest allowed drop below its quote.
-    """
-    assert self._is_admin(msg.sender)
-    assert _new_target_amm.address != empty(address)
-    assert _execution_buffer_bps <= BPS
-
-    coin_0: address = _new_target_amm.coins(0)
-    coin_1: address = _new_target_amm.coins(1)
-    crv_usd_index: uint256 = 0
-    target_index: uint256 = 0
-    if coin_0 == self._crv_usd.address and coin_1 == self._target_asset.address:
-        crv_usd_index = 0
-        target_index = 1
-    elif coin_0 == self._target_asset.address and coin_1 == self._crv_usd.address:
-        crv_usd_index = 1
-        target_index = 0
-    else:
-        raise
-
-    old_target_amm: address = self.target_amm.address
-    self.target_amm = _new_target_amm
-    self.target_amm_crvusd_index = crv_usd_index
-    self.target_amm_target_index = target_index
-    self.target_amm_execution_buffer_bps = _execution_buffer_bps
-    log TargetAmmUpdated(
-        old_target_amm,
-        _new_target_amm.address,
-        crv_usd_index,
-        target_index,
-        _execution_buffer_bps,
-    )
+    return self._preview_expansion(_amount)
 
 
 @external
@@ -1014,24 +856,15 @@ def set_yield_oracle_policy(
 
 
 @external
-def set_expansion_config(
-    _target_amm_execution_buffer_bps: uint256,
-    _yield_amm_execution_buffer_bps: uint256,
-):
+def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     """
-    @notice Changes target-swap and yield-AMM execution buffers.
+    @notice Changes the largest allowed drop below the AMM's LP quote.
     """
     assert self._is_admin_or_factory(msg.sender)
-    assert _target_amm_execution_buffer_bps <= BPS
-    assert _yield_amm_execution_buffer_bps <= BPS
+    assert _execution_buffer_bps <= BPS
 
-    self.target_amm_execution_buffer_bps = _target_amm_execution_buffer_bps
-    self.yield_amm_execution_buffer_bps = _yield_amm_execution_buffer_bps
-
-    log ExpansionConfigUpdated(
-        _target_amm_execution_buffer_bps,
-        _yield_amm_execution_buffer_bps,
-    )
+    self.yield_amm_execution_buffer_bps = _execution_buffer_bps
+    log AmmExecutionBufferUpdated(_execution_buffer_bps)
 
 
 @internal
@@ -1041,6 +874,95 @@ def _lp_value_at(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
         _lp_tokens / PRECISION * _virtual_price
         + _lp_tokens % PRECISION * _virtual_price / PRECISION
     )
+
+
+@internal
+@view
+def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
+    lp_before: uint256 = self._lp_inventory()
+    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
+    donated_yield: uint256 = self._yield_inventory()
+    donated_value: uint256 = self._trusted_yield_value(donated_yield)
+    crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
+
+    if crv_usd_deployed > self._crv_usd.balanceOf(self):
+        return False
+    if crv_usd_deployed > self._available_velocity():
+        return False
+    deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
+    if deployed_after > self.max_deployed_crvusd:
+        return False
+    if deployed_after > self._controller_factory.debt_ceiling(self):
+        return False
+
+    amounts: DynArray[uint256, 2] = [0, 0]
+    amounts[self.yield_amm_crvusd_index] = crv_usd_deployed
+    amounts[self.yield_amm_yield_token_index] = donated_yield
+    lp_tokens_out: uint256 = self.yield_amm.calc_token_amount(amounts, True)
+
+    accounting_baseline: uint256 = lp_value_before + donated_value
+    lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
+    if lp_value_after < accounting_baseline + crv_usd_deployed:
+        return False
+    gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price
+    if keeper_reward > lp_tokens_out:
+        return False
+
+    retained_value: uint256 = self._lp_value_at(
+        lp_before + lp_tokens_out - keeper_reward,
+        virtual_price,
+    )
+    if retained_value < accounting_baseline:
+        return False
+    if not self._meets_entry_floor(retained_value - accounting_baseline, crv_usd_deployed):
+        return False
+    return retained_value >= deployed_after
+
+
+@internal
+@view
+def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256):
+    assert _crv_usd_amount >= self.min_expansion_amount
+    self._yield_price()
+
+    lp_before: uint256 = self._lp_inventory()
+    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
+    donated_yield: uint256 = self._yield_inventory()
+    donated_value: uint256 = self._trusted_yield_value(donated_yield)
+    crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
+    accounting_baseline: uint256 = lp_value_before + donated_value
+
+    amounts: DynArray[uint256, 2] = [0, 0]
+    amounts[self.yield_amm_crvusd_index] = crv_usd_deployed
+    amounts[self.yield_amm_yield_token_index] = donated_yield
+
+    assert crv_usd_deployed <= self._crv_usd.balanceOf(self)
+    assert crv_usd_deployed <= self._available_velocity()
+    deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
+    assert deployed_after <= self.max_deployed_crvusd
+    assert deployed_after <= self._controller_factory.debt_ceiling(self)
+
+    lp_tokens_out: uint256 = self.yield_amm.calc_token_amount(amounts, True)
+    lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
+    assert lp_value_after >= accounting_baseline + crv_usd_deployed
+    gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
+    reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward: uint256 = reward_value * PRECISION / virtual_price
+    assert keeper_reward <= lp_tokens_out
+
+    retained_lp: uint256 = lp_before + lp_tokens_out - keeper_reward
+    retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
+    assert retained_value >= accounting_baseline
+    assert self._meets_entry_floor(
+        retained_value - accounting_baseline,
+        crv_usd_deployed,
+    )
+    assert retained_value >= deployed_after
+    return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
 
 
 @internal
@@ -1105,101 +1027,36 @@ def _settle_lp_expansion(
 
 @external
 @nonreentrant("lock")
-def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, bool):
+def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     """
-    @notice Buys the yield token, matches it with crvUSD, and retains yield-AMM LP tokens.
+    @notice Deposits crvUSD and any donated paired token directly into the keeper's AMM.
     """
     assert not self.all_execution_paused
     assert not self.expansion_paused
     assert _crv_usd_amount >= self.min_expansion_amount
-    self._require_expansion_regime()
+    self._require_expansion_policy()
     assert self._intervention_delay_elapsed()
     assert _crv_usd_amount <= self._local_expansion_limit()
     self._yield_price()
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
-    target_before: uint256 = self._target_inventory()
     yield_before: uint256 = self._yield_inventory()
     lp_before: uint256 = self._lp_inventory()
     virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     donated_yield_value: uint256 = self._trusted_yield_value(yield_before)
 
-    if self.target_amm.address == self.yield_amm.address:
-        assert len(self.expansion_path) == 0
-        assert self._target_asset.address == self._yield_token.address
-        direct_crv_usd: uint256 = _crv_usd_amount + donated_yield_value
-        assert direct_crv_usd <= crv_usd_before
-        assert direct_crv_usd <= self._remaining_exposure_capacity()
-        self._consume_velocity(direct_crv_usd)
-
-        direct_lp_received: uint256 = self._deposit_to_yield_amm(
-            direct_crv_usd,
-            yield_before,
-        )
-        direct_gross_profit: uint256 = 0
-        direct_reward: uint256 = 0
-        direct_gross_profit, direct_reward = self._settle_lp_expansion(
-            lp_before,
-            lp_value_before,
-            donated_yield_value,
-            donated_yield_value,
-            direct_crv_usd,
-            direct_lp_received,
-        )
-        self.deployed_crvusd += direct_crv_usd
-        assert self._trusted_backing_value() >= self.deployed_crvusd
-        self.last_intervention_at = block.timestamp
-        log Expanded(
-            msg.sender,
-            0,
-            direct_crv_usd,
-            direct_lp_received,
-            direct_gross_profit,
-            direct_reward,
-            True,
-        )
-        return 0, direct_crv_usd, direct_lp_received, direct_reward, True
-
-    crv_usd_sold: uint256 = 0
-    target_received: uint256 = 0
-    crv_usd_sold, target_received = self._target_amm_swap_exact_in(
-        self._crv_usd,
-        self._target_asset,
-        convert(self.target_amm_crvusd_index, int128),
-        convert(self.target_amm_target_index, int128),
-        _crv_usd_amount,
-        crv_usd_before,
-        target_before,
-    )
-
-    path_length: uint256 = len(self.expansion_path)
-    if path_length == 0:
-        assert self._target_asset.address == self._yield_token.address
-    else:
-        self._execute_route(target_received)
-
-    if self._target_asset.address != self._yield_token.address:
-        assert self._target_inventory() == target_before
-    yield_after_route: uint256 = self._yield_inventory()
-    assert yield_after_route > yield_before
-    fresh_yield_received: uint256 = yield_after_route - yield_before
-    fresh_yield_value: uint256 = self._trusted_yield_value(fresh_yield_received)
-    target_value: uint256 = self._normalize_target(target_received)
-    self._checked_route_conversion_cost(target_value, fresh_yield_value)
-
-    crv_usd_matched: uint256 = self._trusted_yield_value(yield_after_route)
-    total_principal: uint256 = crv_usd_sold + crv_usd_matched
-    assert total_principal <= crv_usd_before
-    assert total_principal <= self._remaining_exposure_capacity()
-    self._consume_velocity(total_principal)
+    crv_usd_deployed: uint256 = _crv_usd_amount + donated_yield_value
+    assert crv_usd_deployed <= crv_usd_before
+    assert crv_usd_deployed <= self._remaining_exposure_capacity()
+    self._consume_velocity(crv_usd_deployed)
 
     lp_received: uint256 = self._deposit_to_yield_amm(
-        crv_usd_matched,
-        yield_after_route,
+        crv_usd_deployed,
+        yield_before,
     )
-    assert self._yield_inventory() == 0
-    assert crv_usd_before - self._crv_usd.balanceOf(self) == total_principal
+    assert crv_usd_before - self._crv_usd.balanceOf(self) == crv_usd_deployed
+
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
     gross_profit, keeper_reward = self._settle_lp_expansion(
@@ -1207,30 +1064,29 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256, boo
         lp_value_before,
         donated_yield_value,
         donated_yield_value,
-        total_principal,
+        crv_usd_deployed,
         lp_received,
     )
-
-    self.deployed_crvusd += total_principal
+    self.deployed_crvusd += crv_usd_deployed
     assert self._trusted_backing_value() >= self.deployed_crvusd
     self.last_intervention_at = block.timestamp
 
     log Expanded(
         msg.sender,
-        crv_usd_sold,
-        crv_usd_matched,
+        crv_usd_deployed,
         lp_received,
         gross_profit,
         keeper_reward,
-        False,
     )
-    return crv_usd_sold, crv_usd_matched, lp_received, keeper_reward, False
+    return crv_usd_deployed, lp_received, keeper_reward
 
 
 @internal
 @view
 def _donation_match_amount(_donated_yield_value: uint256) -> uint256:
-    if self._aggregate_crvusd_price() >= PRECISION:
+    if not self._allocation_allowed():
+        return 0
+    if PegKeeperPolicy(self._policy_address()).expansion_regime():
         return _donated_yield_value
 
     pool_crv_usd: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
@@ -1392,229 +1248,6 @@ def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
     return crv_usd_transferred
 
 
-@internal
-@view
-def _validate_route_step(_step: RouteStep):
-    assert _step.venue != empty(address)
-    assert _step.token_in != empty(address)
-    assert _step.token_out != empty(address)
-    assert _step.token_in != self._crv_usd.address
-    assert _step.token_out != self._crv_usd.address
-    assert _step.execution_buffer_bps <= BPS
-    assert ERC20(_step.token_in).decimals() <= 18
-    assert ERC20(_step.token_out).decimals() <= 18
-
-    if _step.kind == STEP_CURVE_SWAP:
-        assert _step.pool_index_in >= 0 and _step.pool_index_out >= 0
-        assert _step.pool_index_in != _step.pool_index_out
-        assert CurveRoutePool(_step.venue).coins(
-            convert(_step.pool_index_in, uint256)
-        ) == _step.token_in
-        assert CurveRoutePool(_step.venue).coins(
-            convert(_step.pool_index_out, uint256)
-        ) == _step.token_out
-    elif _step.kind == STEP_DAI_USDS_CONVERTER:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
-        assert _step.execution_buffer_bps == 0
-        dai: address = DaiUsds(_step.venue).dai()
-        usds: address = DaiUsds(_step.venue).usds()
-        valid_direction: bool = (
-            _step.token_in == dai and _step.token_out == usds
-        ) or (
-            _step.token_in == usds and _step.token_out == dai
-        )
-        assert valid_direction
-    elif _step.kind == STEP_ERC4626_DEPOSIT:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
-        assert _step.venue == _step.token_out
-        assert YieldToken(_step.venue).asset() == _step.token_in
-    elif _step.kind == STEP_ERC4626_REDEEM:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
-        assert _step.venue == _step.token_in
-        assert YieldToken(_step.venue).asset() == _step.token_out
-    elif _step.kind == STEP_FRXUSD_MINT:
-        assert _step.pool_index_in == 0 and _step.pool_index_out == 0
-        assert FrxUsdMinter(_step.venue).asset() == _step.token_in
-        assert FrxUsdMinter(_step.venue).frxUSD() == _step.token_out
-    else:
-        raise
-
-
-@internal
-@view
-def _validate_route_continuity(_steps: DynArray[RouteStep, 16]):
-    for i in range(MAX_ROUTE_STEPS):
-        if i >= len(_steps):
-            break
-        if i > 0:
-            assert _steps[i - 1].token_out == _steps[i].token_in
-        self._validate_route_step(_steps[i])
-
-
-@external
-def setPaths(
-    _expansion_steps: DynArray[RouteStep, 16],
-    _expansion_max_route_loss_bps: uint256,
-):
-    """
-    @notice Replaces the token path used between the target asset and yield token.
-    """
-    assert self._is_admin_or_factory(msg.sender)
-    assert _expansion_max_route_loss_bps <= BPS
-
-    if self._target_asset.address == self._yield_token.address:
-        assert len(_expansion_steps) == 0
-    else:
-        assert len(_expansion_steps) > 0
-        assert _expansion_steps[0].token_in == self._target_asset.address
-        expansion_last: RouteStep = _expansion_steps[len(_expansion_steps) - 1]
-        assert expansion_last.token_out == self._yield_token.address
-
-    self._validate_route_continuity(_expansion_steps)
-
-    self.expansion_path = _expansion_steps
-    self.expansion_max_route_loss_bps = _expansion_max_route_loss_bps
-    log PathsUpdated(
-        keccak256(_abi_encode(_expansion_steps)),
-        _expansion_max_route_loss_bps,
-    )
-
-
-@external
-@view
-def expansion_path_length() -> uint256:
-    """
-    @notice Returns the number of steps in the post-expansion token path.
-    """
-    return len(self.expansion_path)
-
-
-@external
-@view
-def expansion_path_step(_index: uint256) -> RouteStep:
-    """
-    @notice Returns one step from the post-expansion token path.
-    """
-    assert _index < len(self.expansion_path)
-    return self.expansion_path[_index]
-
-
-@internal
-@view
-def _normalize_route_amount(_token: address, _amount: uint256) -> uint256:
-    token_decimals: uint256 = ERC20(_token).decimals()
-    assert token_decimals <= 18
-    return _amount * 10 ** (18 - token_decimals)
-
-
-@internal
-def _execute_route_step(_step: RouteStep, _amount_in: uint256) -> uint256:
-    token_in: ERC20 = ERC20(_step.token_in)
-    token_out: ERC20 = ERC20(_step.token_out)
-    input_balance_before: uint256 = token_in.balanceOf(self)
-    output_balance_before: uint256 = token_out.balanceOf(self)
-    yield_value_before: uint256 = 0
-    if _step.token_in == self._yield_token.address or _step.token_out == self._yield_token.address:
-        yield_value_before = self._trusted_yield_value(self._yield_token.balanceOf(self))
-    quoted_output: uint256 = 0
-    minimum_output: uint256 = 0
-
-    token_in.approve(_step.venue, 0)
-    token_in.approve(_step.venue, _amount_in)
-
-    if _step.kind == STEP_CURVE_SWAP:
-        quoted_output = CurveRoutePool(_step.venue).get_dy(
-            _step.pool_index_in,
-            _step.pool_index_out,
-            _amount_in,
-        )
-        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
-        CurveRoutePool(_step.venue).exchange(
-            _step.pool_index_in,
-            _step.pool_index_out,
-            _amount_in,
-            minimum_output,
-        )
-    elif _step.kind == STEP_DAI_USDS_CONVERTER:
-        minimum_output = _amount_in
-        if _step.token_in == DaiUsds(_step.venue).dai():
-            DaiUsds(_step.venue).daiToUsds(self, _amount_in)
-        else:
-            DaiUsds(_step.venue).usdsToDai(self, _amount_in)
-    elif _step.kind == STEP_ERC4626_DEPOSIT:
-        quoted_output = ERC4626Route(_step.venue).previewDeposit(_amount_in)
-        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
-        ERC4626Route(_step.venue).deposit(_amount_in, self)
-    elif _step.kind == STEP_FRXUSD_MINT:
-        quoted_output = FrxUsdMinter(_step.venue).previewDeposit(_amount_in)
-        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
-        FrxUsdMinter(_step.venue).deposit(_amount_in, self)
-    else:
-        quoted_output = ERC4626Route(_step.venue).previewRedeem(_amount_in)
-        minimum_output = quoted_output * (BPS - _step.execution_buffer_bps) / BPS
-        ERC4626Route(_step.venue).redeem(_amount_in, self, self)
-
-    token_in.approve(_step.venue, 0)
-    input_balance_after: uint256 = token_in.balanceOf(self)
-    output_balance_after: uint256 = token_out.balanceOf(self)
-    assert input_balance_before - input_balance_after == _amount_in
-    amount_out: uint256 = output_balance_after - output_balance_before
-    if _step.kind == STEP_DAI_USDS_CONVERTER:
-        assert amount_out == minimum_output
-    else:
-        assert amount_out >= minimum_output
-
-    input_value: uint256 = 0
-    output_value: uint256 = 0
-    if _step.kind == STEP_ERC4626_DEPOSIT:
-        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
-        output_value = self._normalize_route_amount(
-            _step.token_in,
-            ERC4626Route(_step.venue).convertToAssets(amount_out),
-        )
-    elif _step.kind == STEP_ERC4626_REDEEM:
-        input_value = self._normalize_route_amount(
-            _step.token_out,
-            ERC4626Route(_step.venue).convertToAssets(_amount_in),
-        )
-        output_value = self._normalize_route_amount(_step.token_out, amount_out)
-    elif _step.token_in == self._yield_token.address:
-        yield_value_after: uint256 = self._trusted_yield_value(input_balance_after)
-        assert yield_value_before >= yield_value_after
-        input_value = yield_value_before - yield_value_after
-        output_value = self._normalize_route_amount(_step.token_out, amount_out)
-    elif _step.token_out == self._yield_token.address:
-        yield_value_after: uint256 = self._trusted_yield_value(output_balance_after)
-        assert yield_value_after >= yield_value_before
-        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
-        output_value = yield_value_after - yield_value_before
-    else:
-        input_value = self._normalize_route_amount(_step.token_in, _amount_in)
-        output_value = self._normalize_route_amount(_step.token_out, amount_out)
-    assert output_value >= input_value * (BPS - _step.execution_buffer_bps) / BPS
-    return amount_out
-
-
-@internal
-def _execute_route(_initial_amount: uint256) -> uint256:
-    amount_in: uint256 = _initial_amount
-    for i in range(MAX_ROUTE_STEPS):
-        if i >= len(self.expansion_path):
-            break
-        amount_in = self._execute_route_step(self.expansion_path[i], amount_in)
-    return amount_in
-
-
-@internal
-@view
-def _checked_route_conversion_cost(_source_value: uint256, _retained_value: uint256) -> uint256:
-    conversion_cost: uint256 = 0
-    if _source_value > _retained_value:
-        conversion_cost = _source_value - _retained_value
-    assert conversion_cost <= _source_value * self.expansion_max_route_loss_bps / BPS
-    return conversion_cost
-
-
 @external
 @nonreentrant("lock")
 def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
@@ -1623,7 +1256,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     """
     assert not self.all_execution_paused
     assert not self.yield_contraction_paused
-    self._require_contraction_regime()
+    self._require_contraction_policy()
     assert self._intervention_delay_elapsed()
     lp_before: uint256 = self._lp_inventory()
     assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
@@ -1680,6 +1313,34 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
         keeper_reward,
     )
     return _lp_token_amount, crv_usd_received, keeper_reward
+
+
+@external
+@nonreentrant("lock")
+def borrow_crvusd(_amount: uint256, _receiver: address):
+    """
+    @notice Gives a Factory-admin-selected receiver policy-approved crvUSD and records it as debt.
+    """
+    assert self._is_admin(msg.sender)
+    assert not self.all_execution_paused
+    assert not self.expansion_paused
+    assert _receiver != empty(address)
+    assert _amount >= self.min_expansion_amount
+    self._require_expansion_policy()
+    assert self._intervention_delay_elapsed()
+    assert _amount <= self._local_expansion_limit()
+    self._yield_price()
+
+    deployed_after: uint256 = self.deployed_crvusd + _amount
+    assert deployed_after <= self.max_deployed_crvusd
+    assert deployed_after <= self._controller_factory.debt_ceiling(self)
+    assert _amount <= self._crv_usd.balanceOf(self)
+
+    self._consume_velocity(_amount)
+    self.deployed_crvusd = deployed_after
+    self.last_intervention_at = block.timestamp
+    self._transfer_exact_to(self._crv_usd, _receiver, _amount)
+    log CrvUsdBorrowed(msg.sender, _receiver, _amount, deployed_after)
 
 
 @external

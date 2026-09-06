@@ -4,14 +4,8 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
-import {
-    LpYieldToken,
-    LpYieldTargetAmm,
-    LpYieldAmm,
-    LpYieldRoutePool,
-    LpYieldFactory,
-    LpYieldOracle
-} from "./PegKeeperV3LpYield.t.sol";
+import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
+import {LpYieldToken, LpYieldAmm, LpYieldFactory, LpYieldOracle} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3LpFactoryTest is Test {
     address internal owner = makeAddr("owner");
@@ -20,46 +14,198 @@ contract PegKeeperV3LpFactoryTest is Test {
     address internal feeReceiver = makeAddr("feeReceiver");
 
     LpYieldToken internal crvUsd;
-    LpYieldToken internal target;
     LpYieldToken internal yieldToken;
-    LpYieldTargetAmm internal targetAmm;
     LpYieldAmm internal yieldAmm;
-    LpYieldRoutePool internal route;
     LpYieldFactory internal controllerFactory;
     LpYieldOracle internal yieldOracle;
     LpYieldOracle internal aggregateCrvUsdOracle;
     IPegKeeperV3Factory internal factory;
+    IPegKeeperPolicy internal policy;
     address internal implementation;
 
     function setUp() public {
         crvUsd = new LpYieldToken(18);
-        target = new LpYieldToken(6);
         yieldToken = new LpYieldToken(18);
-        targetAmm = new LpYieldTargetAmm(crvUsd, target);
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
-        route = new LpYieldRoutePool(target, yieldToken);
         yieldOracle = new LpYieldOracle();
         aggregateCrvUsdOracle = new LpYieldOracle();
         controllerFactory = new LpYieldFactory(
             address(crvUsd), admin, emergencyAdmin, feeReceiver, address(aggregateCrvUsdOracle)
         );
 
-        address preview =
-            _create(vm.getCode("out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json"));
-        implementation = _create(
-            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(preview))
+        implementation = _create(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"));
+        policy = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+            )
         );
+        factory = _newFactory(policy);
+        vm.prank(owner);
+        policy.set_factory(address(factory));
+    }
+
+    function test_deployDerivesPairedTokenAndTracksActiveKeeper() public {
+        address deployed = _deployKeeper();
+        IPegKeeperV3 keeper = IPegKeeperV3(deployed);
+
+        assertEq(factory.policy(), address(policy));
+        assertEq(factory.activePegKeeperCount(), 1);
+        assertEq(factory.activePegKeeperAt(0), deployed);
+        assertTrue(factory.is_active(deployed));
+        assertEq(keeper.yield_token(), address(yieldToken));
+        assertEq(keeper.backing_asset(), address(yieldToken));
+        assertEq(keeper.yield_amm(), address(yieldAmm));
+        assertEq(keeper.coins(1), address(yieldAmm));
+        assertEq(keeper.yield_amm_execution_buffer_bps(), 4);
+        assertTrue(keeper.expansion_paused());
+        assertTrue(keeper.yield_contraction_paused());
+        assertTrue(keeper.all_execution_paused());
+    }
+
+    function test_deployRequiresPolicyBoundToThisFactory() public {
+        IPegKeeperPolicy unbound = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+            )
+        );
+        IPegKeeperV3Factory unboundFactory = _newFactory(unbound);
+
+        vm.prank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidPolicy.selector);
+        unboundFactory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
+    }
+
+    function test_deployRejectsNonOwner() public {
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
+        factory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
+    }
+
+    function test_deployRejectsAmmWithoutCrvUsd() public {
+        LpYieldToken other = new LpYieldToken(18);
+        LpYieldAmm invalidAmm = new LpYieldAmm(address(yieldToken), address(other));
+
+        vm.prank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidAmm.selector);
+        factory.deployPegKeeper(address(invalidAmm), false, address(yieldOracle));
+    }
+
+    function test_defaultsContainOnlyDirectAmmExecutionBuffer() public view {
+        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
+        assertEq(defaults_.ammExecutionBufferBps, 4);
+    }
+
+    function test_ownerCanInstallBoundReplacementPolicy() public {
+        IPegKeeperPolicy replacement = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+            )
+        );
+        vm.prank(owner);
+        replacement.set_factory(address(factory));
+
+        vm.prank(makeAddr("not owner"));
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
+        factory.setPolicy(address(replacement));
+
+        vm.prank(owner);
+        factory.setPolicy(address(replacement));
+        assertEq(factory.policy(), address(replacement));
+    }
+
+    function test_existingKeeperReadsReplacementPolicyDynamically() public {
+        address deployed = _deployKeeper();
+        IPegKeeperV3 keeper = IPegKeeperV3(deployed);
+        controllerFactory.setDebtCeiling(deployed, 25_000_000e18);
+        crvUsd.mint(deployed, 100_000e18);
+        yieldAmm.setBalances(0, 100_000_000e18);
+        yieldAmm.setLpMintBps(10_001);
+
+        vm.startPrank(admin);
+        keeper.set_direction_paused(2, false);
+        keeper.set_direction_paused(0, false);
+        vm.stopPrank();
+        vm.prank(owner);
+        policy.set_tier(deployed, 1);
+        assertGt(keeper.available_expansion(), 0);
+
+        LpYieldOracle belowPeg = new LpYieldOracle();
+        belowPeg.setPrice(1e18 - 1);
+        IPegKeeperPolicy replacement = IPegKeeperPolicy(
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(owner, address(belowPeg), 8_000))
+        );
+        vm.startPrank(owner);
+        replacement.set_factory(address(factory));
+        replacement.set_tier(deployed, 1);
+        factory.setPolicy(address(replacement));
+        vm.stopPrank();
+
+        assertEq(factory.policy(), address(replacement));
+        assertEq(keeper.available_expansion(), 0);
+        assertTrue(policy.can_expand(deployed));
+    }
+
+    function test_policyUpdateRejectsUnboundAndInvalidContracts() public {
+        IPegKeeperPolicy unbound = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+            )
+        );
+        vm.startPrank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidPolicy.selector);
+        factory.setPolicy(address(unbound));
+        vm.expectRevert(IPegKeeperV3Factory.InvalidPolicy.selector);
+        factory.setPolicy(address(0));
+        vm.expectRevert(IPegKeeperV3Factory.InvalidPolicy.selector);
+        factory.setPolicy(makeAddr("no code"));
+        vm.stopPrank();
+
+        assertEq(factory.policy(), address(policy));
+    }
+
+    function test_activeListUsesPopAndSwapAndSupportsReactivation() public {
+        address first = _deployKeeper();
+        address second = _deployKeeper();
+
+        vm.prank(owner);
+        factory.set_active(first, false);
+        assertFalse(factory.is_active(first));
+        assertTrue(factory.is_active(second));
+        assertEq(factory.activePegKeeperCount(), 1);
+        assertEq(factory.activePegKeeperAt(0), second);
+
+        vm.prank(owner);
+        factory.set_active(first, true);
+        assertTrue(factory.is_active(first));
+        assertEq(factory.activePegKeeperCount(), 2);
+        assertEq(factory.activePegKeeperAt(0), second);
+        assertEq(factory.activePegKeeperAt(1), first);
+    }
+
+    function test_setActiveRejectsUnknownKeeperAndNonOwner() public {
+        address deployed = _deployKeeper();
+
+        vm.prank(makeAddr("not owner"));
+        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
+        factory.set_active(deployed, false);
+
+        vm.prank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidKeeper.selector);
+        factory.set_active(makeAddr("unknown"), true);
+    }
+
+    function _newFactory(IPegKeeperPolicy initialPolicy)
+        internal
+        returns (IPegKeeperV3Factory deployedFactory)
+    {
         IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
             IPegKeeperV3Factory.DeploymentDefaults({
                 admin: admin,
                 emergencyAdmin: emergencyAdmin,
                 feeReceiver: feeReceiver,
                 maxDeployedCrvUsd: 25_000_000e18,
-                targetAmmExecutionBufferBps: 3,
-                yieldAmmExecutionBufferBps: 4,
-                expansionMaxRouteLossBps: 100
+                ammExecutionBufferBps: 4
             });
-        factory = IPegKeeperV3Factory(
+        return IPegKeeperV3Factory(
             _create(
                 bytes.concat(
                     vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json"),
@@ -67,7 +213,7 @@ contract PegKeeperV3LpFactoryTest is Test {
                         owner,
                         address(controllerFactory),
                         implementation,
-                        address(aggregateCrvUsdOracle),
+                        address(initialPolicy),
                         defaults_
                     )
                 )
@@ -75,90 +221,9 @@ contract PegKeeperV3LpFactoryTest is Test {
         );
     }
 
-    function test_deployPinsYieldAmmAndOnlyExpansionPath() public {
-        IPegKeeperV3.RouteStep[] memory path = _path();
+    function _deployKeeper() internal returns (address) {
         vm.prank(owner);
-        address deployed = factory.deployPegKeeper(
-            address(targetAmm),
-            address(yieldToken),
-            address(yieldAmm),
-            false,
-            address(yieldOracle),
-            path
-        );
-
-        IPegKeeperV3 keeper = IPegKeeperV3(deployed);
-        assertEq(factory.keeperCount(), 1);
-        assertEq(factory.keeperAt(1), deployed);
-        assertTrue(factory.isPegKeeper(deployed));
-        assertEq(factory.implementationOf(deployed), implementation);
-        assertEq(keeper.target_amm(), address(targetAmm));
-        assertEq(keeper.target_asset(), address(target));
-        assertEq(keeper.yield_token(), address(yieldToken));
-        assertEq(keeper.yield_amm(), address(yieldAmm));
-        assertEq(keeper.coins(1), address(yieldAmm));
-        assertEq(keeper.expansion_path_length(), 1);
-        assertEq(keeper.target_amm_execution_buffer_bps(), 3);
-        assertEq(keeper.yield_amm_execution_buffer_bps(), 4);
-        assertTrue(keeper.expansion_paused());
-        assertTrue(keeper.yield_contraction_paused());
-        assertTrue(keeper.all_execution_paused());
-    }
-
-    function test_deployRejectsNonOwner() public {
-        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
-        factory.deployPegKeeper(
-            address(targetAmm),
-            address(yieldToken),
-            address(yieldAmm),
-            false,
-            address(yieldOracle),
-            _path()
-        );
-    }
-
-    function test_defaultsContainYieldAmmSlippageNotFallbackGas() public view {
-        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
-        assertEq(defaults_.targetAmmExecutionBufferBps, 3);
-        assertEq(defaults_.yieldAmmExecutionBufferBps, 4);
-        assertEq(defaults_.expansionMaxRouteLossBps, 100);
-    }
-
-    function test_ownerCanUpdateSharedAggregateCrvUsdOracle() public {
-        assertEq(factory.aggregateCrvUsdOracle(), address(aggregateCrvUsdOracle));
-
-        LpYieldOracle replacement = new LpYieldOracle();
-        vm.prank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
-        factory.setAggregateCrvUsdOracle(address(replacement));
-
-        vm.prank(owner);
-        factory.setAggregateCrvUsdOracle(address(replacement));
-        assertEq(factory.aggregateCrvUsdOracle(), address(replacement));
-    }
-
-    function test_aggregateCrvUsdOracleUpdateRejectsInvalidAddress() public {
-        vm.startPrank(owner);
-        vm.expectRevert(IPegKeeperV3Factory.InvalidOracle.selector);
-        factory.setAggregateCrvUsdOracle(address(0));
-        vm.expectRevert(IPegKeeperV3Factory.InvalidOracle.selector);
-        factory.setAggregateCrvUsdOracle(makeAddr("no code"));
-        vm.stopPrank();
-
-        assertEq(factory.aggregateCrvUsdOracle(), address(aggregateCrvUsdOracle));
-    }
-
-    function _path() internal view returns (IPegKeeperV3.RouteStep[] memory path) {
-        path = new IPegKeeperV3.RouteStep[](1);
-        path[0] = IPegKeeperV3.RouteStep({
-            kind: 0,
-            venue: address(route),
-            tokenIn: address(target),
-            tokenOut: address(yieldToken),
-            poolIndexIn: 0,
-            poolIndexOut: 1,
-            executionBufferBps: 0
-        });
+        return factory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
     }
 
     function _create(bytes memory initCode) internal returns (address deployed) {

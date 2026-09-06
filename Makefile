@@ -29,8 +29,8 @@ check:
 		out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json \
 		out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json
 	python3 scripts/check-vyper-solidity-abi.py \
-		out/PegKeeperV3PreviewModule.vy/PegKeeperV3PreviewModule.json \
-		out/IPegKeeperV3PreviewModule.sol/IPegKeeperV3PreviewModule.json
+		out/PegKeeperPolicy.vy/PegKeeperPolicy.json \
+		out/IPegKeeperPolicy.sol/IPegKeeperPolicy.json
 	python3 scripts/check-vyper-solidity-abi.py \
 		out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json \
 		out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json
