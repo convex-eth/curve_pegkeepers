@@ -15,6 +15,10 @@ import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
+import {
+    IStableSwap2Pool,
+    IStableSwap2PoolFixed
+} from "../../../src/interfaces/IStableSwap2Pool.sol";
 
 contract CurveEDAOProxyHarness {
     function execute(address target, bytes calldata data)
@@ -99,14 +103,20 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(_selector(actions[1].data), IPegKeeperV3Factory.setDefaults.selector);
 
         _assertDeployAction(
-            actions[2], proposal.FRXUSD_CRVUSD_POOL(), false, proposal.frxUsdOracle()
+            actions[2], proposal.FRXUSD_CRVUSD_POOL(), false, true, proposal.frxUsdOracle()
         );
         _assertTierAction(actions[3], expectedFrxUsdKeeper, 1);
-        _assertDeployAction(actions[10], proposal.SUSDE_CRVUSD_POOL(), true, proposal.usdeOracle());
+        _assertDeployAction(
+            actions[10], proposal.SUSDE_CRVUSD_POOL(), true, true, proposal.usdeOracle()
+        );
         _assertTierAction(actions[11], expectedSUsdeKeeper, 2);
-        _assertDeployAction(actions[17], proposal.USDC_CRVUSD_POOL(), false, proposal.usdcOracle());
+        _assertDeployAction(
+            actions[17], proposal.USDC_CRVUSD_POOL(), false, false, proposal.usdcOracle()
+        );
         _assertTierAction(actions[18], expectedUsdcKeeper, 3);
-        _assertDeployAction(actions[25], proposal.USDT_CRVUSD_POOL(), false, proposal.usdtOracle());
+        _assertDeployAction(
+            actions[25], proposal.USDT_CRVUSD_POOL(), false, false, proposal.usdtOracle()
+        );
         _assertTierAction(actions[26], expectedUsdtKeeper, 3);
 
         for (uint256 i; i < actions.length; ++i) {
@@ -165,6 +175,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             FRXUSD,
             FRXUSD,
             false,
+            true,
             proposal.frxUsdOracle()
         );
         _assertKeeper(
@@ -172,6 +183,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.SUSDE_CRVUSD_POOL(),
             SUSDE,
             USDE,
+            true,
             true,
             proposal.usdeOracle()
         );
@@ -181,6 +193,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             USDC,
             USDC,
             false,
+            false,
             proposal.usdcOracle()
         );
         _assertKeeper(
@@ -188,6 +201,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.USDT_CRVUSD_POOL(),
             USDT,
             USDT,
+            false,
             false,
             proposal.usdtOracle()
         );
@@ -255,6 +269,61 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
     }
 
+    function test_usdcFixedArrayModeExecutesLiveExpansion() public {
+        _assertFixedArrayKeeperExecutesLiveExpansion(expectedUsdcKeeper);
+    }
+
+    function test_usdtFixedArrayModeExecutesLiveExpansion() public {
+        _assertFixedArrayKeeperExecutesLiveExpansion(expectedUsdtKeeper);
+    }
+
+    function _assertFixedArrayKeeperExecutesLiveExpansion(address keeperAddress) internal {
+        _executeActionsDirectly();
+        IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
+
+        vm.startPrank(OWNERSHIP_AGENT);
+        keeper.set_policy(0, 100, 3_000, 10_000e18, CAP);
+        keeper.set_direction_paused(2, false);
+        keeper.set_direction_paused(0, false);
+        vm.stopPrank();
+
+        assertFalse(keeper.pool_uses_dynamic_arrays());
+        vm.mockCall(
+            keeper.pool(),
+            abi.encodeCall(IStableSwap2Pool.balances, (keeper.pool_crvusd_index())),
+            abi.encode(0)
+        );
+        vm.mockCall(
+            keeper.pool(),
+            abi.encodeCall(IStableSwap2Pool.balances, (keeper.pool_paired_token_index())),
+            abi.encode(100_000_000e6)
+        );
+        // The historical state quotes a small accounting loss. Raise only the keeper-facing
+        // valuation so the real fixed-array add-liquidity path can be exercised.
+        vm.mockCall(
+            keeper.pool(),
+            abi.encodeWithSelector(IStableSwap2Pool.get_virtual_price.selector),
+            abi.encode(2e18)
+        );
+        uint256[2] memory amounts;
+        amounts[keeper.pool_crvusd_index()] = 10_000e18;
+        vm.expectCall(
+            keeper.pool(), abi.encodeCall(IStableSwap2PoolFixed.calc_token_amount, (amounts, true))
+        );
+        assertTrue(keeper.can_expand_without_policy());
+
+        (,,, uint256 quotedLp) = keeper.preview_expansion(10_000e18);
+        uint256 minLp = quotedLp * (10_000 - proposal.AMM_EXECUTION_BUFFER_BPS()) / 10_000;
+        vm.expectCall(
+            keeper.pool(), abi.encodeCall(IStableSwap2PoolFixed.add_liquidity, (amounts, minLp))
+        );
+        (uint256 debtAdded, uint256 lpReceived,) = keeper.expand_supply(10_000e18);
+
+        assertEq(debtAdded, 10_000e18);
+        assertGe(lpReceived, minLp);
+        assertEq(keeper.deployed_crvusd(), 10_000e18);
+    }
+
     function _executeProposal() internal {
         bytes memory script = proposal.buildProposalScript();
         vm.prank(CONVEX_VOTEPROXY);
@@ -296,6 +365,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         address yieldToken,
         address backingAsset,
         bool isErc4626,
+        bool usesDynamicArrays,
         address oracle
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
@@ -303,6 +373,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.paired_token(), yieldToken);
         assertEq(keeper.backing_asset(), backingAsset);
         assertEq(keeper.paired_token_is_erc4626(), isErc4626);
+        assertEq(keeper.pool_uses_dynamic_arrays(), usesDynamicArrays);
         assertEq(keeper.backing_oracle(), oracle);
         assertEq(keeper.min_backing_oracle_price(), proposal.MIN_BACKING_ORACLE_PRICE());
         assertEq(keeper.max_deployed_crvusd(), CAP);
@@ -316,14 +387,22 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         BaseCurveProposal.Action memory action,
         address amm,
         bool isErc4626,
+        bool usesDynamicArrays,
         address oracle
     ) internal view {
         assertEq(action.target, address(factory));
-        assertEq(_selector(action.data), IPegKeeperV3Factory.deployPegKeeper.selector);
-        (address encodedAmm, bool encodedErc4626, address encodedOracle) =
-            abi.decode(_withoutSelector(action.data), (address, bool, address));
+        assertEq(
+            _selector(action.data), bytes4(keccak256("deployPegKeeper(address,bool,bool,address)"))
+        );
+        (
+            address encodedAmm,
+            bool encodedErc4626,
+            bool encodedUsesDynamicArrays,
+            address encodedOracle
+        ) = abi.decode(_withoutSelector(action.data), (address, bool, bool, address));
         assertEq(encodedAmm, amm);
         assertEq(encodedErc4626, isErc4626);
+        assertEq(encodedUsesDynamicArrays, usesDynamicArrays);
         assertEq(encodedOracle, oracle);
     }
 

@@ -1,6 +1,6 @@
 # PegKeeper V3 direct-liquidity specification
 
-Status: unreleased `3.4.0` candidate on branch `main`. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
+Status: unreleased `3.0.0` candidate on branch `main`. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
 
 ## 1. Scope
 
@@ -10,6 +10,7 @@ Each proxy fixes:
 
 - `pool`: the pool and its LP token;
 - `paired_token`: the non-crvUSD pool coin;
+- `pool_uses_dynamic_arrays`: whether liquidity quotes/deposits use `uint256[]` or `uint256[2]`;
 - `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
 - `backing_oracle`: an independent USD oracle for retained backing;
 - local capacity, intervention, profit, velocity, role, and pause state.
@@ -20,8 +21,10 @@ The AMM must:
 
 - contain exactly crvUSD and `paired_token`;
 - expose its 18-decimal LP token at the pool address;
-- implement StableSwap-NG dynamic-array `calc_token_amount(uint256[],bool)` and `add_liquidity(uint256[],uint256)`;
+- implement the initialization-selected liquidity ABI: either dynamic-array `calc_token_amount(uint256[],bool)` and `add_liquidity(uint256[],uint256)`, or fixed-array `calc_token_amount(uint256[2],bool)` and `add_liquidity(uint256[2],uint256)`;
 - implement `balances(uint256)`, `get_virtual_price()`, `calc_withdraw_one_coin(uint256,int128)`, and `remove_liquidity_one_coin(uint256,int128,uint256)`.
+
+The selected mode is exposed by `pool_uses_dynamic_arrays()`. Initialization does not probe selectors and execution does not retry the other selector after a revert. A wrong mode therefore fails closed instead of interpreting an arbitrary pool failure as evidence that another ABI should be attempted.
 
 ## 2. Shared contracts
 
@@ -313,24 +316,25 @@ Factory deployment:
 deployPegKeeper(
     address amm,
     bool pairedTokenIsErc4626,
+    bool poolUsesDynamicArrays,
     address backingOracle
 )
 ```
 
-The Factory derives the non-crvUSD coin, derives ERC-4626 backing when requested, creates one minimal proxy, initializes it, applies roles/defaults, adds it to the active list, and emits `PegKeeperDeployed`.
+The Factory derives the non-crvUSD coin, derives ERC-4626 backing when requested, creates one minimal proxy, initializes it with the immutable pool-liquidity ABI mode, applies roles/defaults, adds it to the active list, and emits `PegKeeperDeployed`.
 
 Historical deployment membership is private. The public policy-facing registry contains only active keepers.
 
 ## 13. Candidate launch
 
-| Tier | AMM | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
-|---|---|---|---|---:|---:|---:|---:|
-| Primary | frxUSD/crvUSD | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
-| Secondary | crvUSD/sUSDe | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
-| Tertiary | USDC/crvUSD | USDC | USDC/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
-| Tertiary | USDT/crvUSD | USDT | USDT/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
+| Tier | AMM | Liquidity ABI | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
+|---|---|---|---|---|---:|---:|---:|---:|
+| Primary | frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
+| Secondary | crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
+| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
+| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
 
-All keepers are deployed, registered in both aggregate monetary policies, tiered, and left fully paused. There is no sUSDe production allocation action.
+The proposal deploys all keepers, registers them in both aggregate monetary policies, assigns tiers, and leaves them fully paused. There is no sUSDe production allocation action.
 
 The dependency deployer creates implementation, policy, Factory, and four Chainlink adapters. The governance proposal first binds policy, then deploys/configures keepers.
 
@@ -339,24 +343,24 @@ The dependency deployer creates implementation, policy, Factory, and four Chainl
 Pinned Vyper `0.3.10`, codesize optimization, Shanghai:
 
 ```text
-PegKeeperV3 version:       3.4.0
-implementation initcode: 17,861 bytes
-implementation runtime:  17,782 bytes
+PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
+implementation initcode: 17,847 bytes
+implementation runtime:  17,764 bytes
 implementation hash:
-0x0b5973491de6d7103e6af7457343001e735b03b6e2bd24c44fdaf3463de0412f
-EIP-170 headroom:          6,794 bytes
+0xcef94a7ce7d9c25978a7866c4fb82045191148e8fdc05f97e24bfbc9cb4292ff
+EIP-170 headroom:          6,812 bytes
 
 PegKeeperPolicy runtime:   4,394 bytes
 policy hash:
 0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078
 
-Factory semantic runtime:  3,839 bytes
-Factory deployed runtime:  3,903 bytes
+Factory semantic runtime:  3,875 bytes
+Factory deployed runtime:  3,939 bytes
 Factory semantic hash:
-0x18ce5dfa53fce0917c30401a04f1e317dda0413be53c19dc5948fccc1c1200fd
+0x73b019397ebccae92946c77188a3cf07577efc3b3ded1fb331774cae36a1bbb0
 ```
 
-The historical `3.0.0` manifest and release checklist remain frozen and are not evidence for this candidate.
+The existing `3.0.0` manifest and release checklist predate this source snapshot. They must be regenerated from the final committed source before release rather than edited inside the source batch.
 
 ## 15. Required verification before any release
 

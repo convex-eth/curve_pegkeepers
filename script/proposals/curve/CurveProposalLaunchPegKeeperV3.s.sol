@@ -15,16 +15,16 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_782;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_764;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x0b5973491de6d7103e6af7457343001e735b03b6e2bd24c44fdaf3463de0412f;
+        0xcef94a7ce7d9c25978a7866c4fb82045191148e8fdc05f97e24bfbc9cb4292ff;
     uint256 public constant POLICY_RUNTIME_SIZE = 4_394;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078;
-    uint256 public constant FACTORY_CORE_SIZE = 3_839;
-    uint256 public constant FACTORY_RUNTIME_SIZE = 3_903;
+    uint256 public constant FACTORY_CORE_SIZE = 3_875;
+    uint256 public constant FACTORY_RUNTIME_SIZE = 3_939;
     bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
-        0x18ce5dfa53fce0917c30401a04f1e317dda0413be53c19dc5948fccc1c1200fd;
+        0x73b019397ebccae92946c77188a3cf07577efc3b3ded1fb331774cae36a1bbb0;
     uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 460;
     uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 556;
     bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
@@ -146,7 +146,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
         actions[1] = _setDefaultsAction(FRXUSD_CAP);
 
-        actions[2] = _deployAction(FRXUSD_CRVUSD_POOL, false, frxUsdOracle);
+        actions[2] = _deployAction(FRXUSD_CRVUSD_POOL, false, true, frxUsdOracle);
         actions[3] = _setTierAction(frxUsdKeeper, TIER_PRIMARY);
         actions[4] = _setBackingOraclePolicyAction(frxUsdKeeper, frxUsdOracle);
         actions[5] = _setKeeperPolicyAction(
@@ -157,7 +157,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[8] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, frxUsdKeeper);
         actions[9] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, frxUsdKeeper);
 
-        actions[10] = _deployAction(SUSDE_CRVUSD_POOL, true, usdeOracle);
+        actions[10] = _deployAction(SUSDE_CRVUSD_POOL, true, true, usdeOracle);
         actions[11] = _setTierAction(sUsdeKeeper, TIER_SECONDARY);
         actions[12] = _setBackingOraclePolicyAction(sUsdeKeeper, usdeOracle);
         actions[13] = _setKeeperPolicyAction(
@@ -167,7 +167,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[15] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, sUsdeKeeper);
         actions[16] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, sUsdeKeeper);
 
-        actions[17] = _deployAction(USDC_CRVUSD_POOL, false, usdcOracle);
+        actions[17] = _deployAction(USDC_CRVUSD_POOL, false, false, usdcOracle);
         actions[18] = _setTierAction(usdcKeeper, TIER_TERTIARY);
         actions[19] = _setBackingOraclePolicyAction(usdcKeeper, usdcOracle);
         actions[20] = _setKeeperPolicyAction(
@@ -178,7 +178,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         actions[23] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
         actions[24] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, usdcKeeper);
 
-        actions[25] = _deployAction(USDT_CRVUSD_POOL, false, usdtOracle);
+        actions[25] = _deployAction(USDT_CRVUSD_POOL, false, false, usdtOracle);
         actions[26] = _setTierAction(usdtKeeper, TIER_TERTIARY);
         actions[27] = _setBackingOraclePolicyAction(usdtKeeper, usdtOracle);
         actions[28] = _setKeeperPolicyAction(
@@ -285,17 +285,19 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
     }
 
-    function _deployAction(address amm, bool pairedTokenIsErc4626, address backingOracle)
-        internal
-        view
-        returns (Action memory)
-    {
+    function _deployAction(
+        address amm,
+        bool pairedTokenIsErc4626,
+        bool poolUsesDynamicArrays,
+        address backingOracle
+    ) internal view returns (Action memory) {
         return Action({
             target: deploymentFactory,
             data: abi.encodeWithSelector(
                 IPegKeeperV3Factory.deployPegKeeper.selector,
                 amm,
                 pairedTokenIsErc4626,
+                poolUsesDynamicArrays,
                 backingOracle
             )
         });

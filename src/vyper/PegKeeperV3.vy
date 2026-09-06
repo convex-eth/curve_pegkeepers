@@ -34,14 +34,20 @@ interface Pool:
     def balances(_index: uint256) -> uint256: view
     def balanceOf(_owner: address) -> uint256: view
     def get_virtual_price() -> uint256: view
-    def calc_token_amount(_amounts: DynArray[uint256, 2], _is_deposit: bool) -> uint256: view
-    def add_liquidity(_amounts: DynArray[uint256, 2], _min_mint_amount: uint256) -> uint256: nonpayable
     def calc_withdraw_one_coin(_lp_tokens: uint256, _index: int128) -> uint256: view
     def remove_liquidity_one_coin(
         _lp_tokens: uint256,
         _index: int128,
         _min_amount: uint256,
     ): nonpayable
+
+interface DynamicLiquidityPool:
+    def calc_token_amount(_amounts: DynArray[uint256, 2], _is_deposit: bool) -> uint256: view
+    def add_liquidity(_amounts: DynArray[uint256, 2], _min_mint_amount: uint256) -> uint256: nonpayable
+
+interface FixedLiquidityPool:
+    def calc_token_amount(_amounts: uint256[2], _is_deposit: bool) -> uint256: view
+    def add_liquidity(_amounts: uint256[2], _min_mint_amount: uint256) -> uint256: nonpayable
 
 interface PairedToken:
     def asset() -> address: view
@@ -125,7 +131,6 @@ event BackingOraclePolicyUpdated:
 
 
 
-version: public(constant(String[8])) = "3.4.0"
 name: public(String[88])
 keeper_index: public(uint256)
 
@@ -146,6 +151,7 @@ _crv_usd: ERC20
 _backing_asset: ERC20
 _paired_token: PairedToken
 pool: public(Pool)
+pool_uses_dynamic_arrays: public(bool)
 paired_token_is_erc4626: public(bool)
 backing_multiplier: uint256
 backing_oracle: public(PriceOracle)
@@ -187,10 +193,20 @@ def __init__():
 
 
 @external
+@pure
+def version() -> (uint256, uint256, uint256):
+    """
+    @notice Returns the semantic version as major, minor, and patch integers.
+    """
+    return 3, 0, 0
+
+
+@external
 def initialize(
     _backing_asset: ERC20,
     _paired_token: PairedToken,
     _pool: Pool,
+    _pool_uses_dynamic_arrays: bool,
     _max_deployed_crvusd: uint256,
     _keeper_index: uint256,
     _backing_oracle: PriceOracle,
@@ -245,6 +261,7 @@ def initialize(
     self._backing_asset = _backing_asset
     self._paired_token = _paired_token
     self.pool = _pool
+    self.pool_uses_dynamic_arrays = _pool_uses_dynamic_arrays
     self.paired_token_is_erc4626 = is_erc4626
     self.backing_multiplier = 10 ** (18 - backing_decimals)
     self.backing_oracle = _backing_oracle
@@ -878,6 +895,21 @@ def _lp_value_at(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
 
 @internal
 @view
+def _calc_token_amount(_crv_usd_amount: uint256, _paired_token_amount: uint256) -> uint256:
+    if self.pool_uses_dynamic_arrays:
+        dynamic_amounts: DynArray[uint256, 2] = [0, 0]
+        dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        dynamic_amounts[self.pool_paired_token_index] = _paired_token_amount
+        return DynamicLiquidityPool(self.pool.address).calc_token_amount(dynamic_amounts, True)
+    else:
+        fixed_amounts: uint256[2] = empty(uint256[2])
+        fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
+        return FixedLiquidityPool(self.pool.address).calc_token_amount(fixed_amounts, True)
+
+
+@internal
+@view
 def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     lp_before: uint256 = self._lp_inventory()
     virtual_price: uint256 = self.pool.get_virtual_price()
@@ -896,10 +928,7 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     if deployed_after > self._controller_factory.debt_ceiling(self):
         return False
 
-    amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.pool_crvusd_index] = crv_usd_deployed
-    amounts[self.pool_paired_token_index] = donated_paired_token
-    lp_tokens_out: uint256 = self.pool.calc_token_amount(amounts, True)
+    lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
 
     accounting_baseline: uint256 = lp_value_before + donated_value
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
@@ -936,17 +965,13 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
     accounting_baseline: uint256 = lp_value_before + donated_value
 
-    amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.pool_crvusd_index] = crv_usd_deployed
-    amounts[self.pool_paired_token_index] = donated_paired_token
-
     assert crv_usd_deployed <= self._crv_usd.balanceOf(self)
     assert crv_usd_deployed <= self._available_velocity()
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     assert deployed_after <= self.max_deployed_crvusd
     assert deployed_after <= self._controller_factory.debt_ceiling(self)
 
-    lp_tokens_out: uint256 = self.pool.calc_token_amount(amounts, True)
+    lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
     assert lp_value_after >= accounting_baseline + crv_usd_deployed
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
@@ -970,10 +995,7 @@ def _deposit_to_pool(
     _crv_usd_amount: uint256,
     _paired_token_amount: uint256,
 ) -> uint256:
-    amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.pool_crvusd_index] = _crv_usd_amount
-    amounts[self.pool_paired_token_index] = _paired_token_amount
-    quoted_lp: uint256 = self.pool.calc_token_amount(amounts, True)
+    quoted_lp: uint256 = self._calc_token_amount(_crv_usd_amount, _paired_token_amount)
     min_lp: uint256 = quoted_lp * (BPS - self.amm_execution_buffer_bps) / BPS
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
@@ -984,7 +1006,16 @@ def _deposit_to_pool(
     self._crv_usd.approve(self.pool.address, _crv_usd_amount)
     ERC20(self._paired_token.address).approve(self.pool.address, 0)
     ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
-    self.pool.add_liquidity(amounts, min_lp)
+    if self.pool_uses_dynamic_arrays:
+        dynamic_amounts: DynArray[uint256, 2] = [0, 0]
+        dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        dynamic_amounts[self.pool_paired_token_index] = _paired_token_amount
+        DynamicLiquidityPool(self.pool.address).add_liquidity(dynamic_amounts, min_lp)
+    else:
+        fixed_amounts: uint256[2] = empty(uint256[2])
+        fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
+        FixedLiquidityPool(self.pool.address).add_liquidity(fixed_amounts, min_lp)
     self._crv_usd.approve(self.pool.address, 0)
     ERC20(self._paired_token.address).approve(self.pool.address, 0)
 

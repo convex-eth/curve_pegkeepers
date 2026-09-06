@@ -157,7 +157,9 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         address expectedKeeper = _computeCreateAddress(deployment.factory, 1);
         vm.prank(CANARY_FACTORY_OWNER);
         pegKeeper = IPegKeeperV3(
-            deploymentFactory.deployPegKeeper(FRXUSD_CRVUSD_POOL, false, deployment.frxUsdUsdOracle)
+            deploymentFactory.deployPegKeeper(
+                FRXUSD_CRVUSD_POOL, false, true, deployment.frxUsdUsdOracle
+            )
         );
         vm.prank(CANARY_FACTORY_OWNER);
         policy.set_tier(address(pegKeeper), 1);

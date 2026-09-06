@@ -58,7 +58,9 @@ library PegKeeperV3TestDeployer {
         address proxy = _clone(implementation);
         vm.prank(factory);
         IPegKeeperV3(proxy)
-            .initialize(backingAsset, yieldToken, yieldAmm, maxDeployed, keeperIndex, yieldOracle);
+            .initialize(
+                backingAsset, yieldToken, yieldAmm, true, maxDeployed, keeperIndex, yieldOracle
+            );
         return IPegKeeperV3(proxy);
     }
 

@@ -5,10 +5,12 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 interface ILpPegKeeperV3 {
+    function version() external view returns (uint256 major, uint256 minor, uint256 patch);
     function initialize(
         address backingAsset,
         address yieldToken,
         address yieldAmm,
+        bool poolUsesDynamicArrays,
         uint256 maxDeployedCrvUsd,
         uint256 keeperIndex,
         address yieldOracle
@@ -18,6 +20,7 @@ interface ILpPegKeeperV3 {
     function backing_asset() external view returns (address);
     function paired_token() external view returns (address);
     function pool() external view returns (address);
+    function pool_uses_dynamic_arrays() external view returns (bool);
     function pool_crvusd_index() external view returns (uint256);
     function pool_paired_token_index() external view returns (uint256);
     function accounted_lp_tokens() external view returns (uint256);
@@ -233,7 +236,11 @@ contract LpYieldAmm is LpYieldToken {
     uint256 public withdrawBonus;
     uint256 public spendBps = 10_000;
     uint256 public addLiquidityCalls;
+    uint256 public dynamicAddLiquidityCalls;
+    uint256 public fixedAddLiquidityCalls;
     uint256 public removeLiquidityCalls;
+    bool public rejectDynamicLiquidityCalls;
+    bool public rejectFixedLiquidityCalls;
     uint256[2] public lastAmounts;
     bool public useBalanceOverride;
     uint256[2] internal _balanceOverride;
@@ -276,6 +283,11 @@ contract LpYieldAmm is LpYieldToken {
         spendBps = value;
     }
 
+    function setRejectedLiquidityModes(bool rejectDynamic, bool rejectFixed) external {
+        rejectDynamicLiquidityCalls = rejectDynamic;
+        rejectFixedLiquidityCalls = rejectFixed;
+    }
+
     function setActualWithdrawBps(uint256 value) external {
         actualWithdrawBps = value;
     }
@@ -295,6 +307,7 @@ contract LpYieldAmm is LpYieldToken {
         returns (uint256)
     {
         require(isDeposit, "deposit only");
+        require(!rejectDynamicLiquidityCalls, "dynamic liquidity rejected");
         return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
     }
 
@@ -302,8 +315,36 @@ contract LpYieldAmm is LpYieldToken {
         external
         returns (uint256 minted)
     {
+        require(!rejectDynamicLiquidityCalls, "dynamic liquidity rejected");
+        dynamicAddLiquidityCalls++;
+        uint256[2] memory fixedAmounts = [amounts[0], amounts[1]];
+        return _addLiquidity(fixedAmounts, minMintAmount);
+    }
+
+    function calc_token_amount(uint256[2] calldata amounts, bool isDeposit)
+        external
+        view
+        returns (uint256)
+    {
+        require(isDeposit, "deposit only");
+        require(!rejectFixedLiquidityCalls, "fixed liquidity rejected");
+        return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
+    }
+
+    function add_liquidity(uint256[2] calldata amounts, uint256 minMintAmount)
+        external
+        returns (uint256 minted)
+    {
+        require(!rejectFixedLiquidityCalls, "fixed liquidity rejected");
+        fixedAddLiquidityCalls++;
+        return _addLiquidity(amounts, minMintAmount);
+    }
+
+    function _addLiquidity(uint256[2] memory amounts, uint256 minMintAmount)
+        internal
+        returns (uint256 minted)
+    {
         addLiquidityCalls++;
-        require(amounts.length == 2, "two coins");
         lastAmounts = [amounts[0], amounts[1]];
         for (uint256 i; i < 2; ++i) {
             if (amounts[i] > 0) {
@@ -380,10 +421,73 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.backing_asset(), address(yieldToken));
         assertEq(keeper.paired_token(), address(yieldToken));
         assertEq(keeper.pool(), address(yieldAmm));
+        assertTrue(keeper.pool_uses_dynamic_arrays());
         assertEq(keeper.pool_crvusd_index(), 0);
         assertEq(keeper.pool_paired_token_index(), 1);
         assertEq(keeper.accounted_lp_tokens(), 0);
         assertEq(keeper.trusted_backing_value(), 0);
+    }
+
+    function test_versionIsNumericThreeZeroZeroTuple() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        (uint256 major, uint256 minor, uint256 patch_) = keeper.version();
+
+        assertEq(major, 3);
+        assertEq(minor, 0);
+        assertEq(patch_, 0);
+    }
+
+    function test_expandUsesDynamicArrayLiquidityMode() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+
+        keeper.expand_supply(10_000e18);
+
+        assertEq(yieldAmm.dynamicAddLiquidityCalls(), 1);
+        assertEq(yieldAmm.fixedAddLiquidityCalls(), 0);
+    }
+
+    function test_expandUsesFixedArrayLiquidityMode() public {
+        ILpPegKeeperV3 keeper = _deployKeeperCustomWithMode(
+            address(yieldToken), address(yieldToken), address(yieldAmm), false
+        );
+        vm.startPrank(governance);
+        keeper.set_amm_execution_buffer(0);
+        keeper.set_intervention_policy(3_333, 0);
+        keeper.set_direction_paused(2, false);
+        keeper.set_direction_paused(0, false);
+        vm.stopPrank();
+        yieldAmm.setBalances(0, 100_000_000e18);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+
+        keeper.expand_supply(10_000e18);
+
+        assertFalse(keeper.pool_uses_dynamic_arrays());
+        assertEq(yieldAmm.dynamicAddLiquidityCalls(), 0);
+        assertEq(yieldAmm.fixedAddLiquidityCalls(), 1);
+    }
+
+    function test_dynamicModeDoesNotFallbackToFixedArrayLiquidity() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setRejectedLiquidityModes(true, false);
+        yieldAmm.setBalances(0, 100_000_000e18);
+        crvUsd.mint(address(keeper), 10_000e18);
+
+        vm.expectRevert("dynamic liquidity rejected");
+        keeper.preview_expansion(10_000e18);
+    }
+
+    function test_fixedModeDoesNotFallbackToDynamicArrayLiquidity() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeperWithMode(false);
+        yieldAmm.setRejectedLiquidityModes(false, true);
+        yieldAmm.setBalances(0, 100_000_000e18);
+        crvUsd.mint(address(keeper), 10_000e18);
+
+        vm.expectRevert("fixed liquidity rejected");
+        keeper.preview_expansion(10_000e18);
     }
 
     function test_interventionPolicyDefaultsAndAdminCanSetZeroDelay() public {
@@ -582,6 +686,19 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldAmm.balanceOf(caller), 0.72e18);
         assertEq(keeper.deployed_crvusd(), 12_000e18);
         assertEq(keeper.expansion_pressure(), 12_000e18);
+    }
+
+    function test_sweepDonationUsesFixedArrayLiquidityMode() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeperWithMode(false);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 15_000e18);
+        yieldToken.mint(address(keeper), 25_000e18);
+
+        keeper.sweep_donated_paired_token(12_000e18);
+
+        assertEq(yieldAmm.fixedAddLiquidityCalls(), 1);
+        assertEq(yieldAmm.dynamicAddLiquidityCalls(), 0);
+        assertEq(keeper.deployed_crvusd(), 12_000e18);
     }
 
     function test_sweepUsesDonationToAbsorbLpCostWithoutRewardingDonation() public {
@@ -1369,7 +1486,16 @@ contract PegKeeperV3LpYieldTest is Test {
     }
 
     function _configuredDirectKeeper() internal returns (ILpPegKeeperV3 keeper) {
-        keeper = _deployKeeper(address(yieldAmm));
+        return _configuredDirectKeeperWithMode(true);
+    }
+
+    function _configuredDirectKeeperWithMode(bool poolUsesDynamicArrays)
+        internal
+        returns (ILpPegKeeperV3 keeper)
+    {
+        keeper = _deployKeeperCustomWithMode(
+            address(yieldToken), address(yieldToken), address(yieldAmm), poolUsesDynamicArrays
+        );
         vm.startPrank(governance);
         keeper.set_amm_execution_buffer(0);
         keeper.set_intervention_policy(3_333, 0);
@@ -1388,6 +1514,15 @@ contract PegKeeperV3LpYieldTest is Test {
         internal
         returns (ILpPegKeeperV3 keeper)
     {
+        return _deployKeeperCustomWithMode(backingAsset_, yieldToken_, yieldAmm_, true);
+    }
+
+    function _deployKeeperCustomWithMode(
+        address backingAsset_,
+        address yieldToken_,
+        address yieldAmm_,
+        bool poolUsesDynamicArrays_
+    ) internal returns (ILpPegKeeperV3 keeper) {
         bytes memory keeperCreationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
         address implementation;
         assembly ("memory-safe") {
@@ -1413,7 +1548,13 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper = ILpPegKeeperV3(proxy);
         vm.prank(address(factory));
         keeper.initialize(
-            backingAsset_, yieldToken_, yieldAmm_, MAX_DEPLOYED, 1, address(yieldOracle)
+            backingAsset_,
+            yieldToken_,
+            yieldAmm_,
+            poolUsesDynamicArrays_,
+            MAX_DEPLOYED,
+            1,
+            address(yieldOracle)
         );
         factory.setDebtCeiling(proxy, MAX_DEPLOYED);
     }

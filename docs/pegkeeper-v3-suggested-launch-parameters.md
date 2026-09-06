@@ -1,17 +1,17 @@
 # PegKeeper V3 suggested launch parameters
 
-Status: unreleased `3.4.0` candidate. This document does not authorize deployment, allocation, registration, activation, governance execution, or broadcast.
+Status: unreleased `3.0.0` candidate. This document does not authorize deployment, allocation, registration, activation, governance execution, or broadcast.
 
 ## Candidate keeper set
 
 All keepers use their own crvUSD/paired-token pool directly. There are no routes or intermediate swaps.
 
-| Priority | Keeper | AMM | Paired token | Retained backing | Local max | Initial ControllerFactory ceiling |
-|---|---|---|---|---|---:|---:|
-| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | frxUSD | frxUSD | 20m | 20m |
-| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | sUSDe | USDe | provisional 20m | **0** |
-| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | USDC | USDC | 20m | 20m |
-| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | USDT | USDT | 20m | 20m |
+| Priority | Keeper | AMM | Liquidity ABI | Paired token | Retained backing | Local max | Initial ControllerFactory ceiling |
+|---|---|---|---|---|---|---:|---:|
+| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD | frxUSD | 20m | 20m |
+| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | sUSDe | USDe | provisional 20m | **0** |
+| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC | USDC | 20m | 20m |
+| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT | USDT | 20m | 20m |
 
 Token addresses:
 
@@ -24,7 +24,7 @@ USDC    0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 USDT    0xdAC17F958D2ee523a2206206994597C13D831ec7
 ```
 
-sUSDe is deployed/configured/registered but deliberately receives no production debt ceiling. Its `20m` local maximum is a placeholder, not funding. Governance must remeasure pool depth and explicitly choose both values before activation.
+The proposal deploys/configures/registers sUSDe but deliberately assigns no production debt ceiling. Its `20m` local maximum is a placeholder, not funding. Governance must remeasure pool depth and explicitly choose both values before activation.
 
 ## Shared deployment configuration
 
@@ -155,7 +155,7 @@ The proposal contains 33 actions and no activation or route action.
 If separately authorized:
 
 1. Reconfirm implementation, policy, Factory, and oracle adapter hashes.
-2. Reconfirm all pool coin orders, rate behavior, virtual prices, fee parameters, balances, and one-coin quote behavior.
+2. Reconfirm all pool coin orders, selected fixed/dynamic liquidity ABI modes, rate behavior, virtual prices, fee parameters, balances, and one-coin quote behavior.
 3. Reassess every local max and ControllerFactory debt ceiling against current pool depth.
 4. Keep sUSDe at zero until governance deliberately funds it.
 5. Confirm all keepers are active in Factory but directions `0`, `1`, and `2` remain paused.

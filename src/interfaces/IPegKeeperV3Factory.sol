@@ -55,9 +55,12 @@ interface IPegKeeperV3Factory {
 
     /// @notice Deploys a paused keeper that interacts only with `amm`.
     /// @dev The paired token is the non-crvUSD coin and the backing asset is derived for ERC-4626.
-    function deployPegKeeper(address amm, bool pairedTokenIsErc4626, address backingOracle)
-        external
-        returns (address pegKeeper);
+    function deployPegKeeper(
+        address amm,
+        bool pairedTokenIsErc4626,
+        bool poolUsesDynamicArrays,
+        address backingOracle
+    ) external returns (address pegKeeper);
 
     function setDefaults(DeploymentDefaults calldata newDefaults) external;
     function setPolicy(address newPolicy) external;

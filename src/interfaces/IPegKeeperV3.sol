@@ -58,7 +58,7 @@ interface IPegKeeperV3 {
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
     event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
 
-    function version() external view returns (string memory);
+    function version() external view returns (uint256 major, uint256 minor, uint256 patch);
     function name() external view returns (string memory);
     function keeper_index() external view returns (uint256);
     function initialized() external view returns (bool);
@@ -69,6 +69,7 @@ interface IPegKeeperV3 {
     function backing_asset() external view returns (address);
     function paired_token() external view returns (address);
     function pool() external view returns (address);
+    function pool_uses_dynamic_arrays() external view returns (bool);
     function paired_token_is_erc4626() external view returns (bool);
     function paired_token_assets(uint256 units) external view returns (uint256);
     function paired_token_units(uint256 assets) external view returns (uint256);
@@ -109,6 +110,7 @@ interface IPegKeeperV3 {
         address backingAsset,
         address pairedToken,
         address pool,
+        bool poolUsesDynamicArrays,
         uint256 maxDeployedCrvUsd,
         uint256 keeperIndex,
         address backingOracle

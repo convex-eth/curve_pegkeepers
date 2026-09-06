@@ -62,6 +62,14 @@ contract PegKeeperV3LpFactoryTest is Test {
         assertTrue(keeper.all_execution_paused());
     }
 
+    function test_deployPinsSelectedPoolLiquidityMode() public {
+        vm.prank(owner);
+        address deployed =
+            factory.deployPegKeeper(address(yieldAmm), false, false, address(yieldOracle));
+
+        assertFalse(IPegKeeperV3(deployed).pool_uses_dynamic_arrays());
+    }
+
     function test_deployRequiresPolicyBoundToThisFactory() public {
         IPegKeeperPolicy unbound = IPegKeeperPolicy(
             vm.deployCode(
@@ -72,12 +80,12 @@ contract PegKeeperV3LpFactoryTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(IPegKeeperV3Factory.InvalidPolicy.selector);
-        unboundFactory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
+        unboundFactory.deployPegKeeper(address(yieldAmm), false, true, address(yieldOracle));
     }
 
     function test_deployRejectsNonOwner() public {
         vm.expectRevert(IPegKeeperV3Factory.NotOwner.selector);
-        factory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
+        factory.deployPegKeeper(address(yieldAmm), false, true, address(yieldOracle));
     }
 
     function test_deployRejectsAmmWithoutCrvUsd() public {
@@ -86,7 +94,7 @@ contract PegKeeperV3LpFactoryTest is Test {
 
         vm.prank(owner);
         vm.expectRevert(IPegKeeperV3Factory.InvalidAmm.selector);
-        factory.deployPegKeeper(address(invalidAmm), false, address(yieldOracle));
+        factory.deployPegKeeper(address(invalidAmm), false, true, address(yieldOracle));
     }
 
     function test_defaultsContainOnlyDirectAmmExecutionBuffer() public view {
@@ -223,7 +231,7 @@ contract PegKeeperV3LpFactoryTest is Test {
 
     function _deployKeeper() internal returns (address) {
         vm.prank(owner);
-        return factory.deployPegKeeper(address(yieldAmm), false, address(yieldOracle));
+        return factory.deployPegKeeper(address(yieldAmm), false, true, address(yieldOracle));
     }
 
     function _create(bytes memory initCode) internal returns (address deployed) {

@@ -28,6 +28,7 @@ interface PegKeeperV3:
         _backing_asset: address,
         _paired_token: address,
         _pool: address,
+        _pool_uses_dynamic_arrays: bool,
         _max_deployed_crvusd: uint256,
         _keeper_index: uint256,
         _backing_oracle: address,
@@ -85,7 +86,7 @@ BPS: constant(uint256) = 10_000
 CLONE_DEPLOY_CALLDATA_BYTES: constant(uint256) = 36
 CLONE_DEPLOY_SELECTOR: constant(Bytes[4]) = method_id("__deployClone(address)")
 INITIALIZE_SELECTOR: constant(Bytes[4]) = method_id(
-    "initialize(address,address,address,uint256,uint256,address)"
+    "initialize(address,address,address,bool,uint256,uint256,address)"
 )
 
 CONTROLLER_FACTORY: immutable(address)
@@ -190,6 +191,7 @@ def fee_receiver() -> address:
 def deployPegKeeper(
     _amm: address,
     _pairedTokenIsErc4626: bool,
+    _poolUsesDynamicArrays: bool,
     _backingOracle: address,
 ) -> address:
     """
@@ -211,6 +213,7 @@ def deployPegKeeper(
         backing_asset,
         paired_token,
         _amm,
+        _poolUsesDynamicArrays,
         config.maxDeployedCrvUsd,
         index,
         _backingOracle,
@@ -347,6 +350,7 @@ def _deploy_keeper(
     _backingAsset: address,
     _pairedToken: address,
     _pool: address,
+    _poolUsesDynamicArrays: bool,
     _maxDeployedCrvUsd: uint256,
     _index: uint256,
     _backingOracle: address,
@@ -369,6 +373,7 @@ def _deploy_keeper(
             _backingAsset,
             _pairedToken,
             _pool,
+            _poolUsesDynamicArrays,
             _maxDeployedCrvUsd,
             _index,
             _backingOracle,
