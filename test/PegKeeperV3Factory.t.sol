@@ -52,13 +52,13 @@ contract PegKeeperV3LpFactoryTest is Test {
         assertEq(factory.activePegKeeperCount(), 1);
         assertEq(factory.activePegKeeperAt(0), deployed);
         assertTrue(factory.is_active(deployed));
-        assertEq(keeper.yield_token(), address(yieldToken));
+        assertEq(keeper.paired_token(), address(yieldToken));
         assertEq(keeper.backing_asset(), address(yieldToken));
-        assertEq(keeper.yield_amm(), address(yieldAmm));
+        assertEq(keeper.pool(), address(yieldAmm));
         assertEq(keeper.coins(1), address(yieldAmm));
-        assertEq(keeper.yield_amm_execution_buffer_bps(), 4);
+        assertEq(keeper.amm_execution_buffer_bps(), 4);
         assertTrue(keeper.expansion_paused());
-        assertTrue(keeper.yield_contraction_paused());
+        assertTrue(keeper.contraction_paused());
         assertTrue(keeper.all_execution_paused());
     }
 

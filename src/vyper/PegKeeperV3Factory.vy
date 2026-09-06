@@ -15,7 +15,7 @@ interface TwoCoinPool:
     def coins(_index: uint256) -> address: view
 
 
-interface YieldToken:
+interface PairedToken:
     def asset() -> address: view
 
 
@@ -26,11 +26,11 @@ interface PegKeeperPolicy:
 interface PegKeeperV3:
     def initialize(
         _backing_asset: address,
-        _yield_token: address,
-        _yield_amm: address,
+        _paired_token: address,
+        _pool: address,
         _max_deployed_crvusd: uint256,
         _keeper_index: uint256,
-        _yield_oracle: address,
+        _backing_oracle: address,
     ): nonpayable
     def initialized() -> bool: view
     def set_amm_execution_buffer(_execution_buffer_bps: uint256): nonpayable
@@ -58,7 +58,7 @@ event PegKeeperDeployed:
     pegKeeper: indexed(address)
     implementation: indexed(address)
     amm: address
-    yieldToken: address
+    pairedToken: address
 
 
 event OwnershipTransferStarted:
@@ -189,8 +189,8 @@ def fee_receiver() -> address:
 @external
 def deployPegKeeper(
     _amm: address,
-    _yieldTokenIsErc4626: bool,
-    _yieldOracle: address,
+    _pairedTokenIsErc4626: bool,
+    _backingOracle: address,
 ) -> address:
     """
     @notice Lets the owner deploy and record a paused direct-liquidity keeper.
@@ -199,9 +199,9 @@ def deployPegKeeper(
     if PegKeeperPolicy(self.policy).factory() != self:
         raw_revert(method_id("InvalidPolicy()"))
 
-    yield_token: address = empty(address)
+    paired_token: address = empty(address)
     backing_asset: address = empty(address)
-    yield_token, backing_asset = self._resolve_assets(_amm, _yieldTokenIsErc4626)
+    paired_token, backing_asset = self._resolve_assets(_amm, _pairedTokenIsErc4626)
 
     index: uint256 = self._keeperCount + 1
     implementation: address = IMPLEMENTATION
@@ -209,11 +209,11 @@ def deployPegKeeper(
     peg_keeper: address = self._deploy_keeper(
         implementation,
         backing_asset,
-        yield_token,
+        paired_token,
         _amm,
         config.maxDeployedCrvUsd,
         index,
-        _yieldOracle,
+        _backingOracle,
     )
 
     PegKeeperV3(peg_keeper).set_amm_execution_buffer(config.ammExecutionBufferBps)
@@ -222,7 +222,7 @@ def deployPegKeeper(
     self._isDeployed[peg_keeper] = True
     self._add_active(peg_keeper)
 
-    log PegKeeperDeployed(index, peg_keeper, implementation, _amm, yield_token)
+    log PegKeeperDeployed(index, peg_keeper, implementation, _amm, paired_token)
     return peg_keeper
 
 
@@ -321,35 +321,35 @@ def _check_owner():
 @view
 def _resolve_assets(
     _amm: address,
-    _yieldTokenIsErc4626: bool,
+    _pairedTokenIsErc4626: bool,
 ) -> (address, address):
     crv_usd: address = ControllerFactory(CONTROLLER_FACTORY).stablecoin()
     coin_0: address = TwoCoinPool(_amm).coins(0)
     coin_1: address = TwoCoinPool(_amm).coins(1)
-    yield_token: address = empty(address)
+    paired_token: address = empty(address)
 
     if coin_0 == crv_usd and coin_1 != crv_usd:
-        yield_token = coin_1
+        paired_token = coin_1
     elif coin_1 == crv_usd and coin_0 != crv_usd:
-        yield_token = coin_0
+        paired_token = coin_0
     else:
         raw_revert(method_id("InvalidAmm()"))
 
-    backing_asset: address = yield_token
-    if _yieldTokenIsErc4626:
-        backing_asset = YieldToken(yield_token).asset()
-    return yield_token, backing_asset
+    backing_asset: address = paired_token
+    if _pairedTokenIsErc4626:
+        backing_asset = PairedToken(paired_token).asset()
+    return paired_token, backing_asset
 
 
 @internal
 def _deploy_keeper(
     _implementation: address,
     _backingAsset: address,
-    _yieldToken: address,
-    _yieldAmm: address,
+    _pairedToken: address,
+    _pool: address,
     _maxDeployedCrvUsd: uint256,
     _index: uint256,
-    _yieldOracle: address,
+    _backingOracle: address,
 ) -> address:
     succeeded: bool = False
     response: Bytes[32] = empty(Bytes[32])
@@ -367,11 +367,11 @@ def _deploy_keeper(
         peg_keeper,
         _abi_encode(
             _backingAsset,
-            _yieldToken,
-            _yieldAmm,
+            _pairedToken,
+            _pool,
             _maxDeployedCrvUsd,
             _index,
-            _yieldOracle,
+            _backingOracle,
             method_id=INITIALIZE_SELECTOR,
         ),
         revert_on_failure=False,

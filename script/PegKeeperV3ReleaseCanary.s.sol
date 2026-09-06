@@ -74,12 +74,12 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(0, 1, EXPANSION_MARKET_TRADE, 0);
         vm.stopPrank();
 
-        (uint256 expectedDebt,,, uint256 expectedLp) = pegKeeper.previewExpansion(EXPANSION_AMOUNT);
+        (uint256 expectedDebt,,, uint256 expectedLp) = pegKeeper.preview_expansion(EXPANSION_AMOUNT);
         require(expectedDebt == EXPANSION_AMOUNT, "unexpected preview debt");
         require(expectedLp > 0, "LP preview returned zero");
 
         vm.prank(CANARY_KEEPER);
-        (uint256 crvUsdDeployed, uint256 lpReceived,) = pegKeeper.expand(EXPANSION_AMOUNT);
+        (uint256 crvUsdDeployed, uint256 lpReceived,) = pegKeeper.expand_supply(EXPANSION_AMOUNT);
         require(crvUsdDeployed == EXPANSION_AMOUNT, "unexpected crvUSD deployment");
         require(lpReceived > 0, "no LP received");
         // forge-lint: disable-next-line(block-timestamp)
@@ -169,7 +169,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         deal(FRXUSD, address(pegKeeper), DONATION_SWEEP_AMOUNT);
         vm.prank(CANARY_KEEPER);
         (uint256 swept, uint256 matched, uint256 sweepLp,) =
-            pegKeeper.sweepDonatedYield(DONATION_SWEEP_AMOUNT);
+            pegKeeper.sweep_donated_paired_token(DONATION_SWEEP_AMOUNT);
         require(swept == DONATION_SWEEP_AMOUNT, "donation sweep amount");
         require(matched == DONATION_SWEEP_AMOUNT, "donation match amount");
         require(sweepLp > 0, "donation sweep LP");
@@ -197,7 +197,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     {
         vm.prank(CANARY_KEEPER);
         (uint256 lpBurned, uint256 received, uint256 keeperReward) =
-            pegKeeper.contractViaAmm(lpAmount);
+            pegKeeper.contract_supply(lpAmount);
         require(lpBurned == lpAmount, "unexpected LP burn");
         require(received > 0, "one-coin withdrawal returned no crvUSD");
         require(keeperReward > 0, "contraction keeper reward missing");
@@ -213,7 +213,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         for (uint256 i = 1; i <= 100; ++i) {
             uint256 candidate = held * i / 100;
             (bool success, bytes memory result) = address(pegKeeper)
-                .staticcall(abi.encodeCall(IPegKeeperV3.previewKeeperBuyback, (candidate)));
+                .staticcall(abi.encodeCall(IPegKeeperV3.preview_contraction, (candidate)));
             if (!success || result.length != 96) continue;
             (crvUsdOut, grossProfit, reward) = abi.decode(result, (uint256, uint256, uint256));
             return (candidate, crvUsdOut, grossProfit, reward);

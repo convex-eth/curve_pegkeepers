@@ -2,7 +2,7 @@
 
 Foundry/Vyper workspace for Curve crvUSD PegKeeper research, V2 migration testing, and an unreleased direct-liquidity PegKeeperV3 candidate.
 
-> **Status:** version `3.4.0` on branch `lp-yield` is not deployed. Nothing in this repository authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
+> **Status:** version `3.4.0` on branch `main` is not deployed. Nothing in this repository authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
 
 ## What a PegKeeper does
 
@@ -119,15 +119,16 @@ The draw cannot prove LP return because funds leave for an external module. A pr
 
 Loose paired-token donations can be swept into LP. Priority denial sets their crvUSD match to zero rather than allowing debt growth through a side path. Donation value is excluded from caller-profit attribution.
 
-`withdraw_profit()` first settles loose paired-token donations, then transfers only claimable idle crvUSD to the Factory's live fee receiver. It remains callable during contraction regimes so accrued value is not trapped.
+`withdraw_profit()` first settles loose paired-token donations, then transfers all claimable idle crvUSD to the Factory's live fee receiver. `withdraw_profit(maxCrvUsdAmount)` performs the same accounting with a caller-supplied transfer bound. Both remain callable during contraction regimes so accrued value is not trapped.
 
-Entry and normal-exit profit floors are independent. The candidate values are:
+Entry and normal-contraction profit floors are independent:
 
-```text
-entryMinProfitPpm       = 10
-normalExitMinProfitPpm  = 500
-keeperProfitShareBps    = 3,000
-```
+| Profile | `entryMinProfitPpm` | `normalExitMinProfitPpm` |
+|---|---:|---:|
+| frxUSD / sUSDe | `10` (`0.1 bp`) | `500` (`5 bp`) |
+| USDC / USDT last resort | `500` (`5 bp`) | `100` (`1 bp`) |
+
+The last-resort profile makes USDC/USDT more expensive to enter and easier to unwind. `keeperProfitShareBps` remains `3_000` for every candidate keeper.
 
 ## Factory and deployment
 
@@ -136,8 +137,8 @@ keeperProfitShareBps    = 3,000
 ```solidity
 deployPegKeeper(
     address amm,
-    bool yieldTokenIsErc4626,
-    address retainedBackingOracle
+    bool pairedTokenIsErc4626,
+    address backingOracle
 )
 ```
 
@@ -159,12 +160,12 @@ The policy is intentionally unbound until the governance proposal executes its f
 
 The current proposal creates four direct keepers:
 
-| Tier | Paired token | AMM | Retained oracle | Local cap | Initial ControllerFactory ceiling |
-|---|---|---|---|---:|---:|
-| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | frxUSD/USD | 20m | 20m |
-| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | USDe/USD | provisional 20m | **0** |
-| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | USDC/USD | 20m | 20m |
-| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | USDT/USD | 20m | 20m |
+| Tier | Paired token | AMM | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
+|---|---|---|---|---:|---:|---:|---:|
+| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | frxUSD/USD | 20m | 20m | 0.1 bp | 5 bp |
+| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | USDe/USD | provisional 20m | **0** | 0.1 bp | 5 bp |
+| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | USDC/USD | 20m | 20m | 5 bp | 1 bp |
+| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | USDT/USD | 20m | 20m | 5 bp | 1 bp |
 
 All four remain fully paused. sUSDe is deployed and registered but deliberately unfunded; governance must remeasure live liquidity and independently choose its local cap and ControllerFactory ceiling before activation.
 
@@ -174,11 +175,11 @@ Pinned Vyper `0.3.10`, `--optimize codesize`, Shanghai:
 
 ```text
 PegKeeperV3 version:       3.4.0
-implementation initcode: 17,809 bytes
-implementation runtime:  17,728 bytes
-EIP-170 headroom:          6,848 bytes
+implementation initcode: 17,861 bytes
+implementation runtime:  17,782 bytes
+EIP-170 headroom:          6,794 bytes
 implementation hash:
-0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb
+0x0b5973491de6d7103e6af7457343001e735b03b6e2bd24c44fdaf3463de0412f
 
 PegKeeperPolicy runtime:   4,394 bytes
 policy hash:
@@ -202,7 +203,7 @@ ETH_RPC_URL=https://an-archive-rpc.example make check
 
 Coverage includes direct expansion, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, contraction, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and a live sUSDe direct-expansion canary.
 
-The pinned frxUSD structural canary uses the production `500 ppm` exit policy for all earlier checks, then sets the normal-exit floor to zero on the fork only because that historical pool state offers no executable `5 bp` exit. It still exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency. Unit tests separately pin the exact production exit-profit boundary.
+The pinned frxUSD structural canary uses the frxUSD production `500 ppm` exit policy for all earlier checks, then sets the normal-exit floor to zero on the fork only because that historical pool state offers no executable `5 bp` exit. It still exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency. Unit tests separately pin the exact production exit-profit boundary.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` are frozen evidence for the earlier `3.0.0` candidate. They are not evidence for `3.4.0` and are intentionally untouched.
 

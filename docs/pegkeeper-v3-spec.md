@@ -1,6 +1,6 @@
 # PegKeeper V3 direct-liquidity specification
 
-Status: unreleased `3.4.0` candidate on branch `lp-yield`. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
+Status: unreleased `3.4.0` candidate on branch `main`. Not deployed. Nothing in this document authorizes deployment, allocation, registration, activation, governance execution, or broadcast.
 
 ## 1. Scope
 
@@ -8,17 +8,17 @@ PegKeeperV3 owns and accounts for liquidity in exactly one Curve two-coin pool c
 
 Each proxy fixes:
 
-- `yield_amm`: the pool and its LP token;
-- `yield_token`: the non-crvUSD pool coin;
-- `backing_asset`: `yield_token`, or `yield_token.asset()` in ERC-4626 mode;
-- `yield_oracle`: an independent USD oracle for retained backing;
+- `pool`: the pool and its LP token;
+- `paired_token`: the non-crvUSD pool coin;
+- `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
+- `backing_oracle`: an independent USD oracle for retained backing;
 - local capacity, intervention, profit, velocity, role, and pause state.
 
 The core contains no target AMM, swap operation, route struct, path storage, route loss bound, DAI/USDS adapter, ERC-4626 route operation, Frax minter operation, or detached preview module.
 
 The AMM must:
 
-- contain exactly crvUSD and `yield_token`;
+- contain exactly crvUSD and `paired_token`;
 - expose its 18-decimal LP token at the pool address;
 - implement StableSwap-NG dynamic-array `calc_token_amount(uint256[],bool)` and `add_liquidity(uint256[],uint256)`;
 - implement `balances(uint256)`, `get_virtual_price()`, `calc_withdraw_one_coin(uint256,int128)`, and `remove_liquidity_one_coin(uint256,int128,uint256)`.
@@ -184,14 +184,14 @@ The call:
 9. increases `deployed_crvusd` by actual matched crvUSD;
 10. checks final retained backing and records intervention time.
 
-`previewExpansion` executes the same direct accounting and safety predicates without state changes.
+`preview_expansion` executes the same direct accounting and safety predicates without state changes.
 
 ## 6. LP and ERC-4626 valuation
 
 Persistent backing is the complete held LP balance:
 
 ```text
-lpValue = floor(yieldAmm.balanceOf(keeper) * get_virtual_price() / 1e18)
+lpValue = floor(pool.balanceOf(keeper) * get_virtual_price() / 1e18)
 ```
 
 For an ERC-4626 paired token:
@@ -216,7 +216,7 @@ realized gross       = max(LP value after - baseline - principal, 0)
 
 Caller reward is calculated only from realized gross profit. The retained LP must still satisfy the entry floor and cover resulting debt.
 
-`sweepDonatedYield(maxAmount)`:
+`sweep_donated_paired_token(maxAmount)`:
 
 - settles selected loose paired tokens into the AMM;
 - requires oracle health and amount floor;
@@ -226,11 +226,11 @@ Caller reward is calculated only from realized gross profit. The retained LP mus
 - consumes capacity and velocity only for actual crvUSD matched;
 - does not update the monetary-intervention timestamp.
 
-`withdraw_profit()` performs the same donation settlement before transferring claimable idle crvUSD to the live Factory fee receiver.
+`withdraw_profit()` performs the same donation settlement before transferring all claimable idle crvUSD to the live Factory fee receiver. `withdraw_profit(maxCrvUsdAmount)` runs the same path with a caller-supplied transfer bound.
 
 ## 8. Static contraction
 
-`contractViaAmm(lpAmount)` has one path:
+`contract_supply(lpAmount)` has one path:
 
 ```text
 held LP
@@ -251,7 +251,7 @@ It requires:
 
 Contraction reduces debt by crvUSD retained after reward. Any amount above remaining debt is terminal surplus transferred to the fee receiver.
 
-Entry and normal-exit profit floors are independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`.
+Entry and normal-contraction profit floors are independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so last-resort exposure is expensive to enter and cheaper to unwind.
 
 ## 9. Policy-gated external draw
 
@@ -312,8 +312,8 @@ Factory deployment:
 ```solidity
 deployPegKeeper(
     address amm,
-    bool yieldTokenIsErc4626,
-    address yieldOracle
+    bool pairedTokenIsErc4626,
+    address backingOracle
 )
 ```
 
@@ -323,12 +323,12 @@ Historical deployment membership is private. The public policy-facing registry c
 
 ## 13. Candidate launch
 
-| Tier | AMM | Paired token | Backing oracle | Local max | Initial Factory ceiling |
-|---|---|---|---|---:|---:|
-| Primary | frxUSD/crvUSD | frxUSD | frxUSD/USD | 20m | 20m |
-| Secondary | crvUSD/sUSDe | sUSDe | USDe/USD | provisional 20m | 0 |
-| Tertiary | USDC/crvUSD | USDC | USDC/USD | 20m | 20m |
-| Tertiary | USDT/crvUSD | USDT | USDT/USD | 20m | 20m |
+| Tier | AMM | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
+|---|---|---|---|---:|---:|---:|---:|
+| Primary | frxUSD/crvUSD | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
+| Secondary | crvUSD/sUSDe | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
+| Tertiary | USDC/crvUSD | USDC | USDC/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
+| Tertiary | USDT/crvUSD | USDT | USDT/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
 
 All keepers are deployed, registered in both aggregate monetary policies, tiered, and left fully paused. There is no sUSDe production allocation action.
 
@@ -340,11 +340,11 @@ Pinned Vyper `0.3.10`, codesize optimization, Shanghai:
 
 ```text
 PegKeeperV3 version:       3.4.0
-implementation initcode: 17,809 bytes
-implementation runtime:  17,728 bytes
+implementation initcode: 17,861 bytes
+implementation runtime:  17,782 bytes
 implementation hash:
-0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb
-EIP-170 headroom:          6,848 bytes
+0x0b5973491de6d7103e6af7457343001e735b03b6e2bd24c44fdaf3463de0412f
+EIP-170 headroom:          6,794 bytes
 
 PegKeeperPolicy runtime:   4,394 bytes
 policy hash:
@@ -369,4 +369,4 @@ The historical `3.0.0` manifest and release checklist remain frozen and are not 
 7. Generate a new release manifest; never relabel historical evidence.
 8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.
+The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The frxUSD production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.

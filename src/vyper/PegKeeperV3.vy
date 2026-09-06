@@ -29,7 +29,7 @@ interface PegKeeperPolicy:
     def can_expand(_keeper: address) -> bool: view
     def can_contract(_keeper: address) -> bool: view
 
-interface YieldAmm:
+interface Pool:
     def coins(_index: uint256) -> address: view
     def balances(_index: uint256) -> uint256: view
     def balanceOf(_owner: address) -> uint256: view
@@ -43,11 +43,11 @@ interface YieldAmm:
         _min_amount: uint256,
     ): nonpayable
 
-interface YieldToken:
+interface PairedToken:
     def asset() -> address: view
     def balanceOf(_owner: address) -> uint256: view
     def decimals() -> uint256: view
-    def convertToAssets(_yield_token_amount: uint256) -> uint256: view
+    def convertToAssets(_paired_token_amount: uint256) -> uint256: view
     def convertToShares(_assets: uint256) -> uint256: view
 
 interface PriceOracle:
@@ -74,9 +74,9 @@ event Expanded:
     gross_profit: uint256
     keeper_reward: uint256
 
-event DonatedYieldSwept:
+event DonatedPairedTokenSwept:
     keeper: indexed(address)
-    yield_token_swept: uint256
+    paired_token_swept: uint256
     crv_usd_matched: uint256
     lp_tokens_received: uint256
     gross_profit: uint256
@@ -89,7 +89,7 @@ event Contracted:
     gross_profit: uint256
     keeper_reward: uint256
 
-event SurplusClaimed:
+event ProfitWithdrawn:
     caller: indexed(address)
     receiver: indexed(address)
     crv_usd_transferred: uint256
@@ -119,9 +119,9 @@ event InterventionPolicyUpdated:
     max_intervention_share_bps: uint256
     min_intervention_delay: uint256
 
-event YieldOraclePolicyUpdated:
-    yield_oracle: indexed(address)
-    min_yield_price: uint256
+event BackingOraclePolicyUpdated:
+    backing_oracle: indexed(address)
+    min_backing_price: uint256
 
 
 
@@ -132,28 +132,28 @@ keeper_index: public(uint256)
 BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
-DEFAULT_MIN_YIELD_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
+DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
 max_expansion_burst_bps: public(constant(uint256)) = 500
 expansion_refill_period: public(constant(uint256)) = 5 * 60
 
 DIRECTION_EXPANSION: constant(uint256) = 0
-DIRECTION_YIELD_CONTRACTION: constant(uint256) = 1
+DIRECTION_CONTRACTION: constant(uint256) = 1
 DIRECTION_ALL: constant(uint256) = 2
 
 _factory: PegKeeperFactory
 _controller_factory: ControllerFactory
 _crv_usd: ERC20
 _backing_asset: ERC20
-_yield_token: YieldToken
-yield_amm: public(YieldAmm)
-yield_token_is_erc4626: public(bool)
+_paired_token: PairedToken
+pool: public(Pool)
+paired_token_is_erc4626: public(bool)
 backing_multiplier: uint256
-yield_oracle: public(PriceOracle)
-min_yield_oracle_price: public(uint256)
+backing_oracle: public(PriceOracle)
+min_backing_oracle_price: public(uint256)
 initialized: public(bool)
 
-yield_amm_crvusd_index: public(uint256)
-yield_amm_yield_token_index: public(uint256)
+pool_crvusd_index: public(uint256)
+pool_paired_token_index: public(uint256)
 
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
@@ -163,14 +163,14 @@ max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
 min_intervention_delay: public(uint256)
 last_intervention_at: public(uint256)
-yield_amm_execution_buffer_bps: public(uint256)
+amm_execution_buffer_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
 _expansion_pressure: uint256
 last_expansion_pressure_update: public(uint256)
 
 expansion_paused: public(bool)
-yield_contraction_paused: public(bool)
+contraction_paused: public(bool)
 all_execution_paused: public(bool)
 
 
@@ -182,18 +182,18 @@ def __init__():
     # Lock the standalone implementation. Proxies have independent zeroed storage.
     self.initialized = True
     self.expansion_paused = True
-    self.yield_contraction_paused = True
+    self.contraction_paused = True
     self.all_execution_paused = True
 
 
 @external
 def initialize(
     _backing_asset: ERC20,
-    _yield_token: YieldToken,
-    _yield_amm: YieldAmm,
+    _paired_token: PairedToken,
+    _pool: Pool,
     _max_deployed_crvusd: uint256,
     _keeper_index: uint256,
-    _yield_oracle: PriceOracle,
+    _backing_oracle: PriceOracle,
 ):
     """
     @notice Sets up a new keeper with one direct pool, its paired token, limits, and oracle.
@@ -202,53 +202,53 @@ def initialize(
     self.initialized = True
     assert msg.sender.codesize > 0
     assert _backing_asset.address != empty(address)
-    assert _yield_token.address != empty(address)
-    assert _yield_amm.address != empty(address)
-    assert _yield_amm.address.codesize > 0
+    assert _paired_token.address != empty(address)
+    assert _pool.address != empty(address)
+    assert _pool.address.codesize > 0
     assert _max_deployed_crvusd > 0
     assert _keeper_index > 0
-    assert _yield_oracle.address != empty(address)
-    assert _yield_oracle.address.codesize > 0
+    assert _backing_oracle.address != empty(address)
+    assert _backing_oracle.address.codesize > 0
 
     controller_factory: address = PegKeeperFactory(msg.sender).controllerFactory()
     assert controller_factory != empty(address)
     crv_usd: address = ControllerFactory(controller_factory).stablecoin()
     assert crv_usd != empty(address)
-    assert crv_usd != _yield_token.address
-    is_erc4626: bool = _yield_token.address != _backing_asset.address
+    assert crv_usd != _paired_token.address
+    is_erc4626: bool = _paired_token.address != _backing_asset.address
     if is_erc4626:
-        assert _yield_token.asset() == _backing_asset.address
-        assert _yield_token.convertToAssets(0) == 0
-        assert _yield_token.convertToShares(0) == 0
+        assert _paired_token.asset() == _backing_asset.address
+        assert _paired_token.convertToAssets(0) == 0
+        assert _paired_token.convertToShares(0) == 0
 
     crv_decimals: uint256 = ERC20(crv_usd).decimals()
     backing_decimals: uint256 = _backing_asset.decimals()
     assert crv_decimals == 18
     assert backing_decimals <= 18
-    assert ERC20(_yield_amm.address).decimals() == 18
+    assert ERC20(_pool.address).decimals() == 18
 
-    coin_0: address = _yield_amm.coins(0)
-    coin_1: address = _yield_amm.coins(1)
-    if coin_0 == crv_usd and coin_1 == _yield_token.address:
-        self.yield_amm_crvusd_index = 0
-        self.yield_amm_yield_token_index = 1
-    elif coin_0 == _yield_token.address and coin_1 == crv_usd:
-        self.yield_amm_crvusd_index = 1
-        self.yield_amm_yield_token_index = 0
+    coin_0: address = _pool.coins(0)
+    coin_1: address = _pool.coins(1)
+    if coin_0 == crv_usd and coin_1 == _paired_token.address:
+        self.pool_crvusd_index = 0
+        self.pool_paired_token_index = 1
+    elif coin_0 == _paired_token.address and coin_1 == crv_usd:
+        self.pool_crvusd_index = 1
+        self.pool_paired_token_index = 0
     else:
         raise
-    assert _yield_amm.get_virtual_price() > 0
+    assert _pool.get_virtual_price() > 0
 
     self._factory = PegKeeperFactory(msg.sender)
     self._controller_factory = ControllerFactory(controller_factory)
     self._crv_usd = ERC20(crv_usd)
     self._backing_asset = _backing_asset
-    self._yield_token = _yield_token
-    self.yield_amm = _yield_amm
-    self.yield_token_is_erc4626 = is_erc4626
+    self._paired_token = _paired_token
+    self.pool = _pool
+    self.paired_token_is_erc4626 = is_erc4626
     self.backing_multiplier = 10 ** (18 - backing_decimals)
-    self.yield_oracle = _yield_oracle
-    self.min_yield_oracle_price = DEFAULT_MIN_YIELD_ORACLE_PRICE
+    self.backing_oracle = _backing_oracle
+    self.min_backing_oracle_price = DEFAULT_MIN_BACKING_ORACLE_PRICE
 
     self.keeper_index = _keeper_index
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
@@ -262,7 +262,7 @@ def initialize(
     self.last_expansion_pressure_update = block.timestamp
 
     self.expansion_paused = True
-    self.yield_contraction_paused = True
+    self.contraction_paused = True
     self.all_execution_paused = True
 
 
@@ -306,7 +306,7 @@ def emergency_admin() -> address:
 @view
 def fee_receiver() -> address:
     """
-    @notice Returns the account that receives claimed crvUSD surplus.
+    @notice Returns the account that receives withdrawn protocol profit.
     """
     return self._factory.fee_receiver()
 
@@ -337,70 +337,70 @@ def crv_usd() -> address:
 @view
 def backing_asset() -> address:
     """
-    @notice Returns the asset denomination used to match loose yield tokens with crvUSD.
+    @notice Returns the asset denomination used to match loose paired tokens with crvUSD.
     """
     return self._backing_asset.address
 
 
 @external
 @view
-def yield_token() -> address:
+def paired_token() -> address:
     """
-    @notice Returns the token acquired by expansion and paired with crvUSD in the yield AMM.
+    @notice Returns the non-crvUSD token in the configured pool.
     """
-    return self._yield_token.address
+    return self._paired_token.address
 
 
 @internal
 @view
-def _yield_token_assets(_units: uint256) -> uint256:
-    if self.yield_token_is_erc4626:
-        return self._yield_token.convertToAssets(_units)
+def _paired_token_assets(_units: uint256) -> uint256:
+    if self.paired_token_is_erc4626:
+        return self._paired_token.convertToAssets(_units)
     return _units
 
 
 @internal
 @view
-def _yield_token_units(_assets: uint256) -> uint256:
-    if self.yield_token_is_erc4626:
-        return self._yield_token.convertToShares(_assets)
+def _paired_token_units(_assets: uint256) -> uint256:
+    if self.paired_token_is_erc4626:
+        return self._paired_token.convertToShares(_assets)
     return _assets
 
 
 @external
 @view
-def yield_token_assets(_units: uint256) -> uint256:
+def paired_token_assets(_units: uint256) -> uint256:
     """
-    @notice Returns the backing-asset amount represented by a final-token amount.
+    @notice Returns the backing-asset amount represented by a paired-token amount.
     """
-    return self._yield_token_assets(_units)
+    return self._paired_token_assets(_units)
 
 
 @external
 @view
-def yield_token_units(_assets: uint256) -> uint256:
+def paired_token_units(_assets: uint256) -> uint256:
     """
-    @notice Returns the final-token amount represented by a backing-asset amount.
+    @notice Returns the paired-token amount represented by a backing-asset amount.
     """
-    return self._yield_token_units(_assets)
+    return self._paired_token_units(_assets)
 
 
 @internal
 @view
-def _yield_inventory() -> uint256:
-    return self._yield_token.balanceOf(self)
+def _paired_token_inventory() -> uint256:
+    return self._paired_token.balanceOf(self)
 
 
 @internal
 @view
 def _lp_inventory() -> uint256:
-    return self.yield_amm.balanceOf(self)
+    return self.pool.balanceOf(self)
 
 
 @internal
 @view
 def _lp_value(_lp_tokens: uint256) -> uint256:
-    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price: uint256 = self.pool.get_virtual_price()
     return (
         _lp_tokens / PRECISION * virtual_price
         + _lp_tokens % PRECISION * virtual_price / PRECISION
@@ -411,7 +411,7 @@ def _lp_value(_lp_tokens: uint256) -> uint256:
 @view
 def accounted_lp_tokens() -> uint256:
     """
-    @notice Returns the complete held balance of yield-AMM LP tokens.
+    @notice Returns the complete held balance of pool LP tokens.
     """
     return self._lp_inventory()
 
@@ -420,12 +420,12 @@ def accounted_lp_tokens() -> uint256:
 @view
 def coins(_index: uint256) -> address:
     """
-    @notice Returns crvUSD for index 0 and the held yield-AMM LP token for index 1.
+    @notice Returns crvUSD for index 0 and the held pool LP token for index 1.
     """
     if _index == 0:
         return self._crv_usd.address
     assert _index == 1
-    return self.yield_amm.address
+    return self.pool.address
 
 
 @internal
@@ -437,11 +437,11 @@ def _oracle_value(_value: uint256, _price: uint256) -> uint256:
 
 @internal
 @view
-def _yield_price() -> uint256:
+def _backing_price() -> uint256:
     ok: bool = False
     response: Bytes[64] = empty(Bytes[64])
     ok, response = raw_call(
-        self.yield_oracle.address,
+        self.backing_oracle.address,
         method_id("price()"),
         max_outsize=64,
         is_static_call=True,
@@ -450,7 +450,7 @@ def _yield_price() -> uint256:
     if not ok or len(response) != 32:
         raise
     price: uint256 = convert(slice(response, 0, 32), uint256)
-    assert price >= self.min_yield_oracle_price
+    assert price >= self.min_backing_oracle_price
     return price
 
 
@@ -577,21 +577,21 @@ def _trusted_backing_value() -> uint256:
 @internal
 @view
 def _oracle_backing_value() -> uint256:
-    price: uint256 = self._yield_price()
+    price: uint256 = self._backing_price()
     return self._oracle_value(self._trusted_backing_value(), price)
 
 
 @internal
 @view
-def _trusted_yield_value(_yield_token_units: uint256) -> uint256:
-    return self._normalize_backing(self._yield_token_assets(_yield_token_units))
+def _trusted_paired_token_value(_paired_token_units: uint256) -> uint256:
+    return self._normalize_backing(self._paired_token_assets(_paired_token_units))
 
 
 @external
 @view
 def trusted_backing_value() -> uint256:
     """
-    @notice Returns the total backing value, treating target and backing assets as worth one dollar each.
+    @notice Returns the held pool LP balance valued at the current virtual price.
     """
     return self._trusted_backing_value()
 
@@ -634,25 +634,25 @@ def _remaining_exposure_capacity() -> uint256:
 @internal
 @view
 def _local_expansion_limit() -> uint256:
-    crv_usd_balance: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
-    yield_balance: uint256 = self._trusted_yield_value(
-        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    crv_usd_balance: uint256 = self.pool.balances(self.pool_crvusd_index)
+    paired_token_balance: uint256 = self._trusted_paired_token_value(
+        self.pool.balances(self.pool_paired_token_index)
     )
-    if yield_balance <= crv_usd_balance:
+    if paired_token_balance <= crv_usd_balance:
         return 0
-    return (yield_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
+    return (paired_token_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
 
 
 @internal
 @view
 def _local_contraction_limit() -> uint256:
-    crv_usd_balance: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
-    yield_balance: uint256 = self._trusted_yield_value(
-        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    crv_usd_balance: uint256 = self.pool.balances(self.pool_crvusd_index)
+    paired_token_balance: uint256 = self._trusted_paired_token_value(
+        self.pool.balances(self.pool_paired_token_index)
     )
-    if crv_usd_balance <= yield_balance:
+    if crv_usd_balance <= paired_token_balance:
         return 0
-    return (crv_usd_balance - yield_balance) * self.max_intervention_share_bps / BPS
+    return (crv_usd_balance - paired_token_balance) * self.max_intervention_share_bps / BPS
 
 
 @internal
@@ -695,7 +695,7 @@ def can_expand_without_policy() -> bool:
     ok: bool = False
     oracle_response: Bytes[64] = empty(Bytes[64])
     ok, oracle_response = raw_call(
-        self.yield_oracle.address,
+        self.backing_oracle.address,
         method_id("price()"),
         max_outsize=64,
         is_static_call=True,
@@ -703,7 +703,7 @@ def can_expand_without_policy() -> bool:
     )
     if not ok or len(oracle_response) != 32:
         return False
-    if convert(slice(oracle_response, 0, 32), uint256) < self.min_yield_oracle_price:
+    if convert(slice(oracle_response, 0, 32), uint256) < self.min_backing_oracle_price:
         return False
 
     return self._expansion_preview_viable(amount)
@@ -749,7 +749,7 @@ def _transfer_exact_to(_token: ERC20, _recipient: address, _amount: uint256):
 @internal
 def _settle_keeper_contraction_and_reduce_exposure(
     _crv_usd_before: uint256,
-    _crv_usd_after_swap: uint256,
+    _crv_usd_after_withdrawal: uint256,
     _crv_usd_received: uint256,
     _trusted_value_removed: uint256,
     _trusted_backing_after: uint256,
@@ -765,7 +765,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
 
     crv_usd_after_reward: uint256 = self._crv_usd.balanceOf(self)
-    assert _crv_usd_after_swap - crv_usd_after_reward == keeper_reward
+    assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
     deployed_crv_usd: uint256 = self.deployed_crvusd
@@ -783,24 +783,24 @@ def _settle_keeper_contraction_and_reduce_exposure(
 
 @external
 @view
-def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
+def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
     """
-    @notice Estimates burning yield-AMM LP tokens to withdraw crvUSD.
+    @notice Estimates burning pool LP tokens to withdraw crvUSD.
     """
     assert not self.all_execution_paused
-    assert not self.yield_contraction_paused
+    assert not self.contraction_paused
     self._require_contraction_policy()
     assert self._intervention_delay_elapsed()
 
     accounted: uint256 = self._lp_inventory()
     assert _amount > 0 and _amount <= accounted
-    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price: uint256 = self.pool.get_virtual_price()
     trusted_before: uint256 = self._lp_value_at(accounted, virtual_price)
     trusted_after: uint256 = self._lp_value_at(accounted - _amount, virtual_price)
     trusted_removed: uint256 = trusted_before - trusted_after
-    expected_crv_usd: uint256 = self.yield_amm.calc_withdraw_one_coin(
+    expected_crv_usd: uint256 = self.pool.calc_withdraw_one_coin(
         _amount,
-        convert(self.yield_amm_crvusd_index, int128),
+        convert(self.pool_crvusd_index, int128),
     )
     assert expected_crv_usd <= self._local_contraction_limit()
     gross_profit: uint256 = self._realized_contraction_profit(
@@ -822,7 +822,7 @@ def previewKeeperBuyback(_amount: uint256) -> (uint256, uint256, uint256):
 
 @external
 @view
-def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256):
+def preview_expansion(_amount: uint256) -> (uint256, uint256, uint256, uint256):
     """
     @notice Estimates an expansion from current data; actual results may differ.
     """
@@ -835,23 +835,23 @@ def previewExpansion(_amount: uint256) -> (uint256, uint256, uint256, uint256):
 
 
 @external
-def set_yield_oracle_policy(
-    _yield_oracle: PriceOracle,
-    _min_yield_price: uint256,
+def set_backing_oracle_policy(
+    _backing_oracle: PriceOracle,
+    _min_backing_price: uint256,
 ):
     """
     @notice Changes the retained-backing price source and lowest accepted price.
     """
     assert self._is_admin(msg.sender)
-    assert _yield_oracle.address != empty(address)
-    assert _yield_oracle.address.codesize > 0
-    assert _min_yield_price > 0 and _min_yield_price <= PRECISION
+    assert _backing_oracle.address != empty(address)
+    assert _backing_oracle.address.codesize > 0
+    assert _min_backing_price > 0 and _min_backing_price <= PRECISION
 
-    self.yield_oracle = _yield_oracle
-    self.min_yield_oracle_price = _min_yield_price
-    log YieldOraclePolicyUpdated(
-        _yield_oracle.address,
-        _min_yield_price,
+    self.backing_oracle = _backing_oracle
+    self.min_backing_oracle_price = _min_backing_price
+    log BackingOraclePolicyUpdated(
+        _backing_oracle.address,
+        _min_backing_price,
     )
 
 
@@ -863,7 +863,7 @@ def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     assert self._is_admin_or_factory(msg.sender)
     assert _execution_buffer_bps <= BPS
 
-    self.yield_amm_execution_buffer_bps = _execution_buffer_bps
+    self.amm_execution_buffer_bps = _execution_buffer_bps
     log AmmExecutionBufferUpdated(_execution_buffer_bps)
 
 
@@ -880,10 +880,10 @@ def _lp_value_at(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
 @view
 def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     lp_before: uint256 = self._lp_inventory()
-    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price: uint256 = self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_yield: uint256 = self._yield_inventory()
-    donated_value: uint256 = self._trusted_yield_value(donated_yield)
+    donated_paired_token: uint256 = self._paired_token_inventory()
+    donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
 
     if crv_usd_deployed > self._crv_usd.balanceOf(self):
@@ -897,9 +897,9 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
         return False
 
     amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.yield_amm_crvusd_index] = crv_usd_deployed
-    amounts[self.yield_amm_yield_token_index] = donated_yield
-    lp_tokens_out: uint256 = self.yield_amm.calc_token_amount(amounts, True)
+    amounts[self.pool_crvusd_index] = crv_usd_deployed
+    amounts[self.pool_paired_token_index] = donated_paired_token
+    lp_tokens_out: uint256 = self.pool.calc_token_amount(amounts, True)
 
     accounting_baseline: uint256 = lp_value_before + donated_value
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
@@ -926,19 +926,19 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
 @view
 def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256):
     assert _crv_usd_amount >= self.min_expansion_amount
-    self._yield_price()
+    self._backing_price()
 
     lp_before: uint256 = self._lp_inventory()
-    virtual_price: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price: uint256 = self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_yield: uint256 = self._yield_inventory()
-    donated_value: uint256 = self._trusted_yield_value(donated_yield)
+    donated_paired_token: uint256 = self._paired_token_inventory()
+    donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
     accounting_baseline: uint256 = lp_value_before + donated_value
 
     amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.yield_amm_crvusd_index] = crv_usd_deployed
-    amounts[self.yield_amm_yield_token_index] = donated_yield
+    amounts[self.pool_crvusd_index] = crv_usd_deployed
+    amounts[self.pool_paired_token_index] = donated_paired_token
 
     assert crv_usd_deployed <= self._crv_usd.balanceOf(self)
     assert crv_usd_deployed <= self._available_velocity()
@@ -946,7 +946,7 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     assert deployed_after <= self.max_deployed_crvusd
     assert deployed_after <= self._controller_factory.debt_ceiling(self)
 
-    lp_tokens_out: uint256 = self.yield_amm.calc_token_amount(amounts, True)
+    lp_tokens_out: uint256 = self.pool.calc_token_amount(amounts, True)
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
     assert lp_value_after >= accounting_baseline + crv_usd_deployed
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
@@ -966,30 +966,30 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
 
 
 @internal
-def _deposit_to_yield_amm(
+def _deposit_to_pool(
     _crv_usd_amount: uint256,
-    _yield_token_amount: uint256,
+    _paired_token_amount: uint256,
 ) -> uint256:
     amounts: DynArray[uint256, 2] = [0, 0]
-    amounts[self.yield_amm_crvusd_index] = _crv_usd_amount
-    amounts[self.yield_amm_yield_token_index] = _yield_token_amount
-    quoted_lp: uint256 = self.yield_amm.calc_token_amount(amounts, True)
-    min_lp: uint256 = quoted_lp * (BPS - self.yield_amm_execution_buffer_bps) / BPS
+    amounts[self.pool_crvusd_index] = _crv_usd_amount
+    amounts[self.pool_paired_token_index] = _paired_token_amount
+    quoted_lp: uint256 = self.pool.calc_token_amount(amounts, True)
+    min_lp: uint256 = quoted_lp * (BPS - self.amm_execution_buffer_bps) / BPS
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
-    yield_before: uint256 = self._yield_token.balanceOf(self)
+    paired_token_before: uint256 = self._paired_token.balanceOf(self)
     lp_before: uint256 = self._lp_inventory()
 
-    self._crv_usd.approve(self.yield_amm.address, 0)
-    self._crv_usd.approve(self.yield_amm.address, _crv_usd_amount)
-    ERC20(self._yield_token.address).approve(self.yield_amm.address, 0)
-    ERC20(self._yield_token.address).approve(self.yield_amm.address, _yield_token_amount)
-    self.yield_amm.add_liquidity(amounts, min_lp)
-    self._crv_usd.approve(self.yield_amm.address, 0)
-    ERC20(self._yield_token.address).approve(self.yield_amm.address, 0)
+    self._crv_usd.approve(self.pool.address, 0)
+    self._crv_usd.approve(self.pool.address, _crv_usd_amount)
+    ERC20(self._paired_token.address).approve(self.pool.address, 0)
+    ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
+    self.pool.add_liquidity(amounts, min_lp)
+    self._crv_usd.approve(self.pool.address, 0)
+    ERC20(self._paired_token.address).approve(self.pool.address, 0)
 
     assert crv_usd_before - self._crv_usd.balanceOf(self) == _crv_usd_amount
-    assert yield_before - self._yield_token.balanceOf(self) == _yield_token_amount
+    assert paired_token_before - self._paired_token.balanceOf(self) == _paired_token_amount
     lp_received: uint256 = self._lp_inventory() - lp_before
     assert lp_received >= min_lp
     return lp_received
@@ -999,16 +999,16 @@ def _deposit_to_yield_amm(
 def _settle_lp_expansion(
     _lp_before: uint256,
     _lp_value_before: uint256,
-    _donated_yield_value: uint256,
+    _donated_paired_token_value: uint256,
     _entry_donation_value: uint256,
     _principal: uint256,
     _lp_received: uint256,
 ) -> (uint256, uint256):
     lp_after_deposit: uint256 = self._lp_inventory()
     assert lp_after_deposit - _lp_before == _lp_received
-    virtual_price_after: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price_after: uint256 = self.pool.get_virtual_price()
     lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
-    accounting_baseline: uint256 = _lp_value_before + _donated_yield_value
+    accounting_baseline: uint256 = _lp_value_before + _donated_paired_token_value
     gross_profit: uint256 = 0
     if lp_value_after > accounting_baseline + _principal:
         gross_profit = lp_value_after - accounting_baseline - _principal
@@ -1016,7 +1016,7 @@ def _settle_lp_expansion(
     keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
     keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price_after
     assert keeper_reward <= _lp_received
-    self._transfer_exact_to(ERC20(self.yield_amm.address), msg.sender, keeper_reward)
+    self._transfer_exact_to(ERC20(self.pool.address), msg.sender, keeper_reward)
 
     retained_value: uint256 = self._lp_value(self._lp_inventory())
     entry_baseline: uint256 = _lp_value_before + _entry_donation_value
@@ -1027,7 +1027,7 @@ def _settle_lp_expansion(
 
 @external
 @nonreentrant("lock")
-def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
+def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     """
     @notice Deposits crvUSD and any donated paired token directly into the keeper's AMM.
     """
@@ -1037,23 +1037,23 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     self._require_expansion_policy()
     assert self._intervention_delay_elapsed()
     assert _crv_usd_amount <= self._local_expansion_limit()
-    self._yield_price()
+    self._backing_price()
 
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
-    yield_before: uint256 = self._yield_inventory()
+    paired_token_before: uint256 = self._paired_token_inventory()
     lp_before: uint256 = self._lp_inventory()
-    virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price_before: uint256 = self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
-    donated_yield_value: uint256 = self._trusted_yield_value(yield_before)
+    donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_before)
 
-    crv_usd_deployed: uint256 = _crv_usd_amount + donated_yield_value
+    crv_usd_deployed: uint256 = _crv_usd_amount + donated_paired_token_value
     assert crv_usd_deployed <= crv_usd_before
     assert crv_usd_deployed <= self._remaining_exposure_capacity()
     self._consume_velocity(crv_usd_deployed)
 
-    lp_received: uint256 = self._deposit_to_yield_amm(
+    lp_received: uint256 = self._deposit_to_pool(
         crv_usd_deployed,
-        yield_before,
+        paired_token_before,
     )
     assert crv_usd_before - self._crv_usd.balanceOf(self) == crv_usd_deployed
 
@@ -1062,8 +1062,8 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     gross_profit, keeper_reward = self._settle_lp_expansion(
         lp_before,
         lp_value_before,
-        donated_yield_value,
-        donated_yield_value,
+        donated_paired_token_value,
+        donated_paired_token_value,
         crv_usd_deployed,
         lp_received,
     )
@@ -1083,39 +1083,39 @@ def expand(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
 
 @internal
 @view
-def _donation_match_amount(_donated_yield_value: uint256) -> uint256:
+def _donation_match_amount(_donated_paired_token_value: uint256) -> uint256:
     if not self._allocation_allowed():
         return 0
     if PegKeeperPolicy(self._policy_address()).expansion_regime():
-        return _donated_yield_value
+        return _donated_paired_token_value
 
-    pool_crv_usd: uint256 = self.yield_amm.balances(self.yield_amm_crvusd_index)
-    pool_yield_value: uint256 = self._trusted_yield_value(
-        self.yield_amm.balances(self.yield_amm_yield_token_index)
+    pool_crv_usd: uint256 = self.pool.balances(self.pool_crvusd_index)
+    pool_paired_token_value: uint256 = self._trusted_paired_token_value(
+        self.pool.balances(self.pool_paired_token_index)
     )
-    yield_value_after: uint256 = pool_yield_value + _donated_yield_value
-    if yield_value_after <= pool_crv_usd:
+    paired_token_value_after: uint256 = pool_paired_token_value + _donated_paired_token_value
+    if paired_token_value_after <= pool_crv_usd:
         return 0
-    return min(_donated_yield_value, yield_value_after - pool_crv_usd)
+    return min(_donated_paired_token_value, paired_token_value_after - pool_crv_usd)
 
 
 @internal
-def _settle_donated_yield(
-    _max_yield_token_amount: uint256,
+def _settle_donated_paired_token(
+    _max_paired_token_amount: uint256,
     _matching_budget: uint256,
     _require_minimum: bool,
 ) -> (uint256, uint256, uint256, uint256):
-    yield_token_swept: uint256 = min(_max_yield_token_amount, self._yield_inventory())
-    if yield_token_swept == 0:
+    paired_token_swept: uint256 = min(_max_paired_token_amount, self._paired_token_inventory())
+    if paired_token_swept == 0:
         return 0, 0, 0, 0
 
-    self._yield_price()
-    donated_yield_value: uint256 = self._trusted_yield_value(yield_token_swept)
+    self._backing_price()
+    donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_swept)
     if _require_minimum:
-        assert donated_yield_value >= self.min_expansion_amount
+        assert donated_paired_token_value >= self.min_expansion_amount
 
     crv_usd_matched: uint256 = min(
-        self._donation_match_amount(donated_yield_value),
+        self._donation_match_amount(donated_paired_token_value),
         _matching_budget,
     )
     if crv_usd_matched > 0:
@@ -1124,18 +1124,18 @@ def _settle_donated_yield(
         self._consume_velocity(crv_usd_matched)
 
     lp_before: uint256 = self._lp_inventory()
-    virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price_before: uint256 = self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
-    lp_received: uint256 = self._deposit_to_yield_amm(
+    lp_received: uint256 = self._deposit_to_pool(
         crv_usd_matched,
-        yield_token_swept,
+        paired_token_swept,
     )
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
     gross_profit, keeper_reward = self._settle_lp_expansion(
         lp_before,
         lp_value_before,
-        donated_yield_value,
+        donated_paired_token_value,
         0,
         crv_usd_matched,
         lp_received,
@@ -1144,33 +1144,33 @@ def _settle_donated_yield(
     self.deployed_crvusd += crv_usd_matched
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
-    log DonatedYieldSwept(
+    log DonatedPairedTokenSwept(
         msg.sender,
-        yield_token_swept,
+        paired_token_swept,
         crv_usd_matched,
         lp_received,
         gross_profit,
         keeper_reward,
     )
-    return yield_token_swept, crv_usd_matched, lp_received, keeper_reward
+    return paired_token_swept, crv_usd_matched, lp_received, keeper_reward
 
 
 @external
 @nonreentrant("lock")
-def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
+def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
     """
-    @notice Deposits donated yield and matches only the crvUSD appropriate for the current regime.
+    @notice Deposits donated paired tokens and matches only the crvUSD appropriate for the current regime.
     """
     assert not self.all_execution_paused
     assert not self.expansion_paused
-    assert _max_yield_token_amount > 0
+    assert _max_paired_token_amount > 0
 
     matching_budget: uint256 = min(
         self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
-    return self._settle_donated_yield(
-        _max_yield_token_amount,
+    return self._settle_donated_paired_token(
+        _max_paired_token_amount,
         matching_budget,
         True,
     )
@@ -1178,35 +1178,35 @@ def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, ui
 
 @external
 @nonreentrant("lock")
-def withdraw_profit(_max_crv_usd_amount: uint256) -> uint256:
+def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint256:
     """
-    @notice Sends available crvUSD to the fee receiver when extra backing covers it, up to the caller's limit.
+    @notice Withdraws eligible protocol profit in crvUSD; the no-argument overload uses the maximum limit.
     """
     assert not self.all_execution_paused
     assert not self.expansion_paused
 
-    yield_price: uint256 = self._yield_price()
+    backing_price: uint256 = self._backing_price()
     backing_before_sweep: uint256 = self._oracle_value(
         self._trusted_backing_value(),
-        yield_price,
+        backing_price,
     )
     potential_surplus: uint256 = 0
     if backing_before_sweep > self.deployed_crvusd:
         potential_surplus = backing_before_sweep - self.deployed_crvusd
-    donated_yield_value: uint256 = self._trusted_yield_value(self._yield_inventory())
-    potential_surplus += self._oracle_value(donated_yield_value, yield_price)
+    donated_paired_token_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
+    potential_surplus += self._oracle_value(donated_paired_token_value, backing_price)
 
     available_budget: uint256 = min(
         self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
-    claim_reserve: uint256 = min(
+    withdrawal_reserve: uint256 = min(
         _max_crv_usd_amount,
         min(potential_surplus, available_budget),
     )
-    self._settle_donated_yield(
-        self._yield_inventory(),
-        available_budget - claim_reserve,
+    self._settle_donated_paired_token(
+        self._paired_token_inventory(),
+        available_budget - withdrawal_reserve,
         False,
     )
 
@@ -1239,7 +1239,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256) -> uint256:
 
     assert self._trusted_backing_value() >= deployed_crv_usd_after
 
-    log SurplusClaimed(
+    log ProfitWithdrawn(
         msg.sender,
         fee_receiver,
         crv_usd_transferred,
@@ -1250,44 +1250,44 @@ def withdraw_profit(_max_crv_usd_amount: uint256) -> uint256:
 
 @external
 @nonreentrant("lock")
-def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
+def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     """
-    @notice Burns held yield-AMM LP tokens and withdraws only crvUSD.
+    @notice Burns held pool LP tokens and withdraws only crvUSD.
     """
     assert not self.all_execution_paused
-    assert not self.yield_contraction_paused
+    assert not self.contraction_paused
     self._require_contraction_policy()
     assert self._intervention_delay_elapsed()
     lp_before: uint256 = self._lp_inventory()
     assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
 
-    virtual_price_before: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price_before: uint256 = self.pool.get_virtual_price()
     trusted_backing_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     local_contraction_limit: uint256 = self._local_contraction_limit()
-    quoted_crv_usd: uint256 = self.yield_amm.calc_withdraw_one_coin(
+    quoted_crv_usd: uint256 = self.pool.calc_withdraw_one_coin(
         _lp_token_amount,
-        convert(self.yield_amm_crvusd_index, int128),
+        convert(self.pool_crvusd_index, int128),
     )
     assert quoted_crv_usd <= local_contraction_limit
     min_crv_usd: uint256 = quoted_crv_usd * (
-        BPS - self.yield_amm_execution_buffer_bps
+        BPS - self.amm_execution_buffer_bps
     ) / BPS
     crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
 
-    self.yield_amm.remove_liquidity_one_coin(
+    self.pool.remove_liquidity_one_coin(
         _lp_token_amount,
-        convert(self.yield_amm_crvusd_index, int128),
+        convert(self.pool_crvusd_index, int128),
         min_crv_usd,
     )
 
     lp_after: uint256 = self._lp_inventory()
     assert lp_before - lp_after == _lp_token_amount
-    crv_usd_after_swap: uint256 = self._crv_usd.balanceOf(self)
-    crv_usd_received: uint256 = crv_usd_after_swap - crv_usd_before
+    crv_usd_after_withdrawal: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_received: uint256 = crv_usd_after_withdrawal - crv_usd_before
     assert crv_usd_received >= min_crv_usd
     assert crv_usd_received <= local_contraction_limit
 
-    virtual_price_after: uint256 = self.yield_amm.get_virtual_price()
+    virtual_price_after: uint256 = self.pool.get_virtual_price()
     trusted_backing_after: uint256 = self._lp_value_at(lp_after, virtual_price_after)
     assert trusted_backing_before >= trusted_backing_after
     trusted_value_removed: uint256 = trusted_backing_before - trusted_backing_after
@@ -1297,7 +1297,7 @@ def contractViaAmm(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     keeper_reward: uint256 = 0
     gross_profit, keeper_reward = self._settle_keeper_contraction_and_reduce_exposure(
         crv_usd_before,
-        crv_usd_after_swap,
+        crv_usd_after_withdrawal,
         crv_usd_received,
         trusted_value_removed,
         trusted_backing_after,
@@ -1329,7 +1329,7 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
     self._require_expansion_policy()
     assert self._intervention_delay_elapsed()
     assert _amount <= self._local_expansion_limit()
-    self._yield_price()
+    self._backing_price()
 
     deployed_after: uint256 = self.deployed_crvusd + _amount
     assert deployed_after <= self.max_deployed_crvusd
@@ -1443,8 +1443,8 @@ def set_direction_paused(_direction: uint256, _paused: bool):
 
     if _direction == DIRECTION_EXPANSION:
         self.expansion_paused = _paused
-    elif _direction == DIRECTION_YIELD_CONTRACTION:
-        self.yield_contraction_paused = _paused
+    elif _direction == DIRECTION_CONTRACTION:
+        self.contraction_paused = _paused
     elif _direction == DIRECTION_ALL:
         self.all_execution_paused = _paused
     else:

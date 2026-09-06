@@ -15,9 +15,9 @@ interface IPegKeeperV3 {
         uint256 grossProfit,
         uint256 keeperReward
     );
-    event DonatedYieldSwept(
+    event DonatedPairedTokenSwept(
         address indexed keeper,
-        uint256 yieldTokenSwept,
+        uint256 pairedTokenSwept,
         uint256 crvUsdMatched,
         uint256 lpTokensReceived,
         uint256 grossProfit,
@@ -30,7 +30,7 @@ interface IPegKeeperV3 {
         uint256 grossProfit,
         uint256 keeperReward
     );
-    event SurplusClaimed(
+    event ProfitWithdrawn(
         address indexed caller,
         address indexed receiver,
         uint256 crvUsdTransferred,
@@ -56,7 +56,7 @@ interface IPegKeeperV3 {
         uint256 maxDeployedCrvUsd
     );
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
-    event YieldOraclePolicyUpdated(address indexed yieldOracle, uint256 minYieldPrice);
+    event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
 
     function version() external view returns (string memory);
     function name() external view returns (string memory);
@@ -67,20 +67,20 @@ interface IPegKeeperV3 {
     function controller_factory() external view returns (address);
     function crv_usd() external view returns (address);
     function backing_asset() external view returns (address);
-    function yield_token() external view returns (address);
-    function yield_amm() external view returns (address);
-    function yield_token_is_erc4626() external view returns (bool);
-    function yield_token_assets(uint256 units) external view returns (uint256);
-    function yield_token_units(uint256 assets) external view returns (uint256);
-    function yield_oracle() external view returns (address);
-    function min_yield_oracle_price() external view returns (uint256);
+    function paired_token() external view returns (address);
+    function pool() external view returns (address);
+    function paired_token_is_erc4626() external view returns (bool);
+    function paired_token_assets(uint256 units) external view returns (uint256);
+    function paired_token_units(uint256 assets) external view returns (uint256);
+    function backing_oracle() external view returns (address);
+    function min_backing_oracle_price() external view returns (uint256);
     function max_expansion_burst_bps() external view returns (uint256);
     function expansion_refill_period() external view returns (uint256);
     function fee_receiver() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
-    function yield_amm_crvusd_index() external view returns (uint256);
-    function yield_amm_yield_token_index() external view returns (uint256);
+    function pool_crvusd_index() external view returns (uint256);
+    function pool_paired_token_index() external view returns (uint256);
 
     /// @notice Returns crvUSD at index 0 and the held AMM LP token at index 1.
     function coins(uint256 index) external view returns (address);
@@ -97,7 +97,7 @@ interface IPegKeeperV3 {
     function max_intervention_share_bps() external view returns (uint256);
     function min_intervention_delay() external view returns (uint256);
     function last_intervention_at() external view returns (uint256);
-    function yield_amm_execution_buffer_bps() external view returns (uint256);
+    function amm_execution_buffer_bps() external view returns (uint256);
 
     function debt() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
@@ -107,18 +107,18 @@ interface IPegKeeperV3 {
 
     function initialize(
         address backingAsset,
-        address yieldToken,
-        address yieldAmm,
+        address pairedToken,
+        address pool,
         uint256 maxDeployedCrvUsd,
         uint256 keeperIndex,
-        address yieldOracle
+        address backingOracle
     ) external;
 
     function expansion_paused() external view returns (bool);
-    function yield_contraction_paused() external view returns (bool);
+    function contraction_paused() external view returns (bool);
     function all_execution_paused() external view returns (bool);
     function set_direction_paused(uint256 direction, bool paused) external;
-    function set_yield_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
+    function set_backing_oracle_policy(address backingOracle, uint256 minBackingPrice) external;
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function set_policy(
         uint256 entryMinProfitPpm,
@@ -134,7 +134,7 @@ interface IPegKeeperV3 {
     function can_expand_without_policy() external view returns (bool);
     function available_expansion() external view returns (uint256);
 
-    function previewExpansion(uint256 crvUsdAmount)
+    function preview_expansion(uint256 crvUsdAmount)
         external
         view
         returns (
@@ -143,22 +143,22 @@ interface IPegKeeperV3 {
             uint256 expectedKeeperRewardLp,
             uint256 expectedLpTokensOut
         );
-    function expand(uint256 crvUsdAmount)
+    function expand_supply(uint256 crvUsdAmount)
         external
         returns (uint256 crvUsdDeployed, uint256 lpTokensReceived, uint256 keeperRewardLp);
 
     /// @notice Deposits donated paired tokens and matches only policy-approved crvUSD.
-    function sweepDonatedYield(uint256 maxYieldTokenAmount)
+    function sweep_donated_paired_token(uint256 maxPairedTokenAmount)
         external
         returns (
-            uint256 yieldTokenSwept,
+            uint256 pairedTokenSwept,
             uint256 crvUsdMatched,
             uint256 lpTokensReceived,
             uint256 keeperRewardLp
         );
 
     /// @notice Estimates a fixed one-coin LP withdrawal into crvUSD.
-    function previewKeeperBuyback(uint256 lpTokenAmount)
+    function preview_contraction(uint256 lpTokenAmount)
         external
         view
         returns (
@@ -167,10 +167,11 @@ interface IPegKeeperV3 {
             uint256 expectedKeeperReward
         );
     /// @notice Burns LP tokens and removes only crvUSD from the fixed AMM.
-    function contractViaAmm(uint256 lpTokenAmount)
+    function contract_supply(uint256 lpTokenAmount)
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
 
+    function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     /// @notice Gives Factory-admin-approved crvUSD to a receiver and records it as keeper debt.
     function borrow_crvusd(uint256 amount, address receiver) external;

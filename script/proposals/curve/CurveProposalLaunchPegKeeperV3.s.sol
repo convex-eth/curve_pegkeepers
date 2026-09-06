@@ -15,9 +15,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_728;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_782;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb;
+        0x0b5973491de6d7103e6af7457343001e735b03b6e2bd24c44fdaf3463de0412f;
     uint256 public constant POLICY_RUNTIME_SIZE = 4_394;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078;
@@ -36,11 +36,13 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 500;
+    uint256 public constant LAST_RESORT_ENTRY_MIN_PROFIT_PPM = 500;
+    uint256 public constant LAST_RESORT_EXIT_MIN_PROFIT_PPM = 100;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
-    uint256 public constant MIN_YIELD_ORACLE_PRICE = 999_000_000_000_000_000;
+    uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant USDE_CHAINLINK_MAX_DELAY = 25 hours;
     uint256 public constant STABLECOIN_CHAINLINK_MAX_DELAY = 26 hours;
@@ -146,8 +148,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
         actions[2] = _deployAction(FRXUSD_CRVUSD_POOL, false, frxUsdOracle);
         actions[3] = _setTierAction(frxUsdKeeper, TIER_PRIMARY);
-        actions[4] = _setYieldOraclePolicyAction(frxUsdKeeper, frxUsdOracle);
-        actions[5] = _setKeeperPolicyAction(frxUsdKeeper, FRXUSD_CAP);
+        actions[4] = _setBackingOraclePolicyAction(frxUsdKeeper, frxUsdOracle);
+        actions[5] = _setKeeperPolicyAction(
+            frxUsdKeeper, FRXUSD_CAP, ENTRY_MIN_PROFIT_PPM, NORMAL_EXIT_MIN_PROFIT_PPM
+        );
         actions[6] = _setInterventionPolicyAction(frxUsdKeeper);
         actions[7] = _debtCeilingAction(frxUsdKeeper, FRXUSD_CAP);
         actions[8] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, frxUsdKeeper);
@@ -155,16 +159,20 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
         actions[10] = _deployAction(SUSDE_CRVUSD_POOL, true, usdeOracle);
         actions[11] = _setTierAction(sUsdeKeeper, TIER_SECONDARY);
-        actions[12] = _setYieldOraclePolicyAction(sUsdeKeeper, usdeOracle);
-        actions[13] = _setKeeperPolicyAction(sUsdeKeeper, SUSDE_LOCAL_CAP);
+        actions[12] = _setBackingOraclePolicyAction(sUsdeKeeper, usdeOracle);
+        actions[13] = _setKeeperPolicyAction(
+            sUsdeKeeper, SUSDE_LOCAL_CAP, ENTRY_MIN_PROFIT_PPM, NORMAL_EXIT_MIN_PROFIT_PPM
+        );
         actions[14] = _setInterventionPolicyAction(sUsdeKeeper);
         actions[15] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, sUsdeKeeper);
         actions[16] = _monetaryPolicyAction(CRVUSD_LEGACY_MONETARY_POLICY, sUsdeKeeper);
 
         actions[17] = _deployAction(USDC_CRVUSD_POOL, false, usdcOracle);
         actions[18] = _setTierAction(usdcKeeper, TIER_TERTIARY);
-        actions[19] = _setYieldOraclePolicyAction(usdcKeeper, usdcOracle);
-        actions[20] = _setKeeperPolicyAction(usdcKeeper, USDC_CAP);
+        actions[19] = _setBackingOraclePolicyAction(usdcKeeper, usdcOracle);
+        actions[20] = _setKeeperPolicyAction(
+            usdcKeeper, USDC_CAP, LAST_RESORT_ENTRY_MIN_PROFIT_PPM, LAST_RESORT_EXIT_MIN_PROFIT_PPM
+        );
         actions[21] = _setInterventionPolicyAction(usdcKeeper);
         actions[22] = _debtCeilingAction(usdcKeeper, USDC_CAP);
         actions[23] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdcKeeper);
@@ -172,8 +180,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
         actions[25] = _deployAction(USDT_CRVUSD_POOL, false, usdtOracle);
         actions[26] = _setTierAction(usdtKeeper, TIER_TERTIARY);
-        actions[27] = _setYieldOraclePolicyAction(usdtKeeper, usdtOracle);
-        actions[28] = _setKeeperPolicyAction(usdtKeeper, USDT_CAP);
+        actions[27] = _setBackingOraclePolicyAction(usdtKeeper, usdtOracle);
+        actions[28] = _setKeeperPolicyAction(
+            usdtKeeper, USDT_CAP, LAST_RESORT_ENTRY_MIN_PROFIT_PPM, LAST_RESORT_EXIT_MIN_PROFIT_PPM
+        );
         actions[29] = _setInterventionPolicyAction(usdtKeeper);
         actions[30] = _debtCeilingAction(usdtKeeper, USDT_CAP);
         actions[31] = _monetaryPolicyAction(CRVUSD_MONETARY_POLICY, usdtKeeper);
@@ -249,7 +259,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(oracle.feed() == expectedFeed, "oracle feed");
         require(oracle.feed_decimals() == 8, "oracle decimals");
         require(oracle.max_delay() == maxDelay, "oracle delay");
-        require(oracle.price() >= MIN_YIELD_ORACLE_PRICE, "oracle price");
+        require(oracle.price() >= MIN_BACKING_ORACLE_PRICE, "oracle price");
     }
 
     function _validateMonetaryPolicies() internal view {
@@ -275,7 +285,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
     }
 
-    function _deployAction(address amm, bool yieldTokenIsErc4626, address yieldOracle)
+    function _deployAction(address amm, bool pairedTokenIsErc4626, address backingOracle)
         internal
         view
         returns (Action memory)
@@ -283,7 +293,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         return Action({
             target: deploymentFactory,
             data: abi.encodeWithSelector(
-                IPegKeeperV3Factory.deployPegKeeper.selector, amm, yieldTokenIsErc4626, yieldOracle
+                IPegKeeperV3Factory.deployPegKeeper.selector,
+                amm,
+                pairedTokenIsErc4626,
+                backingOracle
             )
         });
     }
@@ -295,7 +308,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         });
     }
 
-    function _setYieldOraclePolicyAction(address keeper, address oracle)
+    function _setBackingOraclePolicyAction(address keeper, address oracle)
         internal
         pure
         returns (Action memory)
@@ -303,22 +316,23 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         return Action({
             target: keeper,
             data: abi.encodeWithSelector(
-                IPegKeeperV3.set_yield_oracle_policy.selector, oracle, MIN_YIELD_ORACLE_PRICE
+                IPegKeeperV3.set_backing_oracle_policy.selector, oracle, MIN_BACKING_ORACLE_PRICE
             )
         });
     }
 
-    function _setKeeperPolicyAction(address keeper, uint256 cap)
-        internal
-        pure
-        returns (Action memory)
-    {
+    function _setKeeperPolicyAction(
+        address keeper,
+        uint256 cap,
+        uint256 entryMinProfitPpm,
+        uint256 exitMinProfitPpm
+    ) internal pure returns (Action memory) {
         return Action({
             target: keeper,
             data: abi.encodeWithSelector(
                 IPegKeeperV3.set_policy.selector,
-                ENTRY_MIN_PROFIT_PPM,
-                NORMAL_EXIT_MIN_PROFIT_PPM,
+                entryMinProfitPpm,
+                exitMinProfitPpm,
                 KEEPER_PROFIT_SHARE_BPS,
                 MIN_EXPANSION_AMOUNT,
                 cap

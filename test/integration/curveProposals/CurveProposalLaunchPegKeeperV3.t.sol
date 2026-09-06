@@ -217,6 +217,20 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         }
     }
 
+    function test_tertiaryKeepersUseLastResortProfitFloors() public {
+        _executeActionsDirectly();
+
+        assertEq(IPegKeeperV3(expectedFrxUsdKeeper).entry_min_profit_ppm(), 10);
+        assertEq(IPegKeeperV3(expectedFrxUsdKeeper).normal_exit_min_profit_ppm(), 500);
+        assertEq(IPegKeeperV3(expectedSUsdeKeeper).entry_min_profit_ppm(), 10);
+        assertEq(IPegKeeperV3(expectedSUsdeKeeper).normal_exit_min_profit_ppm(), 500);
+
+        assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 500);
+        assertEq(IPegKeeperV3(expectedUsdcKeeper).normal_exit_min_profit_ppm(), 100);
+        assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 500);
+        assertEq(IPegKeeperV3(expectedUsdtKeeper).normal_exit_min_profit_ppm(), 100);
+    }
+
     function test_secondaryCanExpandWhenPausedPrimaryCannot() public {
         _executeActionsDirectly();
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedSUsdeKeeper), 0);
@@ -231,11 +245,11 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         assertFalse(IPegKeeperV3(expectedFrxUsdKeeper).can_expand_without_policy());
         assertTrue(keeperPolicy.can_expand(expectedSUsdeKeeper));
-        (uint256 expectedDebt,,, uint256 expectedLp) = sUsdeKeeper.previewExpansion(10_000e18);
+        (uint256 expectedDebt,,, uint256 expectedLp) = sUsdeKeeper.preview_expansion(10_000e18);
         assertEq(expectedDebt, 10_000e18);
         assertGt(expectedLp, 0);
 
-        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand(10_000e18);
+        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand_supply(10_000e18);
         assertEq(debtAdded, 10_000e18);
         assertGt(lpReceived, 0);
         assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
@@ -285,16 +299,16 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         address oracle
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
-        assertEq(keeper.yield_amm(), amm);
-        assertEq(keeper.yield_token(), yieldToken);
+        assertEq(keeper.pool(), amm);
+        assertEq(keeper.paired_token(), yieldToken);
         assertEq(keeper.backing_asset(), backingAsset);
-        assertEq(keeper.yield_token_is_erc4626(), isErc4626);
-        assertEq(keeper.yield_oracle(), oracle);
-        assertEq(keeper.min_yield_oracle_price(), proposal.MIN_YIELD_ORACLE_PRICE());
+        assertEq(keeper.paired_token_is_erc4626(), isErc4626);
+        assertEq(keeper.backing_oracle(), oracle);
+        assertEq(keeper.min_backing_oracle_price(), proposal.MIN_BACKING_ORACLE_PRICE());
         assertEq(keeper.max_deployed_crvusd(), CAP);
         assertTrue(factory.is_active(keeperAddress));
         assertTrue(keeper.expansion_paused());
-        assertTrue(keeper.yield_contraction_paused());
+        assertTrue(keeper.contraction_paused());
         assertTrue(keeper.all_execution_paused());
     }
 

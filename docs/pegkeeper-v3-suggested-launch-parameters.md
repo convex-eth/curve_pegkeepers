@@ -72,19 +72,19 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 
 ## Keeper-local policy
 
-| Parameter | Value |
-|---|---:|
-| `entryMinProfitPpm` | `10` |
-| `normalExitMinProfitPpm` | `500` (`5 bp`) |
-| `keeperProfitShareBps` | `3_000` |
-| `minExpansionAmount` | `10_000e18` |
-| `maxInterventionShareBps` | `3_333` |
-| `minInterventionDelay` | `12` seconds |
-| velocity max burst | `5%` of local max |
-| velocity full refill | `300` seconds |
-| retained-backing floor | `0.999e18` |
+| Parameter | frxUSD / sUSDe | USDC / USDT |
+|---|---:|---:|
+| `entryMinProfitPpm` | `10` (`0.1 bp`) | `500` (`5 bp`) |
+| `normalExitMinProfitPpm` | `500` (`5 bp`) | `100` (`1 bp`) |
+| `keeperProfitShareBps` | `3_000` | `3_000` |
+| `minExpansionAmount` | `10_000e18` | `10_000e18` |
+| `maxInterventionShareBps` | `3_333` | `3_333` |
+| `minInterventionDelay` | `12` seconds | `12` seconds |
+| velocity max burst | `5%` of local max | `5%` of local max |
+| velocity full refill | `300` seconds | `300` seconds |
+| retained-backing floor | `0.999e18` | `0.999e18` |
 
-Entry and normal-exit floors are independent; no ordering constraint is intended.
+Entry and normal-contraction floors are independent; no ordering constraint is intended. The last-resort USDC and USDT keepers require a 5 bp entry edge but only a 1 bp contraction edge. This makes their exposure more expensive to enter and independently executable at a lower positive contraction edge; it does not enforce contraction ordering between keepers.
 
 `maxInterventionShareBps` limits direct expansion to one third of the normalized paired-token surplus over crvUSD and limits contraction quote/receipt to one third of normalized crvUSD excess.
 

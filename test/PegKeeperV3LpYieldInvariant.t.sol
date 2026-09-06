@@ -30,11 +30,11 @@ contract PegKeeperV3LpYieldHandler is Test {
         yieldAmm = yieldAmm_;
     }
 
-    function expand(uint256 seed) external {
+    function expandSupply(uint256 seed) external {
         yieldAmm.setBalances(0, 100_000_000e18);
         vm.warp(block.timestamp + 300);
         uint256 amount = bound(seed, 10_000e18, 100_000e18);
-        (bool success,) = address(keeper).call(abi.encodeCall(IPegKeeperV3.expand, (amount)));
+        (bool success,) = address(keeper).call(abi.encodeCall(IPegKeeperV3.expand_supply, (amount)));
         if (success) successfulExpansions++;
     }
 
@@ -42,7 +42,7 @@ contract PegKeeperV3LpYieldHandler is Test {
         yieldToken.mint(address(keeper), bound(seed, 1, 20_000e18));
     }
 
-    function sweepDonatedYield(uint256 seed) external {
+    function sweep_donated_paired_token(uint256 seed) external {
         uint256 held = yieldToken.balanceOf(address(keeper));
         uint256 minimum = keeper.min_expansion_amount();
         if (held < minimum) return;
@@ -50,7 +50,7 @@ contract PegKeeperV3LpYieldHandler is Test {
         vm.warp(block.timestamp + 300);
         uint256 amount = bound(seed, minimum, held);
         (bool success,) =
-            address(keeper).call(abi.encodeCall(IPegKeeperV3.sweepDonatedYield, (amount)));
+            address(keeper).call(abi.encodeCall(IPegKeeperV3.sweep_donated_paired_token, (amount)));
         if (success) successfulDonationSweeps++;
     }
 
@@ -65,7 +65,7 @@ contract PegKeeperV3LpYieldHandler is Test {
         vm.warp(block.timestamp + keeper.min_intervention_delay());
         uint256 amount = bound(seed, 1, held / 4 + 1);
         (bool success,) =
-            address(keeper).call(abi.encodeCall(IPegKeeperV3.contractViaAmm, (amount)));
+            address(keeper).call(abi.encodeCall(IPegKeeperV3.contract_supply, (amount)));
         if (success) successfulContractions++;
     }
 
@@ -80,8 +80,8 @@ contract PegKeeperV3LpYieldHandler is Test {
         if (idle == 0) return;
         vm.warp(block.timestamp + 300);
         uint256 amount = bound(seed, 1, idle);
-        (bool success,) =
-            address(keeper).call(abi.encodeCall(IPegKeeperV3.withdraw_profit, (amount)));
+        (bool success,) = address(keeper)
+            .call(abi.encodeWithSelector(bytes4(keccak256("withdraw_profit(uint256)")), amount));
         if (success) successfulProfitWithdrawals++;
     }
 }
@@ -126,9 +126,9 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
 
         crvUsd.mint(address(keeper), 20_000_000e18);
         handler = new PegKeeperV3LpYieldHandler(keeper, crvUsd, yieldToken, yieldAmm);
-        handler.expand(10_000e18);
+        handler.expandSupply(10_000e18);
         handler.donateYield(10_000e18);
-        handler.sweepDonatedYield(10_000e18);
+        handler.sweep_donated_paired_token(10_000e18);
         handler.contractLp(100e18);
         handler.withdrawProfit(1e18);
         targetContract(address(handler));
