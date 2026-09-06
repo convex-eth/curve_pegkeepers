@@ -17,7 +17,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_728;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x761bda3d95295abaf70c2eae5958fda8131239975b8095963f81ebd25f60483a;
+        0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb;
     uint256 public constant POLICY_RUNTIME_SIZE = 4_394;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078;

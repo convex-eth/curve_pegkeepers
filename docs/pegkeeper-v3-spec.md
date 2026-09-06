@@ -226,7 +226,7 @@ Caller reward is calculated only from realized gross profit. The retained LP mus
 - consumes capacity and velocity only for actual crvUSD matched;
 - does not update the monetary-intervention timestamp.
 
-`claimSurplus()` performs the same donation settlement before transferring claimable idle crvUSD to the live Factory fee receiver.
+`withdraw_profit()` performs the same donation settlement before transferring claimable idle crvUSD to the live Factory fee receiver.
 
 ## 8. Static contraction
 
@@ -343,7 +343,7 @@ PegKeeperV3 version:       3.4.0
 implementation initcode: 17,809 bytes
 implementation runtime:  17,728 bytes
 implementation hash:
-0x761bda3d95295abaf70c2eae5958fda8131239975b8095963f81ebd25f60483a
+0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb
 EIP-170 headroom:          6,848 bytes
 
 PegKeeperPolicy runtime:   4,394 bytes

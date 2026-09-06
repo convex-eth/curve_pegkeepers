@@ -171,7 +171,7 @@ interface IPegKeeperV3 {
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
 
-    function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
+    function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     /// @notice Gives Factory-admin-approved crvUSD to a receiver and records it as keeper debt.
     function borrow_crvusd(uint256 amount, address receiver) external;
     function reduce_deployed_crvusd(uint256 amount) external;

@@ -182,7 +182,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         uint256 receiverBalanceBefore = IERC20(CRVUSD).balanceOf(FEE_SPLITTER);
         deal(FRXUSD, address(pegKeeper), DONATION_SWEEP_AMOUNT);
         vm.prank(CANARY_KEEPER);
-        claimed = pegKeeper.claimSurplus(DONATION_SWEEP_AMOUNT);
+        claimed = pegKeeper.withdraw_profit(DONATION_SWEEP_AMOUNT);
         require(claimed > 0, "contraction-regime claim");
         require(
             IERC20(CRVUSD).balanceOf(FEE_SPLITTER) - receiverBalanceBefore == claimed,

@@ -119,7 +119,7 @@ The draw cannot prove LP return because funds leave for an external module. A pr
 
 Loose paired-token donations can be swept into LP. Priority denial sets their crvUSD match to zero rather than allowing debt growth through a side path. Donation value is excluded from caller-profit attribution.
 
-`claimSurplus()` first settles loose paired-token donations, then transfers only claimable idle crvUSD to the Factory's live fee receiver. It remains callable during contraction regimes so accrued value is not trapped.
+`withdraw_profit()` first settles loose paired-token donations, then transfers only claimable idle crvUSD to the Factory's live fee receiver. It remains callable during contraction regimes so accrued value is not trapped.
 
 Entry and normal-exit profit floors are independent. The candidate values are:
 
@@ -178,7 +178,7 @@ implementation initcode: 17,809 bytes
 implementation runtime:  17,728 bytes
 EIP-170 headroom:          6,848 bytes
 implementation hash:
-0x761bda3d95295abaf70c2eae5958fda8131239975b8095963f81ebd25f60483a
+0xf76f81e120987ab0c3a976699f26357f7b156b3c9e307e96c751c40967abbbbb
 
 PegKeeperPolicy runtime:   4,394 bytes
 policy hash:

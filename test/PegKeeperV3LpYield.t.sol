@@ -72,7 +72,7 @@ interface ILpPegKeeperV3 {
     function contractViaAmm(uint256 lpTokenAmount)
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
-    function claimSurplus(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
+    function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     function borrow_crvusd(uint256 amount, address receiver) external;
 }
 
@@ -1269,7 +1269,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.deployed_crvusd(), 5_000e18);
     }
 
-    function test_claimSurplusSweepsDonationBeforeClaimDuringContractionRegime() public {
+    function test_withdrawProfitSweepsDonationBeforeClaimDuringContractionRegime() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
         crvUsd.mint(address(yieldAmm), 50_000e18);
         yieldToken.mint(address(yieldAmm), 45_000e18);
@@ -1277,7 +1277,7 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldToken.mint(address(keeper), 10_000e18);
         aggregateCrvUsdOracle.setPrice(1e18 - 1);
 
-        uint256 claimed = keeper.claimSurplus(10_000e18);
+        uint256 claimed = keeper.withdraw_profit(10_000e18);
 
         assertEq(claimed, 10_000e18);
         assertEq(crvUsd.balanceOf(feeReceiver), 10_000e18);
@@ -1286,6 +1286,20 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldToken.balanceOf(address(yieldAmm)), 55_000e18);
         assertEq(keeper.deployed_crvusd(), 15_000e18);
         assertEq(keeper.expansion_pressure(), 15_000e18);
+    }
+
+    function test_legacyClaimSurplusSelectorIsAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        crvUsd.mint(address(yieldAmm), 50_000e18);
+        yieldToken.mint(address(yieldAmm), 45_000e18);
+        crvUsd.mint(address(keeper), 15_000e18);
+        yieldToken.mint(address(keeper), 10_000e18);
+        aggregateCrvUsdOracle.setPrice(1e18 - 1);
+
+        (bool success,) =
+            address(keeper).call(abi.encodeWithSignature("claimSurplus(uint256)", 10_000e18));
+
+        assertFalse(success);
     }
 
     function _configuredNormalKeeper() internal returns (ILpPegKeeperV3 keeper) {

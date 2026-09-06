@@ -1178,7 +1178,7 @@ def sweepDonatedYield(_max_yield_token_amount: uint256) -> (uint256, uint256, ui
 
 @external
 @nonreentrant("lock")
-def claimSurplus(_max_crv_usd_amount: uint256) -> uint256:
+def withdraw_profit(_max_crv_usd_amount: uint256) -> uint256:
     """
     @notice Sends available crvUSD to the fee receiver when extra backing covers it, up to the caller's limit.
     """

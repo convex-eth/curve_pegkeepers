@@ -16,7 +16,7 @@ contract PegKeeperV3LpYieldHandler is Test {
     uint256 public successfulExpansions;
     uint256 public successfulDonationSweeps;
     uint256 public successfulContractions;
-    uint256 public successfulSurplusClaims;
+    uint256 public successfulProfitWithdrawals;
 
     constructor(
         IPegKeeperV3 keeper_,
@@ -75,13 +75,14 @@ contract PegKeeperV3LpYieldHandler is Test {
         if (current <= 2e18 - increase) yieldAmm.setVirtualPrice(current + increase);
     }
 
-    function claimSurplus(uint256 seed) external {
+    function withdrawProfit(uint256 seed) external {
         uint256 idle = crvUsd.balanceOf(address(keeper));
         if (idle == 0) return;
         vm.warp(block.timestamp + 300);
         uint256 amount = bound(seed, 1, idle);
-        (bool success,) = address(keeper).call(abi.encodeCall(IPegKeeperV3.claimSurplus, (amount)));
-        if (success) successfulSurplusClaims++;
+        (bool success,) =
+            address(keeper).call(abi.encodeCall(IPegKeeperV3.withdraw_profit, (amount)));
+        if (success) successfulProfitWithdrawals++;
     }
 }
 
@@ -129,7 +130,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         handler.donateYield(10_000e18);
         handler.sweepDonatedYield(10_000e18);
         handler.contractLp(100e18);
-        handler.claimSurplus(1e18);
+        handler.withdrawProfit(1e18);
         targetContract(address(handler));
     }
 
@@ -151,6 +152,6 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         assertGt(handler.successfulExpansions(), 0);
         assertGt(handler.successfulDonationSweeps(), 0);
         assertGt(handler.successfulContractions(), 0);
-        assertGt(handler.successfulSurplusClaims(), 0);
+        assertGt(handler.successfulProfitWithdrawals(), 0);
     }
 }
