@@ -224,7 +224,7 @@ principal           = crvUSD deposited
 realized gross       = max(LP value after - baseline - principal, 0)
 ```
 
-Caller reward is calculated only from realized gross profit. The retained LP must still satisfy the entry floor and cover resulting debt.
+The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, a `5 bp` entry floor splits the qualifying gross edge into `1.5 bp` for the caller and `3.5 bp` retained by the protocol.
 
 Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)` is restricted to the Factory's dynamic admin, allows a zero burst to disable new capacity, requires burst at most `10_000 bps`, and requires a nonzero refill period. The launch rule is `500 bps` of local maximum exposure with a `300 second` full linear refill. Velocity parameters and local-cap updates first checkpoint pressure under the old rule, preventing retroactive decay at a newly selected rate.
 
@@ -264,7 +264,7 @@ It requires:
 
 Contraction reduces debt by crvUSD retained after reward. Any amount above remaining debt is terminal surplus transferred to the fee receiver.
 
-Entry and normal-contraction profit floors are independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so last-resort exposure is expensive to enter and cheaper to unwind.
+Entry and normal-contraction profit floors both apply to gross realized profit before caller compensation and remain independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so last-resort exposure is expensive to enter and cheaper to unwind.
 
 ## 9. Policy-gated external draw
 
@@ -352,11 +352,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,337 bytes
-implementation runtime:  18,221 bytes
+implementation initcode: 18,348 bytes
+implementation runtime:  18,232 bytes
 implementation hash:
-0xb9c5c099d5a617df1311dfbc71638bdba4ae85ece328c260590261d082639ffc
-EIP-170 headroom:          6,355 bytes
+0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c
+EIP-170 headroom:          6,344 bytes
 
 PegKeeperPolicy runtime:   4,862 bytes
 policy hash:

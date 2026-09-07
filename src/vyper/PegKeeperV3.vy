@@ -595,9 +595,9 @@ def available_expansion_velocity() -> uint256:
 
 @internal
 @view
-def _meets_entry_floor(_retained_value: uint256, _principal: uint256) -> bool:
+def _meets_entry_floor(_gross_profit: uint256, _principal: uint256) -> bool:
     required_profit: uint256 = _principal * self.entry_min_profit_ppm // PPM
-    return _retained_value >= _principal + required_profit
+    return _gross_profit >= required_profit
 
 
 @internal
@@ -969,7 +969,7 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     )
     if retained_value < accounting_baseline:
         return False
-    if not self._meets_entry_floor(retained_value - accounting_baseline, crv_usd_deployed):
+    if not self._meets_entry_floor(gross_profit, crv_usd_deployed):
         return False
     return retained_value >= deployed_after
 
@@ -1005,10 +1005,7 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     retained_lp: uint256 = lp_before + lp_tokens_out - keeper_reward
     retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
     assert retained_value >= accounting_baseline
-    assert self._meets_entry_floor(
-        retained_value - accounting_baseline,
-        crv_usd_deployed,
-    )
+    assert self._meets_entry_floor(gross_profit, crv_usd_deployed)
     assert retained_value >= deployed_after
     return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
 
@@ -1063,9 +1060,14 @@ def _settle_lp_expansion(
     virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
     accounting_baseline: uint256 = _lp_value_before + _donated_paired_token_value
+    entry_baseline: uint256 = _lp_value_before + _entry_donation_value
     gross_profit: uint256 = 0
     if lp_value_after > accounting_baseline + _principal:
         gross_profit = lp_value_after - accounting_baseline - _principal
+    entry_profit: uint256 = 0
+    if lp_value_after > entry_baseline + _principal:
+        entry_profit = lp_value_after - entry_baseline - _principal
+    assert self._meets_entry_floor(entry_profit, _principal)
 
     keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
     keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price_after
@@ -1073,9 +1075,7 @@ def _settle_lp_expansion(
     self._transfer_exact_to(ERC20(self.pool.address), msg.sender, keeper_reward)
 
     retained_value: uint256 = self._lp_value(self._lp_inventory())
-    entry_baseline: uint256 = _lp_value_before + _entry_donation_value
     assert retained_value >= entry_baseline
-    assert self._meets_entry_floor(retained_value - entry_baseline, _principal)
     return gross_profit, keeper_reward
 
 

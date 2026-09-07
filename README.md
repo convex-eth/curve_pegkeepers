@@ -129,6 +129,10 @@ Loose paired-token donations can be swept into LP. Priority denial sets their cr
 
 Entry and normal-contraction profit floors are independent:
 
+Both floors apply to gross realized profit before keeper compensation. At the initial global
+`3_000 bps` keeper share, a qualifying `5 bp` gross edge pays `1.5 bp` to the caller and retains
+`3.5 bp` for the protocol.
+
 Every contraction requires strictly positive gross realized profit before keeper compensation,
 including when governance configures the normal-contraction floor to zero. Break-even and
 loss-making withdrawals are never permitted by configuration.
@@ -188,11 +192,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,337 bytes
-implementation runtime:  18,221 bytes
-EIP-170 headroom:          6,355 bytes
+implementation initcode: 18,348 bytes
+implementation runtime:  18,232 bytes
+EIP-170 headroom:          6,344 bytes
 implementation hash:
-0xb9c5c099d5a617df1311dfbc71638bdba4ae85ece328c260590261d082639ffc
+0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c
 
 PegKeeperPolicy runtime:   4,862 bytes
 policy hash:

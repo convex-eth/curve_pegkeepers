@@ -91,6 +91,8 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 | `expansionRefillPeriod` | `300` seconds | `300` seconds |
 | retained-backing floor | `0.999e18` | `0.999e18` |
 
+Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, a `5 bp` qualifying edge pays `1.5 bp` to the caller and leaves `3.5 bp` with the protocol.
+
 Entry and normal-contraction floors are independent; no ordering constraint is intended. The last-resort USDC and USDT keepers require a 5 bp entry edge but only a 1 bp contraction edge. This makes their exposure more expensive to enter and independently executable at a lower positive contraction edge; it does not enforce contraction ordering between keepers.
 
 `maxInterventionShareBps` limits direct expansion to one third of the normalized paired-token surplus over crvUSD and limits contraction quote/receipt to one third of normalized crvUSD excess.

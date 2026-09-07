@@ -621,6 +621,44 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(localGetterExists);
     }
 
+    function test_entryProfitFloorUsesGrossProfitBeforeKeeperRewardInPreview() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_005);
+        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+
+        vm.prank(governance);
+        keeper.set_policy(500, 100, 10_000e18, MAX_DEPLOYED);
+
+        (uint256 deployed, uint256 grossProfit, uint256 keeperReward, uint256 lpOut) =
+            keeper.preview_expansion(10_000e18);
+
+        assertEq(deployed, 10_000e18);
+        assertEq(lpOut, 10_005e18);
+        assertEq(grossProfit, 5e18);
+        assertEq(keeperReward, 1.5e18);
+    }
+
+    function test_entryProfitFloorUsesGrossProfitBeforeKeeperRewardInExecution() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_005);
+        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+
+        vm.prank(governance);
+        keeper.set_policy(500, 100, 10_000e18, MAX_DEPLOYED);
+
+        address caller = makeAddr("five-bps entry caller");
+        vm.prank(caller);
+        (uint256 deployed, uint256 lpReceived, uint256 keeperReward) =
+            keeper.expand_supply(10_000e18);
+
+        assertEq(deployed, 10_000e18);
+        assertEq(lpReceived, 10_005e18);
+        assertEq(keeperReward, 1.5e18);
+        assertEq(yieldAmm.balanceOf(caller), 1.5e18);
+        assertEq(keeper.trusted_backing_value(), 10_003.5e18);
+        assertEq(keeper.deployed_crvusd(), 10_000e18);
+    }
+
     function test_yieldOraclePolicyDefaultsToTenBasisPointFloorAndAdminCanUpdate() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
