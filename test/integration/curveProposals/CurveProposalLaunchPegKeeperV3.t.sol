@@ -120,14 +120,19 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         _assertTierAction(actions[26], expectedUsdtKeeper, 3);
 
         for (uint256 i; i < actions.length; ++i) {
+            bytes4 selector = _selector(actions[i].data);
             assertNotEq(
-                _selector(actions[i].data),
+                selector,
                 bytes4(
                     keccak256(
                         "setPaths((uint256,address,address,address,int128,int128,uint256)[],uint256)"
                     )
                 )
             );
+            assertNotEq(selector, bytes4(keccak256("remove_peg_keeper(address)")));
+            assertNotEq(selector, bytes4(keccak256("remove_peg_keepers(address[])")));
+            assertNotEq(selector, bytes4(keccak256("remove_price_pair(uint256)")));
+            assertNotEq(selector, bytes4(keccak256("set_new_regulator(address)")));
         }
     }
 
@@ -377,6 +382,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.backing_oracle(), oracle);
         assertEq(keeper.min_backing_oracle_price(), proposal.MIN_BACKING_ORACLE_PRICE());
         assertEq(keeper.max_deployed_crvusd(), CAP);
+        assertEq(keeper.debt(), 0);
         assertTrue(factory.is_active(keeperAddress));
         assertTrue(keeper.expansion_paused());
         assertTrue(keeper.contraction_paused());
