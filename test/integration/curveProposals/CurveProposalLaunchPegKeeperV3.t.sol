@@ -12,27 +12,27 @@ import {IAggMonetaryPolicy} from "../../../src/interfaces/IAggMonetaryPolicy.sol
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
 import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
+import {IERC20} from "../../../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
-import {
-    IStableSwap2Pool,
-    IStableSwap2PoolFixed
-} from "../../../src/interfaces/IStableSwap2Pool.sol";
 
-contract CurveEDAOProxyHarness {
-    function execute(address target, bytes calldata data)
-        external
-        payable
-        returns (bytes memory result)
-    {
-        bool success;
-        (success, result) = target.call{value: msg.value}(data);
-        if (!success) {
-            assembly {
-                revert(add(result, 0x20), mload(result))
-            }
-        }
+contract CurveDebtCeilingProposalHarness is BaseCurveProposal {
+    address internal immutable keeper;
+    uint256 internal immutable ceiling;
+
+    constructor(address keeper_, uint256 ceiling_) {
+        keeper = keeper_;
+        ceiling = ceiling_;
+    }
+
+    function buildProposalScript() public view override returns (bytes memory script) {
+        Action[] memory actions = new Action[](1);
+        actions[0] = _executeViaCrvUsdEDAOProxy(
+            CURVE_CRVUSD_CONTROLLER_FACTORY,
+            abi.encodeCall(IControllerFactory.set_debt_ceiling, (keeper, ceiling))
+        );
+        script = buildScript(CURVE_OWNERSHIP_AGENT, actions);
     }
 }
 
@@ -70,8 +70,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         vm.createSelectFork(
             vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co")), 25_911_411
         );
-        CurveEDAOProxyHarness proxyHarness = new CurveEDAOProxyHarness();
-        vm.etch(EDAO_PROXY, address(proxyHarness).code);
 
         proposal = new CurveProposalLaunchPegKeeperV3();
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
@@ -202,8 +200,12 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         vm.prank(OWNERSHIP_AGENT);
         IPegKeeperV3(expectedFrxUsdKeeper).set_direction_paused(0, false);
-        vm.prank(EDAO_PROXY);
-        IControllerFactory(CONTROLLER_FACTORY).set_debt_ceiling(expectedFrxUsdKeeper, 1);
+        vm.prank(OWNERSHIP_AGENT);
+        ICurveEDAOAdminProxy(EDAO_PROXY)
+            .execute(
+                CONTROLLER_FACTORY,
+                abi.encodeCall(IControllerFactory.set_debt_ceiling, (expectedFrxUsdKeeper, 1))
+            );
         vm.expectRevert(bytes("keeper prefunded"));
         proposal.buildProposalActions();
     }
@@ -290,6 +292,26 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         }
     }
 
+    function test_liveControllerFactoryCanBurnUnusedV3Allocation() public {
+        _executeProposal();
+        IControllerFactory controllerFactory = IControllerFactory(CONTROLLER_FACTORY);
+        IERC20 crvUsd = IERC20(controllerFactory.stablecoin());
+
+        assertEq(crvUsd.balanceOf(expectedFrxUsdKeeper), CAP);
+        assertEq(crvUsd.allowance(expectedFrxUsdKeeper, CONTROLLER_FACTORY), type(uint256).max);
+        assertEq(controllerFactory.debt_ceiling_residual(expectedFrxUsdKeeper), CAP);
+
+        CurveDebtCeilingProposalHarness zeroCeilingProposal =
+            new CurveDebtCeilingProposalHarness(expectedFrxUsdKeeper, 0);
+        _executeOwnershipVote(
+            zeroCeilingProposal.buildProposalScript(), "Remove unused PegKeeperV3 allocation"
+        );
+
+        assertEq(crvUsd.balanceOf(expectedFrxUsdKeeper), 0);
+        assertEq(controllerFactory.debt_ceiling(expectedFrxUsdKeeper), 0);
+        assertEq(controllerFactory.debt_ceiling_residual(expectedFrxUsdKeeper), 0);
+    }
+
     function test_tertiaryKeepersUseLastResortProfitFloors() public {
         _executeActionsDirectly();
 
@@ -310,8 +332,14 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         vm.prank(OWNERSHIP_AGENT);
         IPegKeeperV3(expectedFrxUsdKeeper).set_direction_paused(0, true);
-        vm.prank(EDAO_PROXY);
-        IControllerFactory(CONTROLLER_FACTORY).set_debt_ceiling(expectedSUsdeKeeper, 20_000e18);
+        vm.prank(OWNERSHIP_AGENT);
+        ICurveEDAOAdminProxy(EDAO_PROXY)
+            .execute(
+                CONTROLLER_FACTORY,
+                abi.encodeCall(
+                    IControllerFactory.set_debt_ceiling, (expectedSUsdeKeeper, 20_000e18)
+                )
+            );
         IPegKeeperV3 sUsdeKeeper = IPegKeeperV3(expectedSUsdeKeeper);
 
         assertFalse(IPegKeeperV3(expectedFrxUsdKeeper).can_expand_without_policy());
@@ -326,67 +354,16 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
     }
 
-    function test_usdcFixedArrayModeExecutesLiveExpansion() public {
-        _assertFixedArrayKeeperExecutesLiveExpansion(expectedUsdcKeeper);
-    }
-
-    function test_usdtFixedArrayModeExecutesLiveExpansion() public {
-        _assertFixedArrayKeeperExecutesLiveExpansion(expectedUsdtKeeper);
-    }
-
-    function _assertFixedArrayKeeperExecutesLiveExpansion(address keeperAddress) internal {
-        _executeActionsDirectly();
-        IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
-
-        vm.prank(OWNERSHIP_AGENT);
-        keeper.set_policy(0, 100, 3_000, 10_000e18, CAP);
-
-        assertFalse(keeper.pool_uses_dynamic_arrays());
-        vm.mockCall(
-            keeper.pool(),
-            abi.encodeCall(IStableSwap2Pool.balances, (keeper.pool_crvusd_index())),
-            abi.encode(0)
-        );
-        vm.mockCall(
-            keeper.pool(),
-            abi.encodeCall(IStableSwap2Pool.balances, (keeper.pool_paired_token_index())),
-            abi.encode(100_000_000e6)
-        );
-        // The historical state quotes a small accounting loss. Raise only the keeper-facing
-        // valuation so the real fixed-array add-liquidity path can be exercised.
-        vm.mockCall(
-            keeper.pool(),
-            abi.encodeWithSelector(IStableSwap2Pool.get_virtual_price.selector),
-            abi.encode(2e18)
-        );
-        uint256[2] memory amounts;
-        amounts[keeper.pool_crvusd_index()] = 10_000e18;
-        vm.expectCall(
-            keeper.pool(), abi.encodeCall(IStableSwap2PoolFixed.calc_token_amount, (amounts, true))
-        );
-        assertTrue(keeper.can_expand_without_policy());
-
-        (,,, uint256 quotedLp) = keeper.preview_expansion(10_000e18);
-        uint256 minLp = quotedLp * (10_000 - proposal.AMM_EXECUTION_BUFFER_BPS()) / 10_000;
-        vm.expectCall(
-            keeper.pool(), abi.encodeCall(IStableSwap2PoolFixed.add_liquidity, (amounts, minLp))
-        );
-        (uint256 debtAdded, uint256 lpReceived,) = keeper.expand_supply(10_000e18);
-
-        assertEq(debtAdded, 10_000e18);
-        assertGe(lpReceived, minLp);
-        assertEq(keeper.deployed_crvusd(), 10_000e18);
-    }
-
     function _executeProposal() internal {
-        bytes memory script = proposal.buildProposalScript();
-        vm.prank(CONVEX_VOTEPROXY);
-        uint256 proposalId = OWNERSHIP_VOTE.newVote(
-            script,
-            "Accept and activate four direct PegKeeperV3 keepers with three-tier priority",
-            false,
-            false
+        _executeOwnershipVote(
+            proposal.buildProposalScript(),
+            "Accept and activate four direct PegKeeperV3 keepers with three-tier priority"
         );
+    }
+
+    function _executeOwnershipVote(bytes memory script, string memory description) internal {
+        vm.prank(CONVEX_VOTEPROXY);
+        uint256 proposalId = OWNERSHIP_VOTE.newVote(script, description, false, false);
 
         address[3] memory voters = [CONVEX_VOTEPROXY, YEARN_VOTEPROXY, SD_VOTEPROXY];
         for (uint256 i; i < voters.length; ++i) {

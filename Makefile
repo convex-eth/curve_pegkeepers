@@ -20,7 +20,7 @@ check:
 	forge fmt --check
 	git diff --check
 	forge lint
-	forge build
+	forge build --force
 	forge build --sizes
 	python3 scripts/check-vyper-solidity-abi.py \
 		out/PegKeeperV3.vy/PegKeeperV3.json \
@@ -45,9 +45,11 @@ check-release-evidence:
 
 release-canary:
 	@test -n "$$ETH_RPC_URL" || (printf '%s\n' 'ETH_RPC_URL is required' >&2; exit 1)
+	@forge build --force
 	@forge script script/PegKeeperV3ReleaseCanary.s.sol:PegKeeperV3ReleaseCanary \
 		--rpc-url "$$ETH_RPC_URL" \
 		--fork-block-number "$(RELEASE_CANARY_BLOCK)" \
+		--skip .vy \
 		-vv
 
 clean:

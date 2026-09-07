@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title PegKeeperV3Factory
 @license MIT
@@ -106,7 +106,7 @@ _activeIndexPlusOne: HashMap[address, uint256]
 _isDeployed: HashMap[address, bool]
 
 
-@external
+@deploy
 def __init__(
     _initialOwner: address,
     _controllerFactory: address,
@@ -130,12 +130,12 @@ def __init__(
     self.policy = _policy
     self._set_defaults(_defaults)
 
-    log OwnershipTransferred(empty(address), _initialOwner)
-    log PolicyUpdated(empty(address), _policy)
+    log OwnershipTransferred(oldOwner=empty(address), newOwner=_initialOwner)
+    log PolicyUpdated(oldPolicy=empty(address), newPolicy=_policy)
 
 
 @external
-@pure
+@view
 def controllerFactory() -> address:
     """
     @notice Returns the controller factory used by every keeper.
@@ -144,7 +144,7 @@ def controllerFactory() -> address:
 
 
 @external
-@pure
+@view
 def implementation() -> address:
     """
     @notice Returns the base keeper code used for new keepers.
@@ -199,7 +199,7 @@ def deployPegKeeper(
     @notice Lets the owner deploy and record an unpaused direct-liquidity keeper.
     """
     self._check_owner()
-    if PegKeeperPolicy(self.policy).factory() != self:
+    if staticcall PegKeeperPolicy(self.policy).factory() != self:
         raw_revert(method_id("InvalidPolicy()"))
 
     paired_token: address = empty(address)
@@ -220,13 +220,19 @@ def deployPegKeeper(
         _backingOracle,
     )
 
-    PegKeeperV3(peg_keeper).set_amm_execution_buffer(config.ammExecutionBufferBps)
+    extcall PegKeeperV3(peg_keeper).set_amm_execution_buffer(config.ammExecutionBufferBps)
 
     self._keeperCount = index
     self._isDeployed[peg_keeper] = True
     self._add_active(peg_keeper)
 
-    log PegKeeperDeployed(index, peg_keeper, implementation, _amm, paired_token)
+    log PegKeeperDeployed(
+        index=index,
+        pegKeeper=peg_keeper,
+        implementation=implementation,
+        amm=_amm,
+        pairedToken=paired_token,
+    )
     return peg_keeper
 
 
@@ -247,12 +253,12 @@ def setPolicy(_newPolicy: address):
     self._check_owner()
     if _newPolicy == empty(address) or _newPolicy.codesize == 0:
         raw_revert(method_id("InvalidPolicy()"))
-    if PegKeeperPolicy(_newPolicy).factory() != self:
+    if staticcall PegKeeperPolicy(_newPolicy).factory() != self:
         raw_revert(method_id("InvalidPolicy()"))
 
     old_policy: address = self.policy
     self.policy = _newPolicy
-    log PolicyUpdated(old_policy, _newPolicy)
+    log PolicyUpdated(oldPolicy=old_policy, newPolicy=_newPolicy)
 
 
 @external
@@ -284,7 +290,7 @@ def transferOwnership(_newOwner: address):
 
     self.pendingOwner = _newOwner
     self.ownershipTransferNonce += 1
-    log OwnershipTransferStarted(self.owner, _newOwner)
+    log OwnershipTransferStarted(owner=self.owner, pendingOwner=_newOwner)
 
 
 @external
@@ -300,7 +306,7 @@ def acceptOwnership(_expected_nonce: uint256):
     old_owner: address = self.owner
     self.owner = msg.sender
     self.pendingOwner = empty(address)
-    log OwnershipTransferred(old_owner, msg.sender)
+    log OwnershipTransferred(oldOwner=old_owner, newOwner=msg.sender)
 
 
 @external
@@ -314,7 +320,7 @@ def __default__() -> address:
         raw_revert(b"")
     if slice(msg.data, 0, 4) != CLONE_DEPLOY_SELECTOR:
         raw_revert(b"")
-    implementation: address = _abi_decode(slice(msg.data, 4, 32), address)
+    implementation: address = abi_decode(slice(msg.data, 4, 32), address)
     return create_minimal_proxy_to(implementation)
 
 
@@ -333,9 +339,9 @@ def _resolve_assets(
     _amm: address,
     _pairedTokenIsErc4626: bool,
 ) -> (address, address):
-    crv_usd: address = ControllerFactory(CONTROLLER_FACTORY).stablecoin()
-    coin_0: address = TwoCoinPool(_amm).coins(0)
-    coin_1: address = TwoCoinPool(_amm).coins(1)
+    crv_usd: address = staticcall ControllerFactory(CONTROLLER_FACTORY).stablecoin()
+    coin_0: address = staticcall TwoCoinPool(_amm).coins(0)
+    coin_1: address = staticcall TwoCoinPool(_amm).coins(1)
     paired_token: address = empty(address)
 
     if coin_0 == crv_usd and coin_1 != crv_usd:
@@ -347,7 +353,7 @@ def _resolve_assets(
 
     backing_asset: address = paired_token
     if _pairedTokenIsErc4626:
-        backing_asset = PairedToken(paired_token).asset()
+        backing_asset = staticcall PairedToken(paired_token).asset()
     return paired_token, backing_asset
 
 
@@ -366,17 +372,17 @@ def _deploy_keeper(
     response: Bytes[32] = empty(Bytes[32])
     succeeded, response = raw_call(
         self,
-        _abi_encode(_implementation, method_id=CLONE_DEPLOY_SELECTOR),
+        abi_encode(_implementation, method_id=CLONE_DEPLOY_SELECTOR),
         max_outsize=32,
         revert_on_failure=False,
     )
     if not succeeded or len(response) != 32:
         raw_revert(method_id("DeploymentFailed()"))
 
-    peg_keeper: address = _abi_decode(response, address)
+    peg_keeper: address = abi_decode(response, address)
     initialized: bool = raw_call(
         peg_keeper,
-        _abi_encode(
+        abi_encode(
             _backingAsset,
             _pairedToken,
             _pool,
@@ -400,7 +406,7 @@ def _add_active(_peg_keeper: address):
     self._activeIndexPlusOne[_peg_keeper] = index + 1
     self.activePegKeeperCount = index + 1
     self.is_active[_peg_keeper] = True
-    log ActiveStatusUpdated(_peg_keeper, True)
+    log ActiveStatusUpdated(pegKeeper=_peg_keeper, active=True)
 
 
 @internal
@@ -418,7 +424,7 @@ def _remove_active(_peg_keeper: address):
     self._activeIndexPlusOne[_peg_keeper] = 0
     self.activePegKeeperCount = last_index
     self.is_active[_peg_keeper] = False
-    log ActiveStatusUpdated(_peg_keeper, False)
+    log ActiveStatusUpdated(pegKeeper=_peg_keeper, active=False)
 
 
 @internal
@@ -438,11 +444,11 @@ def _set_defaults(_newDefaults: DeploymentDefaults):
 
     self._defaults = _newDefaults
     log DefaultsUpdated(
-        _newDefaults.admin,
-        _newDefaults.emergencyAdmin,
-        _newDefaults.feeReceiver,
-        _newDefaults.maxDeployedCrvUsd,
-        _newDefaults.ammExecutionBufferBps,
+        admin=_newDefaults.admin,
+        emergencyAdmin=_newDefaults.emergencyAdmin,
+        feeReceiver=_newDefaults.feeReceiver,
+        maxDeployedCrvUsd=_newDefaults.maxDeployedCrvUsd,
+        ammExecutionBufferBps=_newDefaults.ammExecutionBufferBps,
     )
 
 
@@ -462,4 +468,4 @@ def _is_locked_implementation(_candidate: address) -> bool:
     )
     if not ok or len(response) != 32:
         return False
-    return _abi_decode(response, bool)
+    return abi_decode(response, bool)

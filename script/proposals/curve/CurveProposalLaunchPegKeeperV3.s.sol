@@ -5,6 +5,7 @@ import {BaseCurveProposal} from "./BaseCurveProposal.sol";
 import {IAggMonetaryPolicy} from "../../../src/interfaces/IAggMonetaryPolicy.sol";
 import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
+import {IERC20} from "../../../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
@@ -15,20 +16,20 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_761;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_997;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589;
-    uint256 public constant POLICY_RUNTIME_SIZE = 4_609;
+        0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf;
+    uint256 public constant POLICY_RUNTIME_SIZE = 4_688;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x6376ddbee90ea97a1d013d23817710553fd8b4247941b7a778102fc5c41ad9e9;
-    uint256 public constant FACTORY_CORE_SIZE = 4_085;
-    uint256 public constant FACTORY_RUNTIME_SIZE = 4_149;
+        0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a;
+    uint256 public constant FACTORY_CORE_SIZE = 3_963;
+    uint256 public constant FACTORY_RUNTIME_SIZE = 4_027;
     bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
-        0x064f8195a49c3a02fda40e84785ac1a3abc380ffa596a4f9976a1b2f2c0f16df;
-    uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 460;
-    uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 556;
+        0xcfc318147ad88458f19543d0a8001ed9b046e72c713501b96839d847b8f6799e;
+    uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 431;
+    uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 527;
     bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
-        0xe03c54b8bf499010cf16ccbd53437316c3fe05e6cc35ef26b042fa36efcc64b3;
+        0xf2ae2f566e1a5cb82fd67cdf92523dfbb47e6a21347d35a57342cab36791287a;
 
     uint256 public constant TIER_PRIMARY = 1;
     uint256 public constant TIER_SECONDARY = 2;
@@ -335,6 +336,11 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(
             IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).debt_ceiling(keeperAddress) == 0,
             "keeper prefunded"
+        );
+        require(
+            IERC20(IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).stablecoin())
+                .allowance(keeperAddress, CURVE_CRVUSD_CONTROLLER_FACTORY) == type(uint256).max,
+            "keeper ControllerFactory allowance"
         );
     }
 

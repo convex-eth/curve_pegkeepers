@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title Peg Keeper Offboarding
 @author Curve.Fi
@@ -49,7 +49,7 @@ struct PegKeeperInfo:
     is_inverse: bool
     include_index: bool
 
-enum Killed:
+flag Killed:
     Provide  # 1
     Withdraw  # 2
 
@@ -65,14 +65,14 @@ admin: public(address)
 emergency_admin: public(address)
 
 
-@external
+@deploy
 def __init__(_fee_receiver: address, _admin: address, _emergency_admin: address):
     self.fee_receiver = _fee_receiver
     self.admin = _admin
     self.emergency_admin = _emergency_admin
-    log SetFeeReceiver(_fee_receiver)
-    log SetAdmin(_admin)
-    log SetEmergencyAdmin(_emergency_admin)
+    log SetFeeReceiver(fee_receiver=_fee_receiver)
+    log SetAdmin(admin=_admin)
+    log SetEmergencyAdmin(admin=_emergency_admin)
 
 
 @external
@@ -103,24 +103,28 @@ def add_peg_keepers(_peg_keepers: DynArray[PegKeeper, MAX_LEN]):
     assert msg.sender == self.admin
 
     i: uint256 = len(self.peg_keepers)
-    for pk in _peg_keepers:
+    for pk: PegKeeper in _peg_keepers:
         assert self.peg_keeper_i[pk] == empty(uint256)  # dev: duplicate
-        pool: StableSwap = pk.pool()
+        pool: StableSwap = staticcall pk.pool()
         success: bool = raw_call(
-            pool.address, _abi_encode(convert(0, uint256), method_id=method_id("price_oracle(uint256)")),
+            pool.address, abi_encode(convert(0, uint256), method_id=method_id("price_oracle(uint256)")),
             revert_on_failure=False
         )
-        info: PegKeeperInfo = PegKeeperInfo({
-            peg_keeper: pk,
-            pool: pool,
-            is_inverse: pk.IS_INVERSE(),
-            include_index: success,
-        })
+        info: PegKeeperInfo = PegKeeperInfo(
+            peg_keeper=pk,
+            pool=pool,
+            is_inverse=staticcall pk.IS_INVERSE(),
+            include_index=success,
+        )
         self.peg_keepers.append(info)  # dev: too many pairs
         i += 1
         self.peg_keeper_i[pk] = i
 
-        log AddPegKeeper(info.peg_keeper, info.pool, info.is_inverse)
+        log AddPegKeeper(
+            peg_keeper=info.peg_keeper,
+            pool=info.pool,
+            is_inverse=info.is_inverse,
+        )
 
 
 @external
@@ -131,7 +135,7 @@ def remove_peg_keepers(_peg_keepers: DynArray[PegKeeper, MAX_LEN]):
     assert msg.sender == self.admin
 
     peg_keepers: DynArray[PegKeeperInfo, MAX_LEN] = self.peg_keepers
-    for pk in _peg_keepers:
+    for pk: PegKeeper in _peg_keepers:
         i: uint256 = self.peg_keeper_i[pk] - 1  # dev: pool not found
         max_n: uint256 = len(peg_keepers) - 1
         if i < max_n:
@@ -140,7 +144,7 @@ def remove_peg_keepers(_peg_keepers: DynArray[PegKeeper, MAX_LEN]):
 
         peg_keepers.pop()
         self.peg_keeper_i[pk] = empty(uint256)
-        log RemovePegKeeper(pk)
+        log RemovePegKeeper(peg_keeper=pk)
 
     self.peg_keepers = peg_keepers
 
@@ -152,7 +156,7 @@ def set_fee_receiver(_fee_receiver: address):
     """
     assert msg.sender == self.admin
     self.fee_receiver = _fee_receiver
-    log SetFeeReceiver(_fee_receiver)
+    log SetFeeReceiver(fee_receiver=_fee_receiver)
 
 
 @external
@@ -163,7 +167,7 @@ def set_killed(_is_killed: Killed):
     """
     assert msg.sender in [self.admin, self.emergency_admin]
     self.is_killed = _is_killed
-    log SetKilled(_is_killed, msg.sender)
+    log SetKilled(is_killed=_is_killed, by=msg.sender)
 
 
 @external
@@ -172,11 +176,11 @@ def set_admin(_admin: address):
     # which has vote delays
     assert msg.sender == self.admin
     self.admin = _admin
-    log SetAdmin(_admin)
+    log SetAdmin(admin=_admin)
 
 
 @external
 def set_emergency_admin(_admin: address):
     assert msg.sender == self.admin
     self.emergency_admin = _admin
-    log SetEmergencyAdmin(_admin)
+    log SetEmergencyAdmin(admin=_admin)

@@ -27,14 +27,14 @@ contract DaiUsdsConverterTest is Test {
         uint256 amount = 1_000e18;
         deal(DAI, address(this), amount);
 
-        IERC20(DAI).approve(DAI_USDS, amount);
+        assertTrue(IERC20(DAI).approve(DAI_USDS, amount));
         uint256 usdsBefore = IERC20(USDS).balanceOf(address(this));
         converter.daiToUsds(address(this), amount);
 
         assertEq(IERC20(DAI).balanceOf(address(this)), 0);
         assertEq(IERC20(USDS).balanceOf(address(this)) - usdsBefore, amount);
 
-        IERC20(USDS).approve(DAI_USDS, amount);
+        assertTrue(IERC20(USDS).approve(DAI_USDS, amount));
         uint256 daiBefore = IERC20(DAI).balanceOf(address(this));
         converter.usdsToDai(address(this), amount);
 

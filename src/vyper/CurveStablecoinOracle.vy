@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title Curve Stablecoin Oracle Adapter
 @license MIT
@@ -19,7 +19,7 @@ REFERENCE_ASSET: immutable(address)
 INVERTED: immutable(bool)
 
 
-@external
+@deploy
 def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
     """
     @notice Sets the pool, priced token, and token used as the price reference.
@@ -30,8 +30,8 @@ def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
     assert _reference_asset != empty(address)
     assert _asset != _reference_asset
 
-    coin_0: address = _pool.coins(0)
-    coin_1: address = _pool.coins(1)
+    coin_0: address = staticcall _pool.coins(0)
+    coin_1: address = staticcall _pool.coins(1)
     inverted: bool = False
     if coin_0 == _reference_asset and coin_1 == _asset:
         inverted = False
@@ -40,7 +40,7 @@ def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
     else:
         raise
 
-    assert _pool.price_oracle(0) > 0
+    assert staticcall _pool.price_oracle(0) > 0
     POOL = _pool
     ASSET = _asset
     REFERENCE_ASSET = _reference_asset
@@ -48,7 +48,7 @@ def __init__(_pool: CurvePool, _asset: address, _reference_asset: address):
 
 
 @external
-@pure
+@view
 def pool() -> address:
     """
     @notice Returns the Curve pool used for prices.
@@ -57,7 +57,7 @@ def pool() -> address:
 
 
 @external
-@pure
+@view
 def asset() -> address:
     """
     @notice Returns the token being priced.
@@ -66,7 +66,7 @@ def asset() -> address:
 
 
 @external
-@pure
+@view
 def reference_asset() -> address:
     """
     @notice Returns the token used as the price reference.
@@ -75,7 +75,7 @@ def reference_asset() -> address:
 
 
 @external
-@pure
+@view
 def inverted() -> bool:
     """
     @notice Returns whether the pool price must be reversed.
@@ -89,8 +89,8 @@ def price() -> uint256:
     """
     @notice Returns the latest smoothed pool price in a standard 18-decimal format.
     """
-    oracle_price: uint256 = POOL.price_oracle(0)
+    oracle_price: uint256 = staticcall POOL.price_oracle(0)
     assert oracle_price > 0
     if INVERTED:
-        return PRECISION * PRECISION / oracle_price
+        return PRECISION * PRECISION // oracle_price
     return oracle_price

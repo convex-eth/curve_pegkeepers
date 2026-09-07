@@ -1,4 +1,4 @@
-# @version 0.3.10
+# @version 0.4.3
 """
 @title Peg Keeper V2
 @license MIT
@@ -92,7 +92,7 @@ receiver: public(address)
 FACTORY: immutable(address)
 
 
-@external
+@deploy
 def __init__(
     _pool: CurvePool, _caller_share: uint256,
     _factory: address, _regulator: Regulator, _admin: address,
@@ -106,47 +106,47 @@ def __init__(
     @param _admin Admin account
     """
     POOL = _pool
-    pegged: ERC20 = ERC20(_regulator.stablecoin())
+    pegged: ERC20 = ERC20(staticcall _regulator.stablecoin())
     PEGGED = pegged
-    pegged.approve(_pool.address, max_value(uint256))
-    pegged.approve(_factory, max_value(uint256))
+    extcall pegged.approve(_pool.address, max_value(uint256))
+    extcall pegged.approve(_factory, max_value(uint256))
 
-    coins: ERC20[2] = [ERC20(_pool.coins(0)), ERC20(_pool.coins(1))]
-    for i in range(2):
+    coins: ERC20[2] = [ERC20(staticcall _pool.coins(0)), ERC20(staticcall _pool.coins(1))]
+    for i: uint256 in range(2):
         if coins[i] == pegged:
             I = i
             IS_INVERSE = (i == 0)
         else:
-            PEG_MUL = 10 ** (18 - coins[i].decimals())
+            PEG_MUL = 10 ** (18 - staticcall coins[i].decimals())
 
     IS_NG = raw_call(
-        _pool.address, _abi_encode(convert(0, uint256), method_id=method_id("price_oracle(uint256)")),
+        _pool.address, abi_encode(convert(0, uint256), method_id=method_id("price_oracle(uint256)")),
         revert_on_failure=False
     )
 
     self.admin = _admin
-    log ApplyNewAdmin(msg.sender)
+    log ApplyNewAdmin(admin=msg.sender)
 
     self.regulator = _regulator
-    log SetNewRegulator(_regulator.address)
+    log SetNewRegulator(regulator=_regulator.address)
 
     assert _caller_share <= SHARE_PRECISION  # dev: bad part value
     self.caller_share = _caller_share
-    log SetNewCallerShare(_caller_share)
+    log SetNewCallerShare(caller_share=_caller_share)
 
     self.action_delay = 12  # 1 block
-    log SetNewActionDelay(12)
+    log SetNewActionDelay(action_delay=12)
 
     FACTORY = _factory
 
 
-@pure
+@view
 @external
 def factory() -> address:
     return FACTORY
 
 
-@pure
+@view
 @external
 def pegged() -> address:
     """
@@ -155,7 +155,7 @@ def pegged() -> address:
     return PEGGED.address
 
 
-@pure
+@view
 @external
 def pool() -> CurvePool:
     """
@@ -173,20 +173,20 @@ def _provide(_amount: uint256):
     if _amount == 0:
         return
 
-    amount: uint256 = min(_amount, PEGGED.balanceOf(self))
+    amount: uint256 = min(_amount, staticcall PEGGED.balanceOf(self))
 
     if IS_NG:
         amounts: DynArray[uint256, 2] = [0, 0]
         amounts[I] = amount
-        CurvePoolNG(POOL.address).add_liquidity(amounts, 0)
+        extcall CurvePoolNG(POOL.address).add_liquidity(amounts, 0)
     else:
         amounts: uint256[2] = empty(uint256[2])
         amounts[I] = amount
-        CurvePoolOld(POOL.address).add_liquidity(amounts, 0)
+        extcall CurvePoolOld(POOL.address).add_liquidity(amounts, 0)
 
     self.last_change = block.timestamp
     self.debt += amount
-    log Provide(amount)
+    log Provide(amount=amount)
 
 
 @internal
@@ -203,16 +203,16 @@ def _withdraw(_amount: uint256):
     if IS_NG:
         amounts: DynArray[uint256, 2] = [0, 0]
         amounts[I] = amount
-        CurvePoolNG(POOL.address).remove_liquidity_imbalance(amounts, max_value(uint256))
+        extcall CurvePoolNG(POOL.address).remove_liquidity_imbalance(amounts, max_value(uint256))
     else:
         amounts: uint256[2] = empty(uint256[2])
         amounts[I] = amount
-        CurvePoolOld(POOL.address).remove_liquidity_imbalance(amounts, max_value(uint256))
+        extcall CurvePoolOld(POOL.address).remove_liquidity_imbalance(amounts, max_value(uint256))
 
     self.last_change = block.timestamp
     self.debt = debt - amount
 
-    log Withdraw(amount)
+    log Withdraw(amount=amount)
 
 
 @internal
@@ -221,7 +221,7 @@ def _calc_profit_from(lp_balance: uint256, virtual_price: uint256, debt: uint256
     """
     @notice PegKeeper's profit calculation formula
     """
-    lp_debt: uint256 = debt * PRECISION / virtual_price
+    lp_debt: uint256 = debt * PRECISION // virtual_price
 
     if lp_balance <= lp_debt:
         return 0
@@ -235,7 +235,7 @@ def _calc_profit() -> uint256:
     """
     @notice Calculate PegKeeper's profit using current values
     """
-    return self._calc_profit_from(POOL.balanceOf(self), POOL.get_virtual_price(), self.debt)
+    return self._calc_profit_from(staticcall POOL.balanceOf(self), staticcall POOL.get_virtual_price(), self.debt)
 
 
 @internal
@@ -244,14 +244,14 @@ def _calc_call_profit(_amount: uint256, _is_deposit: bool) -> uint256:
     """
     @notice Calculate overall profit from calling update()
     """
-    lp_balance: uint256 = POOL.balanceOf(self)
-    virtual_price: uint256 = POOL.get_virtual_price()
+    lp_balance: uint256 = staticcall POOL.balanceOf(self)
+    virtual_price: uint256 = staticcall POOL.get_virtual_price()
     debt: uint256 = self.debt
     initial_profit: uint256 = self._calc_profit_from(lp_balance, virtual_price, debt)
 
     amount: uint256 = _amount
     if _is_deposit:
-        amount = min(_amount, PEGGED.balanceOf(self))
+        amount = min(_amount, staticcall PEGGED.balanceOf(self))
     else:
         amount = min(_amount, debt)
 
@@ -259,11 +259,11 @@ def _calc_call_profit(_amount: uint256, _is_deposit: bool) -> uint256:
     if IS_NG:
         amounts: DynArray[uint256, 2] = [0, 0]
         amounts[I] = amount
-        lp_balance_diff = CurvePoolNG(POOL.address).calc_token_amount(amounts, _is_deposit)
+        lp_balance_diff = staticcall CurvePoolNG(POOL.address).calc_token_amount(amounts, _is_deposit)
     else:
         amounts: uint256[2] = empty(uint256[2])
         amounts[I] = amount
-        lp_balance_diff = CurvePoolOld(POOL.address).calc_token_amount(amounts, _is_deposit)
+        lp_balance_diff = staticcall CurvePoolOld(POOL.address).calc_token_amount(amounts, _is_deposit)
 
     if _is_deposit:
         lp_balance += lp_balance_diff
@@ -299,19 +299,19 @@ def estimate_caller_profit() -> uint256:
     if self.last_change + self.action_delay > block.timestamp:
         return 0
 
-    balance_pegged: uint256 = POOL.balances(I)
-    balance_peg: uint256 = POOL.balances(1 - I) * PEG_MUL
+    balance_pegged: uint256 = staticcall POOL.balances(I)
+    balance_peg: uint256 = staticcall POOL.balances(1 - I) * PEG_MUL
 
     call_profit: uint256 = 0
     if balance_peg > balance_pegged:
-        allowed: uint256 = self.regulator.provide_allowed()
-        call_profit = self._calc_call_profit(min((balance_peg - balance_pegged) / 5, allowed), True)  # this dumps stablecoin
+        allowed: uint256 = staticcall self.regulator.provide_allowed()
+        call_profit = self._calc_call_profit(min((balance_peg - balance_pegged) // 5, allowed), True)  # this dumps stablecoin
 
     else:
-        allowed: uint256 = self.regulator.withdraw_allowed()
-        call_profit = self._calc_call_profit(min((balance_pegged - balance_peg) / 5, allowed), False)  # this pumps stablecoin
+        allowed: uint256 = staticcall self.regulator.withdraw_allowed()
+        call_profit = self._calc_call_profit(min((balance_pegged - balance_peg) // 5, allowed), False)  # this pumps stablecoin
 
-    return call_profit * self.caller_share / SHARE_PRECISION
+    return call_profit * self.caller_share // SHARE_PRECISION
 
 
 @external
@@ -325,28 +325,28 @@ def update(_beneficiary: address = msg.sender) -> uint256:
     if self.last_change + self.action_delay > block.timestamp:
         return 0
 
-    balance_pegged: uint256 = POOL.balances(I)
-    balance_peg: uint256 = POOL.balances(1 - I) * PEG_MUL
+    balance_pegged: uint256 = staticcall POOL.balances(I)
+    balance_peg: uint256 = staticcall POOL.balances(1 - I) * PEG_MUL
 
     initial_profit: uint256 = self._calc_profit()
 
     if balance_peg > balance_pegged:
-        allowed: uint256 = self.regulator.provide_allowed()
+        allowed: uint256 = staticcall self.regulator.provide_allowed()
         assert allowed > 0, "Regulator ban"
-        self._provide(min(unsafe_sub(balance_peg, balance_pegged) / 5, allowed))  # this dumps stablecoin
+        self._provide(min(unsafe_sub(balance_peg, balance_pegged) // 5, allowed))  # this dumps stablecoin
 
     else:
-        allowed: uint256 = self.regulator.withdraw_allowed()
+        allowed: uint256 = staticcall self.regulator.withdraw_allowed()
         assert allowed > 0, "Regulator ban"
-        self._withdraw(min(unsafe_sub(balance_pegged, balance_peg) / 5, allowed))  # this pumps stablecoin
+        self._withdraw(min(unsafe_sub(balance_pegged, balance_peg) // 5, allowed))  # this pumps stablecoin
 
     # Send generated profit
     new_profit: uint256 = self._calc_profit()
     assert new_profit > initial_profit, "peg unprofitable"
     lp_amount: uint256 = new_profit - initial_profit
-    caller_profit: uint256 = lp_amount * self.caller_share / SHARE_PRECISION
+    caller_profit: uint256 = lp_amount * self.caller_share // SHARE_PRECISION
     if caller_profit > 0:
-        POOL.transfer(_beneficiary, caller_profit)
+        extcall POOL.transfer(_beneficiary, caller_profit)
 
     return caller_profit
 
@@ -359,9 +359,9 @@ def withdraw_profit() -> uint256:
     @return Amount of LP Token received
     """
     lp_amount: uint256 = self._calc_profit()
-    POOL.transfer(self.regulator.fee_receiver(), lp_amount)
+    extcall POOL.transfer(staticcall self.regulator.fee_receiver(), lp_amount)
 
-    log Profit(lp_amount)
+    log Profit(lp_amount=lp_amount)
 
     return lp_amount
 
@@ -380,7 +380,7 @@ def set_new_action_delay(_new_action_delay: uint256):
 
     self.action_delay = _new_action_delay
 
-    log SetNewActionDelay(_new_action_delay)
+    log SetNewActionDelay(action_delay=_new_action_delay)
 
 
 @external
@@ -395,7 +395,7 @@ def set_new_caller_share(_new_caller_share: uint256):
 
     self.caller_share = _new_caller_share
 
-    log SetNewCallerShare(_new_caller_share)
+    log SetNewCallerShare(caller_share=_new_caller_share)
 
 
 @external
@@ -408,7 +408,7 @@ def set_new_regulator(_new_regulator: Regulator):
     assert _new_regulator.address != empty(address)  # dev: bad regulator
 
     self.regulator = _new_regulator
-    log SetNewRegulator(_new_regulator.address)
+    log SetNewRegulator(regulator=_new_regulator.address)
 
 
 @external
@@ -425,7 +425,7 @@ def commit_new_admin(_new_admin: address):
     self.new_admin_deadline = block.timestamp + ADMIN_ACTIONS_DELAY
     self.future_admin = _new_admin
 
-    log CommitNewAdmin(_new_admin)
+    log CommitNewAdmin(admin=_new_admin)
 
 
 @external
@@ -444,4 +444,4 @@ def apply_new_admin():
     self.admin = new_admin
     self.new_admin_deadline = 0
 
-    log ApplyNewAdmin(new_admin)
+    log ApplyNewAdmin(admin=new_admin)

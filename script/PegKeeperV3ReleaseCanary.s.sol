@@ -6,16 +6,13 @@ import {StdCheats} from "forge-std/StdCheats.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
+import {ICurveEDAOAdminProxy} from "../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {DeployPegKeeperV3} from "./DeployPegKeeperV3.s.sol";
-
-interface IERC20Allowance {
-    function allowance(address owner, address spender) external view returns (uint256);
-}
 
 contract CanaryAggregateCrvUsdOracle {
     uint256 public price;
@@ -33,7 +30,8 @@ contract CanaryAggregateCrvUsdOracle {
 contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     uint256 internal constant PINNED_MAINNET_BLOCK = 25_868_730;
     address internal constant FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
-    address internal constant FACTORY_ADMIN = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
+    address internal constant OWNERSHIP_AGENT = 0x40907540d8a6C65c637785e8f8B742ae6b0b9968;
+    address internal constant EDAO_PROXY = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     address internal constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
     address internal constant FRXUSD_CRVUSD_POOL = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1;
@@ -59,16 +57,21 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         CanaryAggregateCrvUsdOracle aggregateOracle = new CanaryAggregateCrvUsdOracle(1.001e18);
         IPegKeeperV3 pegKeeper = _deployCanary(address(aggregateOracle));
 
-        vm.prank(FACTORY_ADMIN);
-        IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
+        _setDebtCeiling(pegKeeper, ALLOCATION);
         require(!pegKeeper.expansion_paused(), "expansion unexpectedly paused");
         require(!pegKeeper.contraction_paused(), "contraction unexpectedly paused");
         require(!pegKeeper.all_execution_paused(), "execution unexpectedly paused");
+        require(
+            IERC20(CRVUSD).allowance(address(pegKeeper), FACTORY) == type(uint256).max,
+            "ControllerFactory crvUSD allowance"
+        );
 
         // Make the paired token abundant in the direct AMM.
         deal(FRXUSD, CANARY_TRADER, EXPANSION_MARKET_TRADE);
         vm.startPrank(CANARY_TRADER);
-        IERC20(FRXUSD).approve(FRXUSD_CRVUSD_POOL, EXPANSION_MARKET_TRADE);
+        require(
+            IERC20(FRXUSD).approve(FRXUSD_CRVUSD_POOL, EXPANSION_MARKET_TRADE), "frxUSD approval"
+        );
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(0, 1, EXPANSION_MARKET_TRADE, 0);
         vm.stopPrank();
 
@@ -88,11 +91,11 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             pegKeeper.trusted_backing_value() >= pegKeeper.deployed_crvusd(), "principal invariant"
         );
         require(
-            IERC20Allowance(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
+            IERC20(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
             "AMM crvUSD allowance"
         );
         require(
-            IERC20Allowance(FRXUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
+            IERC20(FRXUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
             "AMM frxUSD allowance"
         );
 
@@ -100,9 +103,17 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
         aggregateOracle.setPrice(0.999e18);
         _claimDonationAsKeeper(pegKeeper);
+        _setDebtCeiling(pegKeeper, 0);
+        require(
+            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+                == pegKeeper.deployed_crvusd(),
+            "idle allocation burn"
+        );
         deal(CRVUSD, CANARY_TRADER, CONTRACTION_MARKET_TRADE);
         vm.startPrank(CANARY_TRADER);
-        IERC20(CRVUSD).approve(FRXUSD_CRVUSD_POOL, CONTRACTION_MARKET_TRADE);
+        require(
+            IERC20(CRVUSD).approve(FRXUSD_CRVUSD_POOL, CONTRACTION_MARKET_TRADE), "crvUSD approval"
+        );
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(1, 0, CONTRACTION_MARKET_TRADE, 0);
         vm.stopPrank();
         vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
@@ -120,7 +131,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             uint256 expectedReward
         ) = _findExecutableContraction(pegKeeper);
         require(expectedCrvUsd > 0, "one-coin quote returned zero crvUSD");
-        uint256 crvUsdReceived = _contractAsKeeper(pegKeeper, contractionLp);
+        (uint256 crvUsdReceived, uint256 burnableCrvUsd) =
+            _contractAndRugReturnedCrvUsd(pegKeeper, contractionLp);
 
         console2.log("mainnet block", block.number);
         console2.log("simulated PegKeeperV3", address(pegKeeper));
@@ -132,6 +144,16 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         console2.log("contraction gross", expectedGross);
         console2.log("contraction reward", expectedReward);
         console2.log("contraction received crvUSD", crvUsdReceived);
+        console2.log("rugged crvUSD", burnableCrvUsd);
+    }
+
+    function _setDebtCeiling(IPegKeeperV3 pegKeeper, uint256 ceiling) internal {
+        vm.prank(OWNERSHIP_AGENT);
+        ICurveEDAOAdminProxy(EDAO_PROXY)
+            .execute(
+                FACTORY,
+                abi.encodeCall(IControllerFactory.set_debt_ceiling, (address(pegKeeper), ceiling))
+            );
     }
 
     function _deployCanary(address aggregateOracle) internal returns (IPegKeeperV3 pegKeeper) {
@@ -176,7 +198,12 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     function _sweepDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 lpReceived) {
         uint256 debtBefore = pegKeeper.deployed_crvusd();
-        deal(FRXUSD, address(pegKeeper), DONATION_SWEEP_AMOUNT);
+        deal(FRXUSD, CANARY_TRADER, DONATION_SWEEP_AMOUNT);
+        vm.prank(CANARY_TRADER);
+        require(
+            IERC20(FRXUSD).transfer(address(pegKeeper), DONATION_SWEEP_AMOUNT),
+            "frxUSD donation transfer"
+        );
         vm.prank(CANARY_KEEPER);
         (uint256 swept, uint256 matched, uint256 sweepLp,) =
             pegKeeper.sweep_donated_paired_token(DONATION_SWEEP_AMOUNT);
@@ -190,7 +217,12 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     function _claimDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 claimed) {
         uint256 receiverBalanceBefore = IERC20(CRVUSD).balanceOf(FEE_SPLITTER);
-        deal(FRXUSD, address(pegKeeper), DONATION_SWEEP_AMOUNT);
+        deal(FRXUSD, CANARY_TRADER, DONATION_SWEEP_AMOUNT);
+        vm.prank(CANARY_TRADER);
+        require(
+            IERC20(FRXUSD).transfer(address(pegKeeper), DONATION_SWEEP_AMOUNT),
+            "frxUSD claim donation transfer"
+        );
         vm.prank(CANARY_KEEPER);
         claimed = pegKeeper.withdraw_profit(DONATION_SWEEP_AMOUNT);
         require(claimed > 0, "contraction-regime claim");
@@ -212,6 +244,43 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(received > 0, "one-coin withdrawal returned no crvUSD");
         require(keeperReward > 0, "contraction keeper reward missing");
         return received;
+    }
+
+    function _contractAndRugReturnedCrvUsd(IPegKeeperV3 pegKeeper, uint256 lpAmount)
+        internal
+        returns (uint256 crvUsdReceived, uint256 burnedCrvUsd)
+    {
+        uint256 debtBefore = pegKeeper.deployed_crvusd();
+        uint256 residualBefore =
+            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper));
+        require(residualBefore == debtBefore, "pre-contraction residual");
+
+        crvUsdReceived = _contractAsKeeper(pegKeeper, lpAmount);
+        burnedCrvUsd = IERC20(CRVUSD).balanceOf(address(pegKeeper));
+        require(burnedCrvUsd > 0, "no returned crvUSD to burn");
+        require(
+            pegKeeper.deployed_crvusd() == debtBefore - burnedCrvUsd, "contraction debt reduction"
+        );
+
+        uint256 supplyBefore = IERC20(CRVUSD).totalSupply();
+        vm.prank(CANARY_KEEPER);
+        IControllerFactory(FACTORY).rug_debt_ceiling(address(pegKeeper));
+        require(IERC20(CRVUSD).balanceOf(address(pegKeeper)) == 0, "rugged keeper balance");
+        require(IERC20(CRVUSD).totalSupply() == supplyBefore - burnedCrvUsd, "rugged crvUSD supply");
+        require(
+            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+                == residualBefore - burnedCrvUsd,
+            "rugged residual"
+        );
+        require(
+            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+                == pegKeeper.deployed_crvusd(),
+            "residual debt reconciliation"
+        );
+        require(
+            IERC20(CRVUSD).allowance(address(pegKeeper), FACTORY) == type(uint256).max,
+            "rugged ControllerFactory allowance"
+        );
     }
 
     function _findExecutableContraction(IPegKeeperV3 pegKeeper)

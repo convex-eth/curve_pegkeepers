@@ -70,6 +70,9 @@ The candidate threshold is `8_000 bps` (`80%`).
 2. **Secondary — sUSDe:** may expand when locally viable and the primary is either unavailable or at least 80% utilized.
 3. **Tertiary — USDC and USDT:** may expand only when locally viable, the primary is unavailable, and every active secondary is unavailable.
 
+An unset primary is unavailable rather than a global stop: secondaries may expand, while
+tertiaries must still defer to any active, locally expandable secondary.
+
 Primary utilization is:
 
 ```text
@@ -143,7 +146,7 @@ deployPegKeeper(
 )
 ```
 
-Every deployed keeper is added to the active list and starts unpaused. Before governance assigns a ControllerFactory debt ceiling, its zero allocation prevents expansion and its zero LP/debt position leaves nothing to contract.
+Every deployed keeper is added to the active list and starts unpaused. Initialization grants the ControllerFactory unlimited crvUSD allowance so ceiling reductions and permissionless residual rugging can burn returned allocation through `crvUSD.burnFrom`. Before governance assigns a ControllerFactory debt ceiling, its zero allocation prevents expansion and its zero LP/debt position leaves nothing to contract.
 
 The environment-free dependency deployer performs seven monotonic CREATEs:
 
@@ -172,24 +175,24 @@ The proposal contains 13 actions: two ownership acceptances, eight registrations
 
 ## Runtime identity
 
-Pinned Vyper `0.3.10`, `--optimize codesize`, Shanghai:
+Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 17,844 bytes
-implementation runtime:  17,761 bytes
-EIP-170 headroom:          6,815 bytes
+implementation initcode: 18,114 bytes
+implementation runtime:  17,997 bytes
+EIP-170 headroom:          6,579 bytes
 implementation hash:
-0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589
+0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf
 
-PegKeeperPolicy runtime:   4,609 bytes
+PegKeeperPolicy runtime:   4,688 bytes
 policy hash:
-0x6376ddbee90ea97a1d013d23817710553fd8b4247941b7a778102fc5c41ad9e9
+0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a
 
-Factory semantic runtime:  4,085 bytes
-Factory deployed runtime:  4,149 bytes
+Factory semantic runtime:  3,963 bytes
+Factory deployed runtime:  4,027 bytes
 Factory semantic hash:
-0x064f8195a49c3a02fda40e84785ac1a3abc380ffa596a4f9976a1b2f2c0f16df
+0xcfc318147ad88458f19543d0a8001ed9b046e72c713501b96839d847b8f6799e
 ```
 
 The detached preview module has been removed; preview logic is back in the core.
@@ -202,9 +205,9 @@ make setup
 ETH_RPC_URL=https://an-archive-rpc.example make check
 ```
 
-Coverage includes both fixed- and dynamic-array liquidity dispatch, direct expansion, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, contraction, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, a live sUSDe dynamic-array expansion, and real fixed-array deposits through the proposed USDC/USDT pools under explicit fork-only eligibility and valuation fixtures.
+Coverage includes fixed- and dynamic-array liquidity dispatch, direct expansion, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, contraction, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. Fixed-array USDC/USDT dispatch is covered against selector-counting pool fixtures; no mocked-pool test is presented as live-fork execution.
 
-The pinned frxUSD structural canary uses the frxUSD production `500 ppm` exit policy for all earlier checks, then sets the normal-exit floor to zero on the fork only because that historical pool state offers no executable `5 bp` exit. It still exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency. Unit tests separately pin the exact production exit-profit boundary.
+The pinned frxUSD structural canary uses the frxUSD production `500 ppm` exit policy for all earlier checks, then sets the normal-exit floor to zero on the fork only because that historical pool state offers no executable `5 bp` exit. It still exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency. It also funds through the real ownership-agent/eDAO-proxy/ControllerFactory path, zeros idle allocation, contracts deployed debt, permissionlessly rugs the returned crvUSD, and checks equal total-supply and residual-allocation reductions while the keeper's unlimited ControllerFactory allowance remains intact. Unit tests separately pin the exact production exit-profit boundary.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` predate the current `3.0.0` source candidate. They remain untouched in the source batch and must be regenerated from the final committed source snapshot before release.
 

@@ -62,6 +62,12 @@ contract PegKeeperV3LpFactoryTest is Test {
         assertFalse(keeper.all_execution_paused());
     }
 
+    function test_deployApprovesControllerFactoryToBurnCrvUsd() public {
+        address deployed = _deployKeeper();
+
+        assertEq(crvUsd.allowance(deployed, address(controllerFactory)), type(uint256).max);
+    }
+
     function test_deployPinsSelectedPoolLiquidityMode() public {
         vm.prank(owner);
         address deployed =

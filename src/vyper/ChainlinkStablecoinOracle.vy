@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title Chainlink Stablecoin Oracle Adapter
 @license MIT
@@ -18,7 +18,7 @@ FEED_DECIMALS: immutable(uint256)
 MAX_DELAY: immutable(uint256)
 
 
-@external
+@deploy
 def __init__(
     _feed: ChainlinkFeed,
     _max_delay: uint256,
@@ -30,7 +30,7 @@ def __init__(
     assert _feed.address.codesize > 0
     assert _max_delay > 0
 
-    decimals: uint256 = convert(_feed.decimals(), uint256)
+    decimals: uint256 = convert(staticcall _feed.decimals(), uint256)
     assert decimals <= PRECISION_DECIMALS
 
     FEED = _feed
@@ -39,7 +39,7 @@ def __init__(
 
 
 @external
-@pure
+@view
 def feed() -> address:
     """
     @notice Returns the Chainlink price source.
@@ -48,7 +48,7 @@ def feed() -> address:
 
 
 @external
-@pure
+@view
 def feed_decimals() -> uint256:
     """
     @notice Returns the number of decimal places used by the price source.
@@ -57,7 +57,7 @@ def feed_decimals() -> uint256:
 
 
 @external
-@pure
+@view
 def max_delay() -> uint256:
     """
     @notice Returns the maximum accepted age of a price update.
@@ -76,7 +76,7 @@ def price() -> uint256:
     started_at: uint256 = 0
     updated_at: uint256 = 0
     answered_in_round: uint80 = 0
-    round_id, answer, started_at, updated_at, answered_in_round = FEED.latestRoundData()
+    round_id, answer, started_at, updated_at, answered_in_round = staticcall FEED.latestRoundData()
 
     assert round_id > 0
     assert answer > 0

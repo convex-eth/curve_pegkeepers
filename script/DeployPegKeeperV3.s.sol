@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
+import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
@@ -483,6 +484,11 @@ contract DeployPegKeeperV3 is Script {
         require(!keeper.contraction_paused(), "contraction paused");
         require(!keeper.all_execution_paused(), "execution paused");
         require(keeper.debt() == 0, "keeper debt");
+        address crvUsd = IControllerFactory(config.controllerFactory).stablecoin();
+        require(
+            IERC20(crvUsd).allowance(keeperAddress, config.controllerFactory) == type(uint256).max,
+            "controller factory allowance"
+        );
         require(
             IControllerFactory(config.controllerFactory).debt_ceiling(keeperAddress) == 0,
             "keeper prefunded"

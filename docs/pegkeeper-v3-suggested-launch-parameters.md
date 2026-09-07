@@ -132,7 +132,7 @@ Deployment sender sequence:
 2. deploy policy and Factory with the deployment sender as initial owner and keeper admin;
 3. deploy the frxUSD/USD, USDe/USD, USDC/USD, and USDT/USD adapters;
 4. bind policy to Factory;
-5. deploy and configure all four unpaused keepers with zero ControllerFactory allocation;
+5. deploy and configure all four unpaused keepers with zero ControllerFactory allocation and verify each keeper's unlimited crvUSD allowance to the ControllerFactory;
 6. assign the primary, secondary, and tertiary tiers;
 7. change the Factory's dynamic keeper admin to the Curve Ownership Agent; and
 8. set the Curve Ownership Agent as pending owner of both Factory and policy, freezing old-owner configuration and recording the acceptance nonces. A corrected recipient increments its nonce and invalidates any already-built acceptance proposal.
@@ -176,7 +176,7 @@ Before authorization:
 4. Confirm the deployment sender still owns Factory and policy, Curve is pending owner of both, Curve is already the dynamic keeper admin, all four keepers are unpaused and debt-free, and every ControllerFactory ceiling is zero.
 5. Keep sUSDe at zero until governance deliberately funds it.
 6. Simulate the exact 13-action vote and verify that frxUSD, USDC, and USDT receive their ceilings only after ownership acceptance and dual-policy registration.
-7. Immediately after execution, run bounded expansion and contraction canaries and verify every balance/debt delta.
+7. Immediately after execution, run bounded expansion and contraction canaries and verify every balance/debt delta, including returned-crvUSD burning through permissionless `rug_debt_ceiling` and the keeper's ControllerFactory allowance.
 8. Retire V2 globally with `Killed.Provide`, zero ceilings, and periodic `rug_debt_ceiling` calls when separately authorized. If any overlap between V2 and V3 expansion is unacceptable, include those V2 shutdown actions in the same atomic vote before the V3 ceiling assignments.
 
 A current-block canary is mandatory before any production action. Pinned-fork success is evidence of code behavior, not authorization or current market safety.

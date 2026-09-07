@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title PegKeeper V3
 @license MIT
@@ -180,7 +180,7 @@ contraction_paused: public(bool)
 all_execution_paused: public(bool)
 
 
-@external
+@deploy
 def __init__():
     """
     @notice Prevents the base contract from being set up as a keeper.
@@ -226,25 +226,25 @@ def initialize(
     assert _backing_oracle.address != empty(address)
     assert _backing_oracle.address.codesize > 0
 
-    controller_factory: address = PegKeeperFactory(msg.sender).controllerFactory()
+    controller_factory: address = staticcall PegKeeperFactory(msg.sender).controllerFactory()
     assert controller_factory != empty(address)
-    crv_usd: address = ControllerFactory(controller_factory).stablecoin()
+    crv_usd: address = staticcall ControllerFactory(controller_factory).stablecoin()
     assert crv_usd != empty(address)
     assert crv_usd != _paired_token.address
     is_erc4626: bool = _paired_token.address != _backing_asset.address
     if is_erc4626:
-        assert _paired_token.asset() == _backing_asset.address
-        assert _paired_token.convertToAssets(0) == 0
-        assert _paired_token.convertToShares(0) == 0
+        assert staticcall _paired_token.asset() == _backing_asset.address
+        assert staticcall _paired_token.convertToAssets(0) == 0
+        assert staticcall _paired_token.convertToShares(0) == 0
 
-    crv_decimals: uint256 = ERC20(crv_usd).decimals()
-    backing_decimals: uint256 = _backing_asset.decimals()
+    crv_decimals: uint256 = staticcall ERC20(crv_usd).decimals()
+    backing_decimals: uint256 = staticcall _backing_asset.decimals()
     assert crv_decimals == 18
     assert backing_decimals <= 18
-    assert ERC20(_pool.address).decimals() == 18
+    assert staticcall ERC20(_pool.address).decimals() == 18
 
-    coin_0: address = _pool.coins(0)
-    coin_1: address = _pool.coins(1)
+    coin_0: address = staticcall _pool.coins(0)
+    coin_1: address = staticcall _pool.coins(1)
     if coin_0 == crv_usd and coin_1 == _paired_token.address:
         self.pool_crvusd_index = 0
         self.pool_paired_token_index = 1
@@ -253,11 +253,12 @@ def initialize(
         self.pool_paired_token_index = 0
     else:
         raise
-    assert _pool.get_virtual_price() > 0
+    assert staticcall _pool.get_virtual_price() > 0
 
     self._factory = PegKeeperFactory(msg.sender)
     self._controller_factory = ControllerFactory(controller_factory)
     self._crv_usd = ERC20(crv_usd)
+    extcall ERC20(crv_usd).approve(controller_factory, max_value(uint256))
     self._backing_asset = _backing_asset
     self._paired_token = _paired_token
     self.pool = _pool
@@ -307,7 +308,7 @@ def admin() -> address:
     """
     @notice Returns the account allowed to change keeper settings.
     """
-    return self._factory.admin()
+    return staticcall self._factory.admin()
 
 
 @external
@@ -316,7 +317,7 @@ def emergency_admin() -> address:
     """
     @notice Returns the account allowed to pause keeper actions.
     """
-    return self._factory.emergency_admin()
+    return staticcall self._factory.emergency_admin()
 
 
 @external
@@ -325,19 +326,19 @@ def fee_receiver() -> address:
     """
     @notice Returns the account that receives withdrawn protocol profit.
     """
-    return self._factory.fee_receiver()
+    return staticcall self._factory.fee_receiver()
 
 
 @internal
 @view
 def _is_admin(_account: address) -> bool:
-    return _account == self._factory.admin()
+    return _account == staticcall self._factory.admin()
 
 
 @internal
 @view
 def _is_admin_or_factory(_account: address) -> bool:
-    return _account == self._factory.admin() or _account == self._factory.address
+    return _account == staticcall self._factory.admin() or _account == self._factory.address
 
 
 @external
@@ -372,7 +373,7 @@ def paired_token() -> address:
 @view
 def _paired_token_assets(_units: uint256) -> uint256:
     if self.paired_token_is_erc4626:
-        return self._paired_token.convertToAssets(_units)
+        return staticcall self._paired_token.convertToAssets(_units)
     return _units
 
 
@@ -380,7 +381,7 @@ def _paired_token_assets(_units: uint256) -> uint256:
 @view
 def _paired_token_units(_assets: uint256) -> uint256:
     if self.paired_token_is_erc4626:
-        return self._paired_token.convertToShares(_assets)
+        return staticcall self._paired_token.convertToShares(_assets)
     return _assets
 
 
@@ -405,22 +406,22 @@ def paired_token_units(_assets: uint256) -> uint256:
 @internal
 @view
 def _paired_token_inventory() -> uint256:
-    return self._paired_token.balanceOf(self)
+    return staticcall self._paired_token.balanceOf(self)
 
 
 @internal
 @view
 def _lp_inventory() -> uint256:
-    return self.pool.balanceOf(self)
+    return staticcall self.pool.balanceOf(self)
 
 
 @internal
 @view
 def _lp_value(_lp_tokens: uint256) -> uint256:
-    virtual_price: uint256 = self.pool.get_virtual_price()
+    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     return (
-        _lp_tokens / PRECISION * virtual_price
-        + _lp_tokens % PRECISION * virtual_price / PRECISION
+        _lp_tokens // PRECISION * virtual_price
+        + _lp_tokens % PRECISION * virtual_price // PRECISION
     )
 
 
@@ -449,7 +450,7 @@ def coins(_index: uint256) -> address:
 @pure
 def _oracle_value(_value: uint256, _price: uint256) -> uint256:
     price: uint256 = min(_price, PRECISION)
-    return _value / PRECISION * price + _value % PRECISION * price / PRECISION
+    return _value // PRECISION * price + _value % PRECISION * price // PRECISION
 
 
 @internal
@@ -474,7 +475,7 @@ def _backing_price() -> uint256:
 @internal
 @view
 def _policy_address() -> address:
-    policy: address = self._factory.policy()
+    policy: address = staticcall self._factory.policy()
     assert policy != empty(address) and policy.codesize > 0
     return policy
 
@@ -482,19 +483,19 @@ def _policy_address() -> address:
 @internal
 @view
 def _require_expansion_policy():
-    assert PegKeeperPolicy(self._policy_address()).can_expand(self)
+    assert staticcall PegKeeperPolicy(self._policy_address()).can_expand(self)
 
 
 @internal
 @view
 def _require_contraction_policy():
-    assert PegKeeperPolicy(self._policy_address()).can_contract(self)
+    assert staticcall PegKeeperPolicy(self._policy_address()).can_contract(self)
 
 
 @internal
 @view
 def _allocation_allowed() -> bool:
-    policy: address = self._factory.policy()
+    policy: address = staticcall self._factory.policy()
     if policy == empty(address) or policy.codesize == 0:
         return False
 
@@ -502,7 +503,7 @@ def _allocation_allowed() -> bool:
     response: Bytes[64] = empty(Bytes[64])
     ok, response = raw_call(
         policy,
-        _abi_encode(self, method_id=method_id("can_allocate(address)")),
+        abi_encode(self, method_id=method_id("can_allocate(address)")),
         max_outsize=64,
         is_static_call=True,
         revert_on_failure=False,
@@ -516,7 +517,7 @@ def _allocation_allowed() -> bool:
 @view
 def _max_burst() -> uint256:
     cap: uint256 = self.max_deployed_crvusd
-    return cap / BPS * max_expansion_burst_bps + cap % BPS * max_expansion_burst_bps / BPS
+    return cap // BPS * max_expansion_burst_bps + cap % BPS * max_expansion_burst_bps // BPS
 
 
 @internal
@@ -529,7 +530,7 @@ def _current_pressure() -> uint256:
     if elapsed >= expansion_refill_period:
         return 0
     burst: uint256 = self._max_burst()
-    refill: uint256 = burst / expansion_refill_period * elapsed + burst % expansion_refill_period * elapsed / expansion_refill_period
+    refill: uint256 = burst // expansion_refill_period * elapsed + burst % expansion_refill_period * elapsed // expansion_refill_period
     if refill >= pressure:
         return 0
     return pressure - refill
@@ -575,7 +576,7 @@ def available_expansion_velocity() -> uint256:
 @internal
 @view
 def _meets_entry_floor(_retained_value: uint256, _principal: uint256) -> bool:
-    required_profit: uint256 = _principal * self.entry_min_profit_ppm / PPM
+    required_profit: uint256 = _principal * self.entry_min_profit_ppm // PPM
     return _retained_value >= _principal + required_profit
 
 
@@ -642,7 +643,7 @@ def _remaining_exposure_capacity() -> uint256:
         return 0
     local_capacity: uint256 = self.max_deployed_crvusd - deployed
 
-    factory_allocation: uint256 = self._controller_factory.debt_ceiling(self)
+    factory_allocation: uint256 = staticcall self._controller_factory.debt_ceiling(self)
     if factory_allocation <= deployed:
         return 0
     return min(local_capacity, factory_allocation - deployed)
@@ -651,25 +652,25 @@ def _remaining_exposure_capacity() -> uint256:
 @internal
 @view
 def _local_expansion_limit() -> uint256:
-    crv_usd_balance: uint256 = self.pool.balances(self.pool_crvusd_index)
+    crv_usd_balance: uint256 = staticcall self.pool.balances(self.pool_crvusd_index)
     paired_token_balance: uint256 = self._trusted_paired_token_value(
-        self.pool.balances(self.pool_paired_token_index)
+        staticcall self.pool.balances(self.pool_paired_token_index)
     )
     if paired_token_balance <= crv_usd_balance:
         return 0
-    return (paired_token_balance - crv_usd_balance) * self.max_intervention_share_bps / BPS
+    return (paired_token_balance - crv_usd_balance) * self.max_intervention_share_bps // BPS
 
 
 @internal
 @view
 def _local_contraction_limit() -> uint256:
-    crv_usd_balance: uint256 = self.pool.balances(self.pool_crvusd_index)
+    crv_usd_balance: uint256 = staticcall self.pool.balances(self.pool_crvusd_index)
     paired_token_balance: uint256 = self._trusted_paired_token_value(
-        self.pool.balances(self.pool_paired_token_index)
+        staticcall self.pool.balances(self.pool_paired_token_index)
     )
     if crv_usd_balance <= paired_token_balance:
         return 0
-    return (crv_usd_balance - paired_token_balance) * self.max_intervention_share_bps / BPS
+    return (crv_usd_balance - paired_token_balance) * self.max_intervention_share_bps // BPS
 
 
 @internal
@@ -693,7 +694,7 @@ def _available_expansion_without_policy() -> uint256:
     return min(
         self._local_expansion_limit(),
         min(
-            self._crv_usd.balanceOf(self),
+            staticcall self._crv_usd.balanceOf(self),
             min(self._available_velocity(), self._remaining_exposure_capacity()),
         ),
     )
@@ -732,7 +733,7 @@ def available_expansion() -> uint256:
     """
     @notice Returns the most crvUSD that can be used for a policy-approved expansion now.
     """
-    if not PegKeeperPolicy(self._policy_address()).can_expand(self):
+    if not staticcall PegKeeperPolicy(self._policy_address()).can_expand(self):
         return 0
     return self._available_expansion_without_policy()
 
@@ -758,9 +759,9 @@ def _realized_contraction_profit(
 @internal
 def _transfer_exact_to(_token: ERC20, _recipient: address, _amount: uint256):
     if _amount > 0:
-        recipient_balance_before: uint256 = _token.balanceOf(_recipient)
-        _token.transfer(_recipient, _amount)
-        assert _token.balanceOf(_recipient) - recipient_balance_before == _amount
+        recipient_balance_before: uint256 = staticcall _token.balanceOf(_recipient)
+        extcall _token.transfer(_recipient, _amount)
+        assert staticcall _token.balanceOf(_recipient) - recipient_balance_before == _amount
 
 
 @internal
@@ -776,12 +777,12 @@ def _settle_keeper_contraction_and_reduce_exposure(
         _trusted_value_removed,
         _trusted_backing_after,
     )
-    exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm / PPM
+    exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
     self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
 
-    crv_usd_after_reward: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_after_reward: uint256 = staticcall self._crv_usd.balanceOf(self)
     assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
@@ -790,7 +791,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
         self.deployed_crvusd = 0
         self._transfer_exact_to(
             self._crv_usd,
-            self._factory.fee_receiver(),
+            staticcall self._factory.fee_receiver(),
             net_crv_usd - deployed_crv_usd,
         )
     else:
@@ -811,11 +812,11 @@ def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
 
     accounted: uint256 = self._lp_inventory()
     assert _amount > 0 and _amount <= accounted
-    virtual_price: uint256 = self.pool.get_virtual_price()
+    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     trusted_before: uint256 = self._lp_value_at(accounted, virtual_price)
     trusted_after: uint256 = self._lp_value_at(accounted - _amount, virtual_price)
     trusted_removed: uint256 = trusted_before - trusted_after
-    expected_crv_usd: uint256 = self.pool.calc_withdraw_one_coin(
+    expected_crv_usd: uint256 = staticcall self.pool.calc_withdraw_one_coin(
         _amount,
         convert(self.pool_crvusd_index, int128),
     )
@@ -825,9 +826,9 @@ def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
         trusted_removed,
         trusted_after,
     )
-    exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm / PPM
+    exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
+    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
     net_crv_usd: uint256 = expected_crv_usd - keeper_reward
 
     deployed_after: uint256 = 0
@@ -867,8 +868,8 @@ def set_backing_oracle_policy(
     self.backing_oracle = _backing_oracle
     self.min_backing_oracle_price = _min_backing_price
     log BackingOraclePolicyUpdated(
-        _backing_oracle.address,
-        _min_backing_price,
+        backing_oracle=_backing_oracle.address,
+        min_backing_price=_min_backing_price,
     )
 
 
@@ -881,15 +882,15 @@ def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     assert _execution_buffer_bps <= BPS
 
     self.amm_execution_buffer_bps = _execution_buffer_bps
-    log AmmExecutionBufferUpdated(_execution_buffer_bps)
+    log AmmExecutionBufferUpdated(execution_buffer_bps=_execution_buffer_bps)
 
 
 @internal
 @view
 def _lp_value_at(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
     return (
-        _lp_tokens / PRECISION * _virtual_price
-        + _lp_tokens % PRECISION * _virtual_price / PRECISION
+        _lp_tokens // PRECISION * _virtual_price
+        + _lp_tokens % PRECISION * _virtual_price // PRECISION
     )
 
 
@@ -900,32 +901,32 @@ def _calc_token_amount(_crv_usd_amount: uint256, _paired_token_amount: uint256) 
         dynamic_amounts: DynArray[uint256, 2] = [0, 0]
         dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
         dynamic_amounts[self.pool_paired_token_index] = _paired_token_amount
-        return DynamicLiquidityPool(self.pool.address).calc_token_amount(dynamic_amounts, True)
+        return staticcall DynamicLiquidityPool(self.pool.address).calc_token_amount(dynamic_amounts, True)
     else:
         fixed_amounts: uint256[2] = empty(uint256[2])
         fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
         fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
-        return FixedLiquidityPool(self.pool.address).calc_token_amount(fixed_amounts, True)
+        return staticcall FixedLiquidityPool(self.pool.address).calc_token_amount(fixed_amounts, True)
 
 
 @internal
 @view
 def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     lp_before: uint256 = self._lp_inventory()
-    virtual_price: uint256 = self.pool.get_virtual_price()
+    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
     donated_paired_token: uint256 = self._paired_token_inventory()
     donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
 
-    if crv_usd_deployed > self._crv_usd.balanceOf(self):
+    if crv_usd_deployed > staticcall self._crv_usd.balanceOf(self):
         return False
     if crv_usd_deployed > self._available_velocity():
         return False
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     if deployed_after > self.max_deployed_crvusd:
         return False
-    if deployed_after > self._controller_factory.debt_ceiling(self):
+    if deployed_after > staticcall self._controller_factory.debt_ceiling(self):
         return False
 
     lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
@@ -935,8 +936,8 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     if lp_value_after < accounting_baseline + crv_usd_deployed:
         return False
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price
     if keeper_reward > lp_tokens_out:
         return False
 
@@ -958,25 +959,25 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     self._backing_price()
 
     lp_before: uint256 = self._lp_inventory()
-    virtual_price: uint256 = self.pool.get_virtual_price()
+    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
     donated_paired_token: uint256 = self._paired_token_inventory()
     donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
     accounting_baseline: uint256 = lp_value_before + donated_value
 
-    assert crv_usd_deployed <= self._crv_usd.balanceOf(self)
+    assert crv_usd_deployed <= staticcall self._crv_usd.balanceOf(self)
     assert crv_usd_deployed <= self._available_velocity()
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= self._controller_factory.debt_ceiling(self)
+    assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
 
     lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
     assert lp_value_after >= accounting_baseline + crv_usd_deployed
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    keeper_reward: uint256 = reward_value * PRECISION / virtual_price
+    reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward: uint256 = reward_value * PRECISION // virtual_price
     assert keeper_reward <= lp_tokens_out
 
     retained_lp: uint256 = lp_before + lp_tokens_out - keeper_reward
@@ -996,31 +997,31 @@ def _deposit_to_pool(
     _paired_token_amount: uint256,
 ) -> uint256:
     quoted_lp: uint256 = self._calc_token_amount(_crv_usd_amount, _paired_token_amount)
-    min_lp: uint256 = quoted_lp * (BPS - self.amm_execution_buffer_bps) / BPS
+    min_lp: uint256 = quoted_lp * (BPS - self.amm_execution_buffer_bps) // BPS
 
-    crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
-    paired_token_before: uint256 = self._paired_token.balanceOf(self)
+    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
+    paired_token_before: uint256 = staticcall self._paired_token.balanceOf(self)
     lp_before: uint256 = self._lp_inventory()
 
-    self._crv_usd.approve(self.pool.address, 0)
-    self._crv_usd.approve(self.pool.address, _crv_usd_amount)
-    ERC20(self._paired_token.address).approve(self.pool.address, 0)
-    ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
+    extcall self._crv_usd.approve(self.pool.address, 0)
+    extcall self._crv_usd.approve(self.pool.address, _crv_usd_amount)
+    extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
+    extcall ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
     if self.pool_uses_dynamic_arrays:
         dynamic_amounts: DynArray[uint256, 2] = [0, 0]
         dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
         dynamic_amounts[self.pool_paired_token_index] = _paired_token_amount
-        DynamicLiquidityPool(self.pool.address).add_liquidity(dynamic_amounts, min_lp)
+        extcall DynamicLiquidityPool(self.pool.address).add_liquidity(dynamic_amounts, min_lp)
     else:
         fixed_amounts: uint256[2] = empty(uint256[2])
         fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
         fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
-        FixedLiquidityPool(self.pool.address).add_liquidity(fixed_amounts, min_lp)
-    self._crv_usd.approve(self.pool.address, 0)
-    ERC20(self._paired_token.address).approve(self.pool.address, 0)
+        extcall FixedLiquidityPool(self.pool.address).add_liquidity(fixed_amounts, min_lp)
+    extcall self._crv_usd.approve(self.pool.address, 0)
+    extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
 
-    assert crv_usd_before - self._crv_usd.balanceOf(self) == _crv_usd_amount
-    assert paired_token_before - self._paired_token.balanceOf(self) == _paired_token_amount
+    assert crv_usd_before - staticcall self._crv_usd.balanceOf(self) == _crv_usd_amount
+    assert paired_token_before - staticcall self._paired_token.balanceOf(self) == _paired_token_amount
     lp_received: uint256 = self._lp_inventory() - lp_before
     assert lp_received >= min_lp
     return lp_received
@@ -1037,15 +1038,15 @@ def _settle_lp_expansion(
 ) -> (uint256, uint256):
     lp_after_deposit: uint256 = self._lp_inventory()
     assert lp_after_deposit - _lp_before == _lp_received
-    virtual_price_after: uint256 = self.pool.get_virtual_price()
+    virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
     accounting_baseline: uint256 = _lp_value_before + _donated_paired_token_value
     gross_profit: uint256 = 0
     if lp_value_after > accounting_baseline + _principal:
         gross_profit = lp_value_after - accounting_baseline - _principal
 
-    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps / BPS
-    keeper_reward: uint256 = keeper_reward_value * PRECISION / virtual_price_after
+    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price_after
     assert keeper_reward <= _lp_received
     self._transfer_exact_to(ERC20(self.pool.address), msg.sender, keeper_reward)
 
@@ -1057,7 +1058,7 @@ def _settle_lp_expansion(
 
 
 @external
-@nonreentrant("lock")
+@nonreentrant
 def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     """
     @notice Deposits crvUSD and any donated paired token directly into the keeper's AMM.
@@ -1070,10 +1071,10 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     assert _crv_usd_amount <= self._local_expansion_limit()
     self._backing_price()
 
-    crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
     paired_token_before: uint256 = self._paired_token_inventory()
     lp_before: uint256 = self._lp_inventory()
-    virtual_price_before: uint256 = self.pool.get_virtual_price()
+    virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_before)
 
@@ -1086,7 +1087,7 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
         crv_usd_deployed,
         paired_token_before,
     )
-    assert crv_usd_before - self._crv_usd.balanceOf(self) == crv_usd_deployed
+    assert crv_usd_before - staticcall self._crv_usd.balanceOf(self) == crv_usd_deployed
 
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
@@ -1103,11 +1104,11 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     self.last_intervention_at = block.timestamp
 
     log Expanded(
-        msg.sender,
-        crv_usd_deployed,
-        lp_received,
-        gross_profit,
-        keeper_reward,
+        keeper=msg.sender,
+        crv_usd_deployed=crv_usd_deployed,
+        lp_tokens_received=lp_received,
+        gross_profit=gross_profit,
+        keeper_reward=keeper_reward,
     )
     return crv_usd_deployed, lp_received, keeper_reward
 
@@ -1117,12 +1118,12 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
 def _donation_match_amount(_donated_paired_token_value: uint256) -> uint256:
     if not self._allocation_allowed():
         return 0
-    if PegKeeperPolicy(self._policy_address()).expansion_regime():
+    if staticcall PegKeeperPolicy(self._policy_address()).expansion_regime():
         return _donated_paired_token_value
 
-    pool_crv_usd: uint256 = self.pool.balances(self.pool_crvusd_index)
+    pool_crv_usd: uint256 = staticcall self.pool.balances(self.pool_crvusd_index)
     pool_paired_token_value: uint256 = self._trusted_paired_token_value(
-        self.pool.balances(self.pool_paired_token_index)
+        staticcall self.pool.balances(self.pool_paired_token_index)
     )
     paired_token_value_after: uint256 = pool_paired_token_value + _donated_paired_token_value
     if paired_token_value_after <= pool_crv_usd:
@@ -1150,12 +1151,12 @@ def _settle_donated_paired_token(
         _matching_budget,
     )
     if crv_usd_matched > 0:
-        assert crv_usd_matched <= self._crv_usd.balanceOf(self)
+        assert crv_usd_matched <= staticcall self._crv_usd.balanceOf(self)
         assert crv_usd_matched <= self._remaining_exposure_capacity()
         self._consume_velocity(crv_usd_matched)
 
     lp_before: uint256 = self._lp_inventory()
-    virtual_price_before: uint256 = self.pool.get_virtual_price()
+    virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     lp_received: uint256 = self._deposit_to_pool(
         crv_usd_matched,
@@ -1176,18 +1177,18 @@ def _settle_donated_paired_token(
     assert self._trusted_backing_value() >= self.deployed_crvusd
 
     log DonatedPairedTokenSwept(
-        msg.sender,
-        paired_token_swept,
-        crv_usd_matched,
-        lp_received,
-        gross_profit,
-        keeper_reward,
+        keeper=msg.sender,
+        paired_token_swept=paired_token_swept,
+        crv_usd_matched=crv_usd_matched,
+        lp_tokens_received=lp_received,
+        gross_profit=gross_profit,
+        keeper_reward=keeper_reward,
     )
     return paired_token_swept, crv_usd_matched, lp_received, keeper_reward
 
 
 @external
-@nonreentrant("lock")
+@nonreentrant
 def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, uint256, uint256, uint256):
     """
     @notice Deposits donated paired tokens and matches only the crvUSD appropriate for the current regime.
@@ -1197,7 +1198,7 @@ def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, u
     assert _max_paired_token_amount > 0
 
     matching_budget: uint256 = min(
-        self._crv_usd.balanceOf(self),
+        staticcall self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
     return self._settle_donated_paired_token(
@@ -1208,7 +1209,7 @@ def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, u
 
 
 @external
-@nonreentrant("lock")
+@nonreentrant
 def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint256:
     """
     @notice Withdraws eligible protocol profit in crvUSD; the no-argument overload uses the maximum limit.
@@ -1228,7 +1229,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     potential_surplus += self._oracle_value(donated_paired_token_value, backing_price)
 
     available_budget: uint256 = min(
-        self._crv_usd.balanceOf(self),
+        staticcall self._crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
     withdrawal_reserve: uint256 = min(
@@ -1246,7 +1247,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     if trusted_backing > self.deployed_crvusd:
         surplus = trusted_backing - self.deployed_crvusd
 
-    crv_usd_balance_before: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_balance_before: uint256 = staticcall self._crv_usd.balanceOf(self)
     exposure_capacity: uint256 = self._remaining_exposure_capacity()
     crv_usd_transferred: uint256 = _max_crv_usd_amount
     if crv_usd_transferred > surplus:
@@ -1262,25 +1263,25 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
 
-    fee_receiver: address = self._factory.fee_receiver()
+    fee_receiver: address = staticcall self._factory.fee_receiver()
     self._transfer_exact_to(self._crv_usd, fee_receiver, crv_usd_transferred)
-    crv_usd_balance_after: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_balance_after: uint256 = staticcall self._crv_usd.balanceOf(self)
     assert crv_usd_balance_before >= crv_usd_balance_after
     assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
 
     assert self._trusted_backing_value() >= deployed_crv_usd_after
 
     log ProfitWithdrawn(
-        msg.sender,
-        fee_receiver,
-        crv_usd_transferred,
-        deployed_crv_usd_after,
+        caller=msg.sender,
+        receiver=fee_receiver,
+        crv_usd_transferred=crv_usd_transferred,
+        deployed_crv_usd_after=deployed_crv_usd_after,
     )
     return crv_usd_transferred
 
 
 @external
-@nonreentrant("lock")
+@nonreentrant
 def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     """
     @notice Burns held pool LP tokens and withdraws only crvUSD.
@@ -1292,20 +1293,20 @@ def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     lp_before: uint256 = self._lp_inventory()
     assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
 
-    virtual_price_before: uint256 = self.pool.get_virtual_price()
+    virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     local_contraction_limit: uint256 = self._local_contraction_limit()
-    quoted_crv_usd: uint256 = self.pool.calc_withdraw_one_coin(
+    quoted_crv_usd: uint256 = staticcall self.pool.calc_withdraw_one_coin(
         _lp_token_amount,
         convert(self.pool_crvusd_index, int128),
     )
     assert quoted_crv_usd <= local_contraction_limit
     min_crv_usd: uint256 = quoted_crv_usd * (
         BPS - self.amm_execution_buffer_bps
-    ) / BPS
-    crv_usd_before: uint256 = self._crv_usd.balanceOf(self)
+    ) // BPS
+    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
 
-    self.pool.remove_liquidity_one_coin(
+    extcall self.pool.remove_liquidity_one_coin(
         _lp_token_amount,
         convert(self.pool_crvusd_index, int128),
         min_crv_usd,
@@ -1313,12 +1314,12 @@ def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
 
     lp_after: uint256 = self._lp_inventory()
     assert lp_before - lp_after == _lp_token_amount
-    crv_usd_after_withdrawal: uint256 = self._crv_usd.balanceOf(self)
+    crv_usd_after_withdrawal: uint256 = staticcall self._crv_usd.balanceOf(self)
     crv_usd_received: uint256 = crv_usd_after_withdrawal - crv_usd_before
     assert crv_usd_received >= min_crv_usd
     assert crv_usd_received <= local_contraction_limit
 
-    virtual_price_after: uint256 = self.pool.get_virtual_price()
+    virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_after: uint256 = self._lp_value_at(lp_after, virtual_price_after)
     assert trusted_backing_before >= trusted_backing_after
     trusted_value_removed: uint256 = trusted_backing_before - trusted_backing_after
@@ -1337,17 +1338,17 @@ def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
     self.last_intervention_at = block.timestamp
 
     log Contracted(
-        msg.sender,
-        _lp_token_amount,
-        crv_usd_received,
-        gross_profit,
-        keeper_reward,
+        keeper=msg.sender,
+        lp_tokens_burned=_lp_token_amount,
+        crv_usd_received=crv_usd_received,
+        gross_profit=gross_profit,
+        keeper_reward=keeper_reward,
     )
     return _lp_token_amount, crv_usd_received, keeper_reward
 
 
 @external
-@nonreentrant("lock")
+@nonreentrant
 def borrow_crvusd(_amount: uint256, _receiver: address):
     """
     @notice Gives a Factory-admin-selected receiver policy-approved crvUSD and records it as debt.
@@ -1364,14 +1365,19 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
 
     deployed_after: uint256 = self.deployed_crvusd + _amount
     assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= self._controller_factory.debt_ceiling(self)
-    assert _amount <= self._crv_usd.balanceOf(self)
+    assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
+    assert _amount <= staticcall self._crv_usd.balanceOf(self)
 
     self._consume_velocity(_amount)
     self.deployed_crvusd = deployed_after
     self.last_intervention_at = block.timestamp
     self._transfer_exact_to(self._crv_usd, _receiver, _amount)
-    log CrvUsdBorrowed(msg.sender, _receiver, _amount, deployed_after)
+    log CrvUsdBorrowed(
+        caller=msg.sender,
+        receiver=_receiver,
+        amount=_amount,
+        deployed_crv_usd_after=deployed_after,
+    )
 
 
 @external
@@ -1383,12 +1389,17 @@ def reduce_deployed_crvusd(_amount: uint256):
 
     reduction: uint256 = min(_amount, self.deployed_crvusd)
     self.deployed_crvusd -= reduction
-    log DebtReduced(msg.sender, _amount, reduction, self.deployed_crvusd)
+    log DebtReduced(
+        caller=msg.sender,
+        requested_reduction=_amount,
+        actual_reduction=reduction,
+        deployed_crv_usd_after=self.deployed_crvusd,
+    )
 
 
 @external
 @payable
-@nonreentrant("lock")
+@nonreentrant
 def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[65535]:
     """
     @notice Lets the admin call another address and returns any response.
@@ -1405,7 +1416,12 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
     selector: bytes4 = empty(bytes4)
     if len(_data) >= 4:
         selector = convert(slice(_data, 0, 4), bytes4)
-    log Executed(_target, _value, selector, keccak256(_data))
+    log Executed(
+        target=_target,
+        value=_value,
+        selector=selector,
+        data_hash=keccak256(_data),
+    )
     return result
 
 
@@ -1424,8 +1440,8 @@ def set_intervention_policy(
     self.max_intervention_share_bps = _max_intervention_share_bps
     self.min_intervention_delay = _min_intervention_delay
     log InterventionPolicyUpdated(
-        _max_intervention_share_bps,
-        _min_intervention_delay,
+        max_intervention_share_bps=_max_intervention_share_bps,
+        min_intervention_delay=_min_intervention_delay,
     )
 
 
@@ -1453,11 +1469,11 @@ def set_policy(
     self.max_deployed_crvusd = _max_deployed_crvusd
 
     log PolicyUpdated(
-        _entry_min_profit_ppm,
-        _normal_exit_min_profit_ppm,
-        _keeper_profit_share_bps,
-        _min_expansion_amount,
-        _max_deployed_crvusd,
+        entry_min_profit_ppm=_entry_min_profit_ppm,
+        normal_exit_min_profit_ppm=_normal_exit_min_profit_ppm,
+        keeper_profit_share_bps=_keeper_profit_share_bps,
+        min_expansion_amount=_min_expansion_amount,
+        max_deployed_crvusd=_max_deployed_crvusd,
     )
 
 
@@ -1466,8 +1482,8 @@ def set_direction_paused(_direction: uint256, _paused: bool):
     """
     @notice Pauses or resumes expansion, contraction, or all execution.
     """
-    admin: address = self._factory.admin()
-    emergency_admin: address = self._factory.emergency_admin()
+    admin: address = staticcall self._factory.admin()
+    emergency_admin: address = staticcall self._factory.emergency_admin()
     assert msg.sender == admin or msg.sender == emergency_admin
     if msg.sender == emergency_admin:
         assert _paused
@@ -1481,7 +1497,7 @@ def set_direction_paused(_direction: uint256, _paused: bool):
     else:
         raise
 
-    log DirectionPaused(_direction, _paused)
+    log DirectionPaused(direction=_direction, paused=_paused)
 
 
 @external

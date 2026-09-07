@@ -129,6 +129,10 @@ AND primary is not locally expandable
 AND every active secondary is not locally expandable
 ```
 
+An unset primary counts as unavailable, not as a global expansion stop. A configured
+secondary may therefore expand without a primary; a tertiary still must wait until every
+active secondary is also unavailable.
+
 The `80%` primary utilization check uses:
 
 ```text
@@ -321,7 +325,7 @@ deployPegKeeper(
 )
 ```
 
-The Factory derives the non-crvUSD coin, derives ERC-4626 backing when requested, creates one minimal proxy, initializes it with the immutable pool-liquidity ABI mode, applies roles/defaults, adds it to the active list, and emits `PegKeeperDeployed`.
+The Factory derives the non-crvUSD coin, derives ERC-4626 backing when requested, creates one minimal proxy, initializes it with the immutable pool-liquidity ABI mode, applies roles/defaults, adds it to the active list, and emits `PegKeeperDeployed`. Initialization grants the ControllerFactory unlimited crvUSD allowance; this is required for ControllerFactory ceiling reductions and `rug_debt_ceiling()` to burn idle or returned allocation through `crvUSD.burnFrom`.
 
 Historical deployment membership is private. The public policy-facing registry contains only active keepers.
 
@@ -338,31 +342,31 @@ The deployment sender initially owns the Factory and policy, binds them, creates
 
 ## 14. Compiled identity
 
-Pinned Vyper `0.3.10`, codesize optimization, Shanghai:
+Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 17,844 bytes
-implementation runtime:  17,761 bytes
+implementation initcode: 18,114 bytes
+implementation runtime:  17,997 bytes
 implementation hash:
-0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589
-EIP-170 headroom:          6,815 bytes
+0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf
+EIP-170 headroom:          6,579 bytes
 
-PegKeeperPolicy runtime:   4,609 bytes
+PegKeeperPolicy runtime:   4,688 bytes
 policy hash:
-0x6376ddbee90ea97a1d013d23817710553fd8b4247941b7a778102fc5c41ad9e9
+0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a
 
-Factory semantic runtime:  4,085 bytes
-Factory deployed runtime:  4,149 bytes
+Factory semantic runtime:  3,963 bytes
+Factory deployed runtime:  4,027 bytes
 Factory semantic hash:
-0x064f8195a49c3a02fda40e84785ac1a3abc380ffa596a4f9976a1b2f2c0f16df
+0xcfc318147ad88458f19543d0a8001ed9b046e72c713501b96839d847b8f6799e
 ```
 
 The existing `3.0.0` manifest and release checklist predate this source snapshot. They must be regenerated from the final committed source before release rather than edited inside the source batch.
 
 ## 15. Required verification before any release
 
-1. Compile under pinned Vyper/Solidity and Shanghai settings.
+1. Compile under pinned Vyper/Solidity and Prague settings.
 2. Pass unit, policy, Factory, deployment, proposal, runtime, and ABI-parity checks.
 3. Pass stateful backing/capacity/allowance/action-reachability invariants.
 4. Execute the full Curve ownership vote on a pinned fork.
@@ -371,4 +375,4 @@ The existing `3.0.0` manifest and release checklist predate this source snapshot
 7. Generate a new release manifest; never relabel historical evidence.
 8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The frxUSD production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.
+The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The canary funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, contracts deployed debt, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. The frxUSD production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.

@@ -201,6 +201,30 @@ contract PegKeeperPolicyTest is Test {
         assertTrue(policy.can_expand(address(secondaryOne)));
     }
 
+    function test_secondaryCanExpandWhenPrimaryIsUnset() public {
+        policy.set_tier(address(primary), NONE);
+
+        assertEq(policy.primary(), address(0));
+        assertTrue(policy.can_allocate(address(secondaryOne)));
+        assertTrue(policy.can_expand(address(secondaryOne)));
+    }
+
+    function test_tertiaryRemainsBlockedByExpandableSecondaryWhenPrimaryIsUnset() public {
+        policy.set_tier(address(primary), NONE);
+
+        assertFalse(policy.can_allocate(address(tertiary)));
+        assertFalse(policy.can_expand(address(tertiary)));
+    }
+
+    function test_tertiaryCanExpandWhenPrimaryIsUnsetAndSecondariesAreBlocked() public {
+        policy.set_tier(address(primary), NONE);
+        secondaryOne.setLocallyExpandable(false);
+        secondaryTwo.setLocallyExpandable(false);
+
+        assertTrue(policy.can_allocate(address(tertiary)));
+        assertTrue(policy.can_expand(address(tertiary)));
+    }
+
     function test_tertiaryRequiresPrimaryAndEveryActiveSecondaryToBeBlocked() public {
         primary.setDebt(100e18);
         assertFalse(policy.can_expand(address(tertiary)));

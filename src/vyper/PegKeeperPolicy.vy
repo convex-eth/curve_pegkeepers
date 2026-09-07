@@ -1,4 +1,4 @@
-# pragma version 0.3.10
+# pragma version 0.4.3
 """
 @title PegKeeperPolicy
 @license MIT
@@ -81,7 +81,7 @@ tertiaryAt: public(HashMap[uint256, address])
 _tertiaryIndexPlusOne: HashMap[address, uint256]
 
 
-@external
+@deploy
 def __init__(
     _initial_owner: address,
     _aggregate_crvusd_oracle: address,
@@ -97,9 +97,13 @@ def __init__(
     self.owner = _initial_owner
     self.aggregateCrvUsdOracle = _aggregate_crvusd_oracle
     self.primaryUtilizationBps = _primary_utilization_bps
-    log OwnershipTransferred(empty(address), _initial_owner)
-    log AggregateCrvUsdOracleUpdated(empty(address), _aggregate_crvusd_oracle)
-    log PrimaryUtilizationUpdated(0, _primary_utilization_bps)
+    log OwnershipTransferred(oldOwner=empty(address), newOwner=_initial_owner)
+    log AggregateCrvUsdOracleUpdated(
+        oldOracle=empty(address), newOracle=_aggregate_crvusd_oracle
+    )
+    log PrimaryUtilizationUpdated(
+        oldUtilizationBps=0, newUtilizationBps=_primary_utilization_bps
+    )
 
 
 @external
@@ -109,7 +113,7 @@ def set_factory(_factory: address):
         raw_revert(method_id("InvalidFactory()"))
 
     self.factory = _factory
-    log FactorySet(_factory)
+    log FactorySet(factory=_factory)
 
 
 @external
@@ -120,7 +124,7 @@ def set_aggregate_crvusd_oracle(_new_oracle: address):
 
     old_oracle: address = self.aggregateCrvUsdOracle
     self.aggregateCrvUsdOracle = _new_oracle
-    log AggregateCrvUsdOracleUpdated(old_oracle, _new_oracle)
+    log AggregateCrvUsdOracleUpdated(oldOracle=old_oracle, newOracle=_new_oracle)
 
 
 @external
@@ -131,7 +135,10 @@ def set_primary_utilization_bps(_new_utilization_bps: uint256):
 
     old_utilization_bps: uint256 = self.primaryUtilizationBps
     self.primaryUtilizationBps = _new_utilization_bps
-    log PrimaryUtilizationUpdated(old_utilization_bps, _new_utilization_bps)
+    log PrimaryUtilizationUpdated(
+        oldUtilizationBps=old_utilization_bps,
+        newUtilizationBps=_new_utilization_bps,
+    )
 
 
 @external
@@ -145,7 +152,7 @@ def set_tier(_keeper: address, _new_tier: uint256):
         factory: address = self.factory
         if factory == empty(address):
             raw_revert(method_id("InvalidFactory()"))
-        if PegKeeper(_keeper).factory() != factory or not PegKeeperFactory(factory).is_active(_keeper):
+        if staticcall PegKeeper(_keeper).factory() != factory or not staticcall PegKeeperFactory(factory).is_active(_keeper):
             raw_revert(method_id("InvalidKeeper()"))
 
     old_tier: uint256 = self.tier[_keeper]
@@ -158,7 +165,11 @@ def set_tier(_keeper: address, _new_tier: uint256):
         if old_primary != empty(address):
             self.primary = empty(address)
             self.tier[old_primary] = TIER_NONE
-            log TierUpdated(old_primary, TIER_PRIMARY, TIER_NONE)
+            log TierUpdated(
+                pegKeeper=old_primary,
+                oldTier=TIER_PRIMARY,
+                newTier=TIER_NONE,
+            )
         self.primary = _keeper
     elif _new_tier == TIER_SECONDARY:
         if self.secondaryCount >= MAX_SECONDARIES:
@@ -174,7 +185,7 @@ def set_tier(_keeper: address, _new_tier: uint256):
         self.tertiaryCount = tertiary_index + 1
 
     self.tier[_keeper] = _new_tier
-    log TierUpdated(_keeper, old_tier, _new_tier)
+    log TierUpdated(pegKeeper=_keeper, oldTier=old_tier, newTier=_new_tier)
 
 
 @external
@@ -208,7 +219,7 @@ def can_contract(_keeper: address) -> bool:
     factory: address = self.factory
     if factory == empty(address) or _keeper == empty(address):
         return False
-    if PegKeeper(_keeper).factory() != factory:
+    if staticcall PegKeeper(_keeper).factory() != factory:
         return False
     return self._aggregate_crvusd_price() <= PRECISION
 
@@ -222,7 +233,7 @@ def transferOwnership(_new_owner: address):
 
     self.pendingOwner = _new_owner
     self.ownershipTransferNonce += 1
-    log OwnershipTransferStarted(self.owner, _new_owner)
+    log OwnershipTransferStarted(owner=self.owner, pendingOwner=_new_owner)
 
 
 @external
@@ -235,7 +246,7 @@ def acceptOwnership(_expected_nonce: uint256):
     old_owner: address = self.owner
     self.owner = msg.sender
     self.pendingOwner = empty(address)
-    log OwnershipTransferred(old_owner, msg.sender)
+    log OwnershipTransferred(oldOwner=old_owner, newOwner=msg.sender)
 
 
 @internal
@@ -266,9 +277,9 @@ def _aggregate_crvusd_price() -> uint256:
 @view
 def _is_active_keeper(_keeper: address) -> bool:
     factory: address = self.factory
-    if _keeper == empty(address) or not PegKeeperFactory(factory).is_active(_keeper):
+    if _keeper == empty(address) or not staticcall PegKeeperFactory(factory).is_active(_keeper):
         return False
-    return PegKeeper(_keeper).factory() == factory
+    return staticcall PegKeeper(_keeper).factory() == factory
 
 
 @internal
@@ -303,15 +314,15 @@ def _can_allocate(_keeper: address) -> bool:
     if keeper_tier == TIER_SECONDARY:
         primary: address = self.primary
         if primary == empty(address):
-            return False
+            return True
         if not self._is_locally_expandable(primary):
             return True
         return self._primary_is_saturated(primary)
     if keeper_tier == TIER_TERTIARY:
         primary: address = self.primary
-        if primary == empty(address) or self._is_locally_expandable(primary):
+        if primary != empty(address) and self._is_locally_expandable(primary):
             return False
-        for index in range(256):
+        for index: uint256 in range(256):
             if index >= self.secondaryCount:
                 break
             if self._is_locally_expandable(self.secondaryAt[index]):
@@ -323,21 +334,21 @@ def _can_allocate(_keeper: address) -> bool:
 @internal
 @view
 def _primary_is_saturated(_primary: address) -> bool:
-    local_maximum: uint256 = PegKeeper(_primary).max_deployed_crvusd()
-    controller_factory: address = PegKeeper(_primary).controller_factory()
-    controller_ceiling: uint256 = ControllerFactory(controller_factory).debt_ceiling(_primary)
+    local_maximum: uint256 = staticcall PegKeeper(_primary).max_deployed_crvusd()
+    controller_factory: address = staticcall PegKeeper(_primary).controller_factory()
+    controller_ceiling: uint256 = staticcall ControllerFactory(controller_factory).debt_ceiling(_primary)
     effective_ceiling: uint256 = min(local_maximum, controller_ceiling)
     if effective_ceiling == 0:
         return True
 
-    quotient: uint256 = effective_ceiling / BPS
+    quotient: uint256 = effective_ceiling // BPS
     remainder: uint256 = effective_ceiling % BPS
     scaled_remainder: uint256 = remainder * self.primaryUtilizationBps
     required_debt: uint256 = (
         quotient * self.primaryUtilizationBps
-        + (scaled_remainder + BPS - 1) / BPS
+        + (scaled_remainder + BPS - 1) // BPS
     )
-    return PegKeeper(_primary).debt() >= required_debt
+    return staticcall PegKeeper(_primary).debt() >= required_debt
 
 
 @internal
