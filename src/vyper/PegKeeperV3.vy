@@ -797,6 +797,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
         _trusted_value_removed,
         _trusted_backing_after,
     )
+    assert gross_profit > 0
     exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
     keeper_reward: uint256 = self._keeper_reward(gross_profit)
@@ -846,6 +847,7 @@ def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
         trusted_removed,
         trusted_after,
     )
+    assert gross_profit > 0
     exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
     keeper_reward: uint256 = self._keeper_reward(gross_profit)

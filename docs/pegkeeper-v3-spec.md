@@ -258,6 +258,7 @@ It requires:
 - quote and measured output within the normalized local crvUSD excess share;
 - measured output at least the quote-buffer minimum;
 - positive value removed;
+- strictly positive gross exit profit before reward, even when the configured floor is zero;
 - configured gross exit profit before reward;
 - final retained LP backing at least remaining debt.
 
@@ -351,11 +352,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,319 bytes
-implementation runtime:  18,203 bytes
+implementation initcode: 18,337 bytes
+implementation runtime:  18,221 bytes
 implementation hash:
-0xdd3ea8d8aaa15acc2f26e7e7d0a5d433c29565a5f568006c3b410dba93541f0a
-EIP-170 headroom:          6,373 bytes
+0xb9c5c099d5a617df1311dfbc71638bdba4ae85ece328c260590261d082639ffc
+EIP-170 headroom:          6,355 bytes
 
 PegKeeperPolicy runtime:   4,862 bytes
 policy hash:

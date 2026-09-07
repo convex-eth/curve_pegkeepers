@@ -909,6 +909,48 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.trusted_backing_value(), 9_000.7e18);
     }
 
+    function test_zeroExitProfitFloorRejectsBreakEvenPreview() public {
+        ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(10_000);
+
+        vm.expectRevert();
+        keeper.preview_contraction(1_000e18);
+    }
+
+    function test_zeroExitProfitFloorRejectsBreakEvenExecution() public {
+        ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(10_000);
+        uint256 lpBefore = yieldAmm.balanceOf(address(keeper));
+        uint256 debtBefore = keeper.deployed_crvusd();
+
+        vm.prank(makeAddr("break-even contraction caller"));
+        vm.expectRevert();
+        keeper.contract_supply(1_000e18);
+
+        assertEq(yieldAmm.balanceOf(address(keeper)), lpBefore);
+        assertEq(keeper.deployed_crvusd(), debtBefore);
+        assertEq(yieldAmm.removeLiquidityCalls(), 0);
+    }
+
+    function test_zeroExitProfitFloorRejectsLossMakingPreviewDespiteSurplus() public {
+        ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(9_999);
+
+        vm.expectRevert();
+        keeper.preview_contraction(1_000e18);
+    }
+
+    function test_zeroExitProfitFloorRejectsLossMakingExecutionDespiteSurplus() public {
+        ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(9_999);
+        uint256 lpBefore = yieldAmm.balanceOf(address(keeper));
+        uint256 debtBefore = keeper.deployed_crvusd();
+
+        vm.prank(makeAddr("loss-making contraction caller"));
+        vm.expectRevert();
+        keeper.contract_supply(1_000e18);
+
+        assertEq(yieldAmm.balanceOf(address(keeper)), lpBefore);
+        assertEq(keeper.deployed_crvusd(), debtBefore);
+        assertEq(yieldAmm.removeLiquidityCalls(), 0);
+    }
+
     function test_preview_expansionIncludesDonationMatchAndLpReward() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
         yieldAmm.setLpMintBps(10_001);
@@ -1619,6 +1661,22 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.set_direction_paused(1, false);
         vm.stopPrank();
         yieldAmm.setBalances(0, 100_000_000e18);
+    }
+
+    function _configuredContractionWithZeroExitFloor(uint256 withdrawBps)
+        internal
+        returns (ILpPegKeeperV3 keeper)
+    {
+        keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+        vm.prank(makeAddr("break-even expansion caller"));
+        keeper.expand_supply(10_000e18);
+
+        vm.prank(governance);
+        keeper.set_policy(500, 0, 10_000e18, MAX_DEPLOYED);
+        yieldAmm.setBalances(100_000_000e18, 0);
+        yieldAmm.setWithdrawBps(withdrawBps);
     }
 
     function _deployKeeper(address) internal returns (ILpPegKeeperV3 keeper) {
