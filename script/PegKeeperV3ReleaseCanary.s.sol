@@ -122,7 +122,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         // Unit tests pin the production 500 ppm boundary; zero here permits a real one-coin
         // withdrawal without pretending the historical market offered that edge.
         vm.prank(CANARY_ADMIN);
-        pegKeeper.set_policy(10, 0, 3_000, 10_000e18, ALLOCATION);
+        pegKeeper.set_policy(10, 0, 10_000e18, ALLOCATION);
 
         (
             uint256 contractionLp,

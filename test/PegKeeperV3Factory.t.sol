@@ -36,7 +36,8 @@ contract PegKeeperV3LpFactoryTest is Test {
         implementation = _create(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"));
         policy = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+                "PegKeeperPolicy.vy",
+                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
             )
         );
         factory = _newFactory(policy);
@@ -109,7 +110,8 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_deployRequiresPolicyBoundToThisFactory() public {
         IPegKeeperPolicy unbound = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+                "PegKeeperPolicy.vy",
+                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
             )
         );
         IPegKeeperV3Factory unboundFactory = _newFactory(unbound);
@@ -141,7 +143,8 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_ownerCanInstallBoundReplacementPolicy() public {
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+                "PegKeeperPolicy.vy",
+                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
             )
         );
         vm.prank(owner);
@@ -175,7 +178,7 @@ contract PegKeeperV3LpFactoryTest is Test {
         LpYieldOracle belowPeg = new LpYieldOracle();
         belowPeg.setPrice(1e18 - 1);
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(owner, address(belowPeg), 8_000))
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(owner, address(belowPeg), 8_000, 3_000))
         );
         vm.startPrank(owner);
         replacement.set_factory(address(factory));
@@ -191,7 +194,8 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_policyUpdateRejectsUnboundAndInvalidContracts() public {
         IPegKeeperPolicy unbound = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 8_000)
+                "PegKeeperPolicy.vy",
+                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
             )
         );
         vm.startPrank(owner);

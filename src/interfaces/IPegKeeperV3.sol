@@ -51,11 +51,11 @@ interface IPegKeeperV3 {
     event PolicyUpdated(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 keeperProfitShareBps,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     );
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
+    event VelocityPolicyUpdated(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod);
     event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
 
     function version() external view returns (uint256 major, uint256 minor, uint256 patch);
@@ -92,7 +92,6 @@ interface IPegKeeperV3 {
 
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
-    function keeper_profit_share_bps() external view returns (uint256);
     function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
     function max_intervention_share_bps() external view returns (uint256);
@@ -125,11 +124,12 @@ interface IPegKeeperV3 {
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 keeperProfitShareBps,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
     function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
+        external;
+    function set_velocity_policy(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod)
         external;
 
     /// @notice Local viability probe used by PegKeeperPolicy; does not call policy itself.

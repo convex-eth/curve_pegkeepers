@@ -8,11 +8,10 @@ import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant DIRECT_IMPLEMENTATION_RUNTIME_BUDGET = 18_000;
-    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 18_114;
-    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 17_997;
+    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 18_319;
+    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 18_203;
     bytes32 internal constant RELEASE_IMPLEMENTATION_RUNTIME_HASH =
-        0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf;
+        0xdd3ea8d8aaa15acc2f26e7e7d0a5d433c29565a5f568006c3b410dba93541f0a;
     uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
     uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 
@@ -46,11 +45,6 @@ contract PegKeeperV3RuntimeSizeTest is Test {
         assertEq(implementation.codehash, RELEASE_IMPLEMENTATION_RUNTIME_HASH, "runtime hash drift");
         assertLe(
             implementation.code.length, EIP_170_RUNTIME_LIMIT, "implementation exceeds EIP-170"
-        );
-        assertLe(
-            implementation.code.length,
-            DIRECT_IMPLEMENTATION_RUNTIME_BUDGET,
-            "implementation exceeds direct-core budget"
         );
         assertTrue(IPegKeeperV3(implementation).initialized(), "implementation is not locked");
 

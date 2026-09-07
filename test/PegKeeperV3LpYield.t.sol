@@ -34,16 +34,20 @@ interface ILpPegKeeperV3 {
     function all_execution_paused() external view returns (bool);
     function last_intervention_at() external view returns (uint256);
     function expansion_pressure() external view returns (uint256);
+    function max_expansion_burst_bps() external view returns (uint256);
+    function expansion_refill_period() external view returns (uint256);
+    function available_expansion_velocity() external view returns (uint256);
     function available_expansion() external view returns (uint256);
     function can_expand_without_policy() external view returns (bool);
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
+    function set_velocity_policy(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod)
+        external;
     function backing_oracle() external view returns (address);
     function min_backing_oracle_price() external view returns (uint256);
     function set_backing_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 keeperProfitShareBps,
         uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
@@ -149,6 +153,7 @@ contract LpYieldFactory {
     bool public policyExpansionAllowed = true;
     bool public policyContractionAllowed = true;
     bool public policyAllocationAllowed = true;
+    uint256 public policyKeeperProfitShareBps = 3_000;
     mapping(address => uint256) public debt_ceiling;
 
     constructor(
@@ -171,6 +176,11 @@ contract LpYieldFactory {
         debt_ceiling[keeper] = amount;
     }
 
+    function increaseDebtCeiling(address keeper, uint256 amount) external {
+        debt_ceiling[keeper] += amount;
+        LpYieldToken(stablecoin).mint(keeper, amount);
+    }
+
     function setFeeReceiver(address receiver) external {
         fee_receiver = receiver;
     }
@@ -189,6 +199,14 @@ contract LpYieldFactory {
 
     function setPolicyAllocationAllowed(bool allowed) external {
         policyAllocationAllowed = allowed;
+    }
+
+    function setKeeperProfitShareBps(uint256 value) external {
+        policyKeeperProfitShareBps = value;
+    }
+
+    function keeper_profit_share_bps(address) external view returns (uint256) {
+        return policyKeeperProfitShareBps;
     }
 
     function can_allocate(address) external view returns (bool) {
@@ -520,10 +538,87 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
         vm.prank(governance);
-        keeper.set_policy(500, 100, 3_000, 10_000e18, 100_000_000e18);
+        keeper.set_policy(500, 100, 10_000e18, 100_000_000e18);
 
         assertEq(keeper.entry_min_profit_ppm(), 500);
         assertEq(keeper.normal_exit_min_profit_ppm(), 100);
+    }
+
+    function test_velocityPolicyIsAdminConfigurableAndBounded() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+
+        assertEq(keeper.max_expansion_burst_bps(), 500);
+        assertEq(keeper.expansion_refill_period(), 5 minutes);
+
+        vm.prank(makeAddr("not admin"));
+        vm.expectRevert();
+        keeper.set_velocity_policy(1_000, 10 minutes);
+
+        vm.startPrank(governance);
+        keeper.set_velocity_policy(1_000, 10 minutes);
+        assertEq(keeper.max_expansion_burst_bps(), 1_000);
+        assertEq(keeper.expansion_refill_period(), 10 minutes);
+
+        keeper.set_velocity_policy(0, 10 minutes);
+        assertEq(keeper.max_expansion_burst_bps(), 0);
+
+        vm.expectRevert();
+        keeper.set_velocity_policy(10_001, 10 minutes);
+        vm.expectRevert();
+        keeper.set_velocity_policy(500, 0);
+        vm.stopPrank();
+    }
+
+    function test_velocityPolicyControlsBurstAndLinearRefill() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        address receiver = makeAddr("velocity receiver");
+
+        factory.increaseDebtCeiling(address(keeper), 250_000e18);
+        vm.startPrank(governance);
+        keeper.set_velocity_policy(100, 100 seconds);
+        keeper.borrow_crvusd(250_000e18, receiver);
+        vm.stopPrank();
+
+        assertEq(keeper.available_expansion_velocity(), 0);
+        vm.warp(block.timestamp + 25 seconds);
+        assertEq(keeper.available_expansion_velocity(), 62_500e18);
+        vm.warp(block.timestamp + 75 seconds);
+        assertEq(keeper.available_expansion_velocity(), 250_000e18);
+    }
+
+    function test_velocityPolicyUpdateCheckpointsExistingPressure() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+
+        factory.increaseDebtCeiling(address(keeper), 250_000e18);
+        vm.startPrank(governance);
+        keeper.set_velocity_policy(100, 100 seconds);
+        keeper.borrow_crvusd(250_000e18, makeAddr("checkpoint receiver"));
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 25 seconds);
+        assertEq(keeper.available_expansion_velocity(), 62_500e18);
+
+        vm.prank(governance);
+        keeper.set_velocity_policy(200, 100 seconds);
+
+        assertEq(keeper.expansion_pressure(), 187_500e18);
+        assertEq(keeper.available_expansion_velocity(), 312_500e18);
+    }
+
+    function test_keeperRewardReadsCurrentPolicyForItsAddress() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+
+        factory.setKeeperProfitShareBps(1_250);
+        (, uint256 grossProfit, uint256 keeperReward,) = keeper.preview_expansion(10_000e18);
+
+        assertGt(grossProfit, 0);
+        assertEq(keeperReward, grossProfit * 1_250 / 10_000);
+
+        (bool localGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("keeper_profit_share_bps()"));
+        assertFalse(localGetterExists);
     }
 
     function test_yieldOraclePolicyDefaultsToTenBasisPointFloorAndAdminCanUpdate() public {

@@ -60,6 +60,7 @@ Deployment is blocked until `policy.factory() == address(factory)`. Factory poli
 
 - aggregate crvUSD oracle;
 - primary utilization threshold;
+- one global keeper profit share;
 - one primary;
 - multiple indexed secondaries;
 - multiple indexed tertiaries;
@@ -68,6 +69,8 @@ Deployment is blocked until `policy.factory() == address(factory)`. Factory poli
 It binds to one Factory once. Its owner and the Factory owner are independently transferable through two-step ownership.
 
 The policy may be replaced without redeploying keepers because each keeper reads `factory.policy()` dynamically.
+
+Every reward path calls `policy.keeper_profit_share_bps(keeper)`. The current policy returns one owner-managed value for every address and bounds it to `10_000 bps`; the address argument permits later keeper-aware policy without changing keeper ABI. Policy updates and policy replacement apply immediately to all existing keepers.
 
 ## 3. Expansion admission
 
@@ -223,6 +226,8 @@ realized gross       = max(LP value after - baseline - principal, 0)
 
 Caller reward is calculated only from realized gross profit. The retained LP must still satisfy the entry floor and cover resulting debt.
 
+Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)` is restricted to the Factory's dynamic admin, allows a zero burst to disable new capacity, requires burst at most `10_000 bps`, and requires a nonzero refill period. The launch rule is `500 bps` of local maximum exposure with a `300 second` full linear refill. Velocity parameters and local-cap updates first checkpoint pressure under the old rule, preventing retroactive decay at a newly selected rate.
+
 `sweep_donated_paired_token(maxAmount)`:
 
 - settles selected loose paired tokens into the AMM;
@@ -346,15 +351,15 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,114 bytes
-implementation runtime:  17,997 bytes
+implementation initcode: 18,319 bytes
+implementation runtime:  18,203 bytes
 implementation hash:
-0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf
-EIP-170 headroom:          6,579 bytes
+0xdd3ea8d8aaa15acc2f26e7e7d0a5d433c29565a5f568006c3b410dba93541f0a
+EIP-170 headroom:          6,373 bytes
 
-PegKeeperPolicy runtime:   4,688 bytes
+PegKeeperPolicy runtime:   4,862 bytes
 policy hash:
-0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a
+0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes

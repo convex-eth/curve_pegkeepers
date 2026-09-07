@@ -116,7 +116,8 @@ contract PegKeeperPolicyTest is Test {
         factory = new PolicyFactoryMock(address(this));
         policy = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), EIGHTY_PERCENT)
+                "PegKeeperPolicy.vy",
+                abi.encode(address(this), address(oracle), EIGHTY_PERCENT, 3_000)
             )
         );
         factory.setPolicy(address(policy));
@@ -135,6 +136,26 @@ contract PegKeeperPolicyTest is Test {
 
     function test_primaryCanExpandWheneverItsLocalProbePasses() public view {
         assertTrue(policy.can_expand(address(primary)));
+    }
+
+    function test_keeperProfitShareIsOneBoundedGlobalPolicyRule() public {
+        assertEq(policy.keeper_profit_share_bps(address(primary)), 3_000);
+        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 3_000);
+
+        policy.set_keeper_profit_share_bps(1_250);
+        assertEq(policy.keeper_profit_share_bps(address(primary)), 1_250);
+        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 1_250);
+
+        policy.set_keeper_profit_share_bps(0);
+        assertEq(policy.keeper_profit_share_bps(address(primary)), 0);
+        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 0);
+
+        vm.prank(makeAddr("not owner"));
+        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
+        policy.set_keeper_profit_share_bps(2_000);
+
+        vm.expectRevert(IPegKeeperPolicy.InvalidThreshold.selector);
+        policy.set_keeper_profit_share_bps(10_001);
     }
 
     function test_secondaryIsBlockedUntilPrimaryReachesExactEightyPercent() public {
@@ -349,7 +370,8 @@ contract PegKeeperPolicyTest is Test {
         PolicyFactoryMock otherFactory = new PolicyFactoryMock(address(this));
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), EIGHTY_PERCENT)
+                "PegKeeperPolicy.vy",
+                abi.encode(address(this), address(oracle), EIGHTY_PERCENT, 3_000)
             )
         );
 
@@ -377,6 +399,8 @@ contract PegKeeperPolicyTest is Test {
 
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_primary_utilization_bps(7_500);
+        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
+        policy.set_keeper_profit_share_bps(2_000);
         policy.transferOwnership(correctedOwner);
         assertEq(policy.ownershipTransferNonce(), 2);
 

@@ -40,6 +40,11 @@ event PrimaryUtilizationUpdated:
     newUtilizationBps: uint256
 
 
+event KeeperProfitShareUpdated:
+    oldKeeperProfitShareBps: uint256
+    newKeeperProfitShareBps: uint256
+
+
 event TierUpdated:
     pegKeeper: indexed(address)
     oldTier: uint256
@@ -71,6 +76,7 @@ ownershipTransferNonce: public(uint256)
 factory: public(address)
 aggregateCrvUsdOracle: public(address)
 primaryUtilizationBps: public(uint256)
+_keeperProfitShareBps: uint256
 primary: public(address)
 tier: public(HashMap[address, uint256])
 secondaryCount: public(uint256)
@@ -86,6 +92,7 @@ def __init__(
     _initial_owner: address,
     _aggregate_crvusd_oracle: address,
     _primary_utilization_bps: uint256,
+    _keeper_profit_share_bps: uint256,
 ):
     if _initial_owner == empty(address):
         raw_revert(method_id("InvalidOwner()"))
@@ -93,16 +100,23 @@ def __init__(
         raw_revert(method_id("InvalidOracle()"))
     if _primary_utilization_bps == 0 or _primary_utilization_bps > BPS:
         raw_revert(method_id("InvalidThreshold()"))
+    if _keeper_profit_share_bps > BPS:
+        raw_revert(method_id("InvalidThreshold()"))
 
     self.owner = _initial_owner
     self.aggregateCrvUsdOracle = _aggregate_crvusd_oracle
     self.primaryUtilizationBps = _primary_utilization_bps
+    self._keeperProfitShareBps = _keeper_profit_share_bps
     log OwnershipTransferred(oldOwner=empty(address), newOwner=_initial_owner)
     log AggregateCrvUsdOracleUpdated(
         oldOracle=empty(address), newOracle=_aggregate_crvusd_oracle
     )
     log PrimaryUtilizationUpdated(
         oldUtilizationBps=0, newUtilizationBps=_primary_utilization_bps
+    )
+    log KeeperProfitShareUpdated(
+        oldKeeperProfitShareBps=0,
+        newKeeperProfitShareBps=_keeper_profit_share_bps,
     )
 
 
@@ -139,6 +153,26 @@ def set_primary_utilization_bps(_new_utilization_bps: uint256):
         oldUtilizationBps=old_utilization_bps,
         newUtilizationBps=_new_utilization_bps,
     )
+
+
+@external
+def set_keeper_profit_share_bps(_new_keeper_profit_share_bps: uint256):
+    self._check_owner()
+    if _new_keeper_profit_share_bps > BPS:
+        raw_revert(method_id("InvalidThreshold()"))
+
+    old_keeper_profit_share_bps: uint256 = self._keeperProfitShareBps
+    self._keeperProfitShareBps = _new_keeper_profit_share_bps
+    log KeeperProfitShareUpdated(
+        oldKeeperProfitShareBps=old_keeper_profit_share_bps,
+        newKeeperProfitShareBps=_new_keeper_profit_share_bps,
+    )
+
+
+@external
+@view
+def keeper_profit_share_bps(_keeper: address) -> uint256:
+    return self._keeperProfitShareBps
 
 
 @external

@@ -16,12 +16,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 17_997;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 18_203;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf;
-    uint256 public constant POLICY_RUNTIME_SIZE = 4_688;
+        0xdd3ea8d8aaa15acc2f26e7e7d0a5d433c29565a5f568006c3b410dba93541f0a;
+    uint256 public constant POLICY_RUNTIME_SIZE = 4_862;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a;
+        0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd;
     uint256 public constant FACTORY_CORE_SIZE = 3_963;
     uint256 public constant FACTORY_RUNTIME_SIZE = 4_027;
     bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
@@ -43,6 +43,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
+    uint256 public constant MAX_EXPANSION_BURST_BPS = 500;
+    uint256 public constant EXPANSION_REFILL_PERIOD = 5 minutes;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant USDE_CHAINLINK_MAX_DELAY = 25 hours;
@@ -241,6 +243,22 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(policy.factory() == deploymentFactory, "policy factory");
         require(policy.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
         require(policy.primaryUtilizationBps() == 8_000, "primary threshold");
+        require(
+            policy.keeper_profit_share_bps(frxUsdKeeper) == KEEPER_PROFIT_SHARE_BPS,
+            "frxUSD profit share"
+        );
+        require(
+            policy.keeper_profit_share_bps(sUsdeKeeper) == KEEPER_PROFIT_SHARE_BPS,
+            "sUSDe profit share"
+        );
+        require(
+            policy.keeper_profit_share_bps(usdcKeeper) == KEEPER_PROFIT_SHARE_BPS,
+            "USDC profit share"
+        );
+        require(
+            policy.keeper_profit_share_bps(usdtKeeper) == KEEPER_PROFIT_SHARE_BPS,
+            "USDT profit share"
+        );
         require(policy.primary() == frxUsdKeeper, "primary keeper");
         require(policy.tier(frxUsdKeeper) == TIER_PRIMARY, "frxUSD tier");
         require(policy.tier(sUsdeKeeper) == TIER_SECONDARY, "sUSDe tier");
@@ -320,11 +338,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");
-        require(keeper.keeper_profit_share_bps() == KEEPER_PROFIT_SHARE_BPS, "profit share");
         require(keeper.min_expansion_amount() == MIN_EXPANSION_AMOUNT, "minimum expansion");
         require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
         require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");
+        require(keeper.max_expansion_burst_bps() == MAX_EXPANSION_BURST_BPS, "expansion burst");
+        require(keeper.expansion_refill_period() == EXPANSION_REFILL_PERIOD, "expansion refill");
         require(keeper.amm_execution_buffer_bps() == AMM_EXECUTION_BUFFER_BPS, "AMM buffer");
         require(keeper.admin() == CURVE_OWNERSHIP_AGENT, "keeper admin");
         require(keeper.emergency_admin() == CURVE_EMERGENCY_ADMIN, "keeper emergency admin");

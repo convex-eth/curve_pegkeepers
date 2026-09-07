@@ -47,6 +47,8 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
+    uint256 public constant MAX_EXPANSION_BURST_BPS = 500;
+    uint256 public constant EXPANSION_REFILL_PERIOD = 5 minutes;
 
     uint256 public constant TIER_PRIMARY = 1;
     uint256 public constant TIER_SECONDARY = 2;
@@ -61,7 +63,10 @@ contract DeployPegKeeperV3 is Script {
         address emergencyAdmin;
         address feeReceiver;
         uint256 primaryUtilizationBps;
+        uint256 keeperProfitShareBps;
         uint256 maxDeployedCrvUsd;
+        uint256 maxExpansionBurstBps;
+        uint256 expansionRefillPeriod;
         uint256 ammExecutionBufferBps;
         address frxUsdProxy;
         uint256 frxUsdMaxDelay;
@@ -119,7 +124,10 @@ contract DeployPegKeeperV3 is Script {
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
         config.primaryUtilizationBps = PRIMARY_UTILIZATION_BPS;
+        config.keeperProfitShareBps = KEEPER_PROFIT_SHARE_BPS;
         config.maxDeployedCrvUsd = INITIAL_MAX_DEPLOYED_CRVUSD;
+        config.maxExpansionBurstBps = MAX_EXPANSION_BURST_BPS;
+        config.expansionRefillPeriod = EXPANSION_REFILL_PERIOD;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
         config.frxUsdProxy = FRXUSD_USD_PROXY;
         config.frxUsdMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
@@ -198,7 +206,12 @@ contract DeployPegKeeperV3 is Script {
         return _create(
             bytes.concat(
                 creationCode,
-                abi.encode(config.owner, config.aggregateCrvUsdOracle, config.primaryUtilizationBps)
+                abi.encode(
+                    config.owner,
+                    config.aggregateCrvUsdOracle,
+                    config.primaryUtilizationBps,
+                    config.keeperProfitShareBps
+                )
             )
         );
     }
@@ -244,7 +257,7 @@ contract DeployPegKeeperV3 is Script {
             deployment.frxUsdUsdOracle,
             ENTRY_MIN_PROFIT_PPM,
             NORMAL_EXIT_MIN_PROFIT_PPM,
-            config.maxDeployedCrvUsd
+            config
         );
 
         deployment.sUsdePegKeeper =
@@ -255,7 +268,7 @@ contract DeployPegKeeperV3 is Script {
             deployment.usdeUsdOracle,
             ENTRY_MIN_PROFIT_PPM,
             NORMAL_EXIT_MIN_PROFIT_PPM,
-            config.maxDeployedCrvUsd
+            config
         );
 
         deployment.usdcPegKeeper =
@@ -266,7 +279,7 @@ contract DeployPegKeeperV3 is Script {
             deployment.usdcUsdOracle,
             LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
             LAST_RESORT_EXIT_MIN_PROFIT_PPM,
-            config.maxDeployedCrvUsd
+            config
         );
 
         deployment.usdtPegKeeper =
@@ -277,7 +290,7 @@ contract DeployPegKeeperV3 is Script {
             deployment.usdtUsdOracle,
             LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
             LAST_RESORT_EXIT_MIN_PROFIT_PPM,
-            config.maxDeployedCrvUsd
+            config
         );
 
         factory.setDefaults(
@@ -300,18 +313,15 @@ contract DeployPegKeeperV3 is Script {
         address backingOracle,
         uint256 entryMinProfitPpm,
         uint256 exitMinProfitPpm,
-        uint256 maxDeployedCrvUsd
+        Config memory config
     ) internal {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
         keeper.set_backing_oracle_policy(backingOracle, MIN_BACKING_ORACLE_PRICE);
         keeper.set_policy(
-            entryMinProfitPpm,
-            exitMinProfitPpm,
-            KEEPER_PROFIT_SHARE_BPS,
-            MIN_EXPANSION_AMOUNT,
-            maxDeployedCrvUsd
+            entryMinProfitPpm, exitMinProfitPpm, MIN_EXPANSION_AMOUNT, config.maxDeployedCrvUsd
         );
         keeper.set_intervention_policy(MAX_INTERVENTION_SHARE_BPS, MIN_INTERVENTION_DELAY);
+        keeper.set_velocity_policy(config.maxExpansionBurstBps, config.expansionRefillPeriod);
     }
 
     function _deployChainlinkAdapter(address feed, uint256 maxDelay)
@@ -357,6 +367,10 @@ contract DeployPegKeeperV3 is Script {
         require(
             policy.primaryUtilizationBps() == config.primaryUtilizationBps,
             "primary threshold mismatch"
+        );
+        require(
+            policy.keeper_profit_share_bps(address(0)) == config.keeperProfitShareBps,
+            "keeper profit share mismatch"
         );
 
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
@@ -474,11 +488,19 @@ contract DeployPegKeeperV3 is Script {
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit mismatch");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit mismatch");
-        require(keeper.keeper_profit_share_bps() == KEEPER_PROFIT_SHARE_BPS, "profit share");
+        require(
+            IPegKeeperPolicy(IPegKeeperV3Factory(expectedFactory).policy())
+                .keeper_profit_share_bps(keeperAddress) == config.keeperProfitShareBps,
+            "keeper reward policy mismatch"
+        );
         require(keeper.min_expansion_amount() == MIN_EXPANSION_AMOUNT, "minimum expansion");
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
         require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");
+        require(keeper.max_expansion_burst_bps() == config.maxExpansionBurstBps, "expansion burst");
+        require(
+            keeper.expansion_refill_period() == config.expansionRefillPeriod, "expansion refill"
+        );
         require(keeper.admin() == config.admin, "keeper admin mismatch");
         require(!keeper.expansion_paused(), "expansion paused");
         require(!keeper.contraction_paused(), "contraction paused");
@@ -512,7 +534,10 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);
         console2.log("Primary utilization (bps)", config.primaryUtilizationBps);
+        console2.log("Keeper profit share (bps)", config.keeperProfitShareBps);
         console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
+        console2.log("Maximum expansion burst (bps)", config.maxExpansionBurstBps);
+        console2.log("Expansion refill period", config.expansionRefillPeriod);
         console2.log("AMM execution buffer (bps)", config.ammExecutionBufferBps);
         console2.log("frxUSD Chainlink proxy", config.frxUsdProxy);
         console2.log("USDe Chainlink proxy", config.usdeProxy);

@@ -28,6 +28,7 @@ interface PegKeeperPolicy:
     def can_allocate(_keeper: address) -> bool: view
     def can_expand(_keeper: address) -> bool: view
     def can_contract(_keeper: address) -> bool: view
+    def keeper_profit_share_bps(_keeper: address) -> uint256: view
 
 interface Pool:
     def coins(_index: uint256) -> address: view
@@ -117,13 +118,16 @@ event CrvUsdBorrowed:
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
-    keeper_profit_share_bps: uint256
     min_expansion_amount: uint256
     max_deployed_crvusd: uint256
 
 event InterventionPolicyUpdated:
     max_intervention_share_bps: uint256
     min_intervention_delay: uint256
+
+event VelocityPolicyUpdated:
+    max_expansion_burst_bps: uint256
+    expansion_refill_period: uint256
 
 event BackingOraclePolicyUpdated:
     backing_oracle: indexed(address)
@@ -138,8 +142,8 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
-max_expansion_burst_bps: public(constant(uint256)) = 500
-expansion_refill_period: public(constant(uint256)) = 5 * 60
+DEFAULT_MAX_EXPANSION_BURST_BPS: constant(uint256) = 500
+DEFAULT_EXPANSION_REFILL_PERIOD: constant(uint256) = 5 * 60
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
@@ -163,11 +167,12 @@ pool_paired_token_index: public(uint256)
 
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
-keeper_profit_share_bps: public(uint256)
 min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
 min_intervention_delay: public(uint256)
+max_expansion_burst_bps: public(uint256)
+expansion_refill_period: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
 
@@ -272,11 +277,12 @@ def initialize(
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
     self.entry_min_profit_ppm = 10
     self.normal_exit_min_profit_ppm = 500
-    self.keeper_profit_share_bps = 3_000
     self.min_expansion_amount = 10_000 * 10 ** 18
     self.max_deployed_crvusd = _max_deployed_crvusd
     self.max_intervention_share_bps = 3_333
     self.min_intervention_delay = 12
+    self.max_expansion_burst_bps = DEFAULT_MAX_EXPANSION_BURST_BPS
+    self.expansion_refill_period = DEFAULT_EXPANSION_REFILL_PERIOD
     self.last_expansion_pressure_update = block.timestamp
 
     self.expansion_paused = False
@@ -482,6 +488,14 @@ def _policy_address() -> address:
 
 @internal
 @view
+def _keeper_reward(_gross_profit: uint256) -> uint256:
+    return _gross_profit * staticcall PegKeeperPolicy(
+        self._policy_address()
+    ).keeper_profit_share_bps(self) // BPS
+
+
+@internal
+@view
 def _require_expansion_policy():
     assert staticcall PegKeeperPolicy(self._policy_address()).can_expand(self)
 
@@ -517,7 +531,7 @@ def _allocation_allowed() -> bool:
 @view
 def _max_burst() -> uint256:
     cap: uint256 = self.max_deployed_crvusd
-    return cap // BPS * max_expansion_burst_bps + cap % BPS * max_expansion_burst_bps // BPS
+    return cap // BPS * self.max_expansion_burst_bps + cap % BPS * self.max_expansion_burst_bps // BPS
 
 
 @internal
@@ -527,13 +541,19 @@ def _current_pressure() -> uint256:
     if pressure == 0:
         return 0
     elapsed: uint256 = block.timestamp - self.last_expansion_pressure_update
-    if elapsed >= expansion_refill_period:
+    if elapsed >= self.expansion_refill_period:
         return 0
     burst: uint256 = self._max_burst()
-    refill: uint256 = burst // expansion_refill_period * elapsed + burst % expansion_refill_period * elapsed // expansion_refill_period
+    refill: uint256 = burst // self.expansion_refill_period * elapsed + burst % self.expansion_refill_period * elapsed // self.expansion_refill_period
     if refill >= pressure:
         return 0
     return pressure - refill
+
+
+@internal
+def _checkpoint_velocity():
+    self._expansion_pressure = self._current_pressure()
+    self.last_expansion_pressure_update = block.timestamp
 
 
 @internal
@@ -779,7 +799,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     )
     exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward: uint256 = self._keeper_reward(gross_profit)
     self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
 
     crv_usd_after_reward: uint256 = staticcall self._crv_usd.balanceOf(self)
@@ -828,7 +848,7 @@ def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
     )
     exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward: uint256 = self._keeper_reward(gross_profit)
     net_crv_usd: uint256 = expected_crv_usd - keeper_reward
 
     deployed_after: uint256 = 0
@@ -936,7 +956,7 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     if lp_value_after < accounting_baseline + crv_usd_deployed:
         return False
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
     keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price
     if keeper_reward > lp_tokens_out:
         return False
@@ -976,7 +996,7 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
     assert lp_value_after >= accounting_baseline + crv_usd_deployed
     gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    reward_value: uint256 = self._keeper_reward(gross_profit)
     keeper_reward: uint256 = reward_value * PRECISION // virtual_price
     assert keeper_reward <= lp_tokens_out
 
@@ -1045,7 +1065,7 @@ def _settle_lp_expansion(
     if lp_value_after > accounting_baseline + _principal:
         gross_profit = lp_value_after - accounting_baseline - _principal
 
-    keeper_reward_value: uint256 = gross_profit * self.keeper_profit_share_bps // BPS
+    keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
     keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price_after
     assert keeper_reward <= _lp_received
     self._transfer_exact_to(ERC20(self.pool.address), msg.sender, keeper_reward)
@@ -1446,32 +1466,50 @@ def set_intervention_policy(
 
 
 @external
+def set_velocity_policy(
+    _max_expansion_burst_bps: uint256,
+    _expansion_refill_period: uint256,
+):
+    """
+    @notice Changes the maximum expansion burst and its full linear refill period.
+    """
+    assert self._is_admin(msg.sender)
+    assert _max_expansion_burst_bps <= BPS
+    assert _expansion_refill_period > 0
+
+    self._checkpoint_velocity()
+    self.max_expansion_burst_bps = _max_expansion_burst_bps
+    self.expansion_refill_period = _expansion_refill_period
+    log VelocityPolicyUpdated(
+        max_expansion_burst_bps=_max_expansion_burst_bps,
+        expansion_refill_period=_expansion_refill_period,
+    )
+
+
+@external
 def set_policy(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
-    _keeper_profit_share_bps: uint256,
     _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
     """
-    @notice Changes profit, reward, minimum trade, and crvUSD limits.
+    @notice Changes local profit, minimum trade, and crvUSD limits.
     """
     assert self._is_admin(msg.sender)
     assert _normal_exit_min_profit_ppm <= PPM
-    assert _keeper_profit_share_bps <= BPS
     assert _min_expansion_amount > 0
     assert _max_deployed_crvusd > 0
 
+    self._checkpoint_velocity()
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
-    self.keeper_profit_share_bps = _keeper_profit_share_bps
     self.min_expansion_amount = _min_expansion_amount
     self.max_deployed_crvusd = _max_deployed_crvusd
 
     log PolicyUpdated(
         entry_min_profit_ppm=_entry_min_profit_ppm,
         normal_exit_min_profit_ppm=_normal_exit_min_profit_ppm,
-        keeper_profit_share_bps=_keeper_profit_share_bps,
         min_expansion_amount=_min_expansion_amount,
         max_deployed_crvusd=_max_deployed_crvusd,
     )

@@ -49,7 +49,10 @@ The policy owns:
 - the aggregate crvUSD oracle and exact direction gate;
 - a three-tier keeper classification;
 - the primary-utilization threshold;
+- the global keeper profit share;
 - priority filtering over the Factory's active keeper set.
+
+Every reward path reads `factory.policy().keeper_profit_share_bps(address(this))` at execution time. The current policy ignores the address and returns one owner-managed value bounded to `10_000 bps`. Replacing or updating policy therefore changes the reward rule for every existing keeper without a keeper migration.
 
 The Factory exposes:
 
@@ -131,7 +134,9 @@ Entry and normal-contraction profit floors are independent:
 | frxUSD / sUSDe | `10` (`0.1 bp`) | `500` (`5 bp`) |
 | USDC / USDT last resort | `500` (`5 bp`) | `100` (`1 bp`) |
 
-The last-resort profile makes USDC/USDT more expensive to enter and easier to unwind. `keeperProfitShareBps` remains `3_000` for every candidate keeper.
+The last-resort profile makes USDC/USDT more expensive to enter and easier to unwind. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
+
+Each keeper's expansion velocity is independently admin-configurable through `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)`. Launch values are `500 bps` of the local cap with a `300 second` full linear refill. A zero burst disables new velocity capacity; the refill period must be nonzero. Configuration and local-cap changes checkpoint current pressure before applying the new rule, so elapsed time is never retroactively repriced.
 
 ## Factory and deployment
 
@@ -179,15 +184,15 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,114 bytes
-implementation runtime:  17,997 bytes
-EIP-170 headroom:          6,579 bytes
+implementation initcode: 18,319 bytes
+implementation runtime:  18,203 bytes
+EIP-170 headroom:          6,373 bytes
 implementation hash:
-0xbeff6ee5eb8ffc4852b320b742051b57369af0cec19850501231fc3c3b2b6acf
+0xdd3ea8d8aaa15acc2f26e7e7d0a5d433c29565a5f568006c3b410dba93541f0a
 
-PegKeeperPolicy runtime:   4,688 bytes
+PegKeeperPolicy runtime:   4,862 bytes
 policy hash:
-0x3bd8c4b57f1e1926567271e6aa73a43f80990740f0de8b9fa6eb6c8c7947158a
+0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes
