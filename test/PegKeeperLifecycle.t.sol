@@ -85,6 +85,50 @@ contract PegKeeperLifecycleTest is Test {
         );
     }
 
+    function test_globalProvideKillRetiresV2WithoutRegulatorListRemoval() public {
+        address[] memory pegKeepers = _currentPegKeepers();
+        _globallyDisableV2Provision(pegKeepers);
+
+        assertEq(regulator.is_killed(), 1, "V2 provision should be globally killed");
+        for (uint256 i; i < pegKeepers.length; ++i) {
+            address pegKeeper = pegKeepers[i];
+            assertEq(
+                regulator.peg_keepers(i).pegKeeper,
+                pegKeeper,
+                "old Regulator list should remain untouched"
+            );
+            assertEq(
+                IPegKeeperV2(pegKeeper).regulator(),
+                REGULATOR,
+                "keeper should remain on old Regulator"
+            );
+            assertEq(factory.debt_ceiling(pegKeeper), 0);
+            assertEq(factory.debt_ceiling_residual(pegKeeper), IPegKeeperV2(pegKeeper).debt());
+            assertEq(IERC20(CRVUSD).balanceOf(pegKeeper), 0, "idle crvUSD should be burned");
+            assertEq(regulator.provide_allowed(pegKeeper), 0);
+        }
+
+        assertGt(IPegKeeperV2(USDT_PEG_KEEPER).debt(), 0);
+        assertEq(regulator.withdraw_allowed(USDT_PEG_KEEPER), type(uint256).max);
+    }
+
+    function test_permissionlessRugBurnsReturnedCrvUsdDuringGlobalWindDown() public {
+        address[] memory pegKeepers = _currentPegKeepers();
+        _globallyDisableV2Provision(pegKeepers);
+
+        uint256 debtBefore = IPegKeeperV2(USDT_PEG_KEEPER).debt();
+        uint256 residualBefore = factory.debt_ceiling_residual(USDT_PEG_KEEPER);
+        uint256 returnedCrvUsd = 1_000_000e18;
+        assertGt(residualBefore, returnedCrvUsd);
+
+        deal(CRVUSD, USDT_PEG_KEEPER, returnedCrvUsd);
+        factory.rug_debt_ceiling(USDT_PEG_KEEPER);
+
+        assertEq(IERC20(CRVUSD).balanceOf(USDT_PEG_KEEPER), 0);
+        assertEq(factory.debt_ceiling_residual(USDT_PEG_KEEPER), residualBefore - returnedCrvUsd);
+        assertEq(IPegKeeperV2(USDT_PEG_KEEPER).debt(), debtBefore);
+    }
+
     function test_deployReplacementUsdtPegKeeperAndAdjustAfterCrvUsdPurchase() public {
         _retireCurrentPegKeepers();
 
@@ -183,6 +227,17 @@ contract PegKeeperLifecycleTest is Test {
             IPegKeeperV2(pegKeepers[i]).set_new_regulator(address(offboarding));
         }
         vm.stopPrank();
+
+        vm.startPrank(FACTORY_ADMIN);
+        for (uint256 i; i < pegKeepers.length; ++i) {
+            factory.set_debt_ceiling(pegKeepers[i], 0);
+        }
+        vm.stopPrank();
+    }
+
+    function _globallyDisableV2Provision(address[] memory pegKeepers) internal {
+        vm.prank(OWNERSHIP_AGENT);
+        regulator.set_killed(1);
 
         vm.startPrank(FACTORY_ADMIN);
         for (uint256 i; i < pegKeepers.length; ++i) {

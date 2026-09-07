@@ -57,9 +57,9 @@ contract PegKeeperV3LpFactoryTest is Test {
         assertEq(keeper.pool(), address(yieldAmm));
         assertEq(keeper.coins(1), address(yieldAmm));
         assertEq(keeper.amm_execution_buffer_bps(), 4);
-        assertTrue(keeper.expansion_paused());
-        assertTrue(keeper.contraction_paused());
-        assertTrue(keeper.all_execution_paused());
+        assertFalse(keeper.expansion_paused());
+        assertFalse(keeper.contraction_paused());
+        assertFalse(keeper.all_execution_paused());
     }
 
     function test_deployPinsSelectedPoolLiquidityMode() public {
@@ -68,6 +68,36 @@ contract PegKeeperV3LpFactoryTest is Test {
             factory.deployPegKeeper(address(yieldAmm), false, false, address(yieldOracle));
 
         assertFalse(IPegKeeperV3(deployed).pool_uses_dynamic_arrays());
+    }
+
+    function test_pendingOwnershipHandoffFreezesFactoryUntilAcceptance() public {
+        address nextOwner = makeAddr("nextOwner");
+        address correctedOwner = makeAddr("correctedOwner");
+        IPegKeeperV3Factory.DeploymentDefaults memory currentDefaults = factory.defaults();
+        vm.prank(owner);
+        factory.transferOwnership(nextOwner);
+        assertEq(factory.ownershipTransferNonce(), 1);
+
+        vm.prank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.OwnershipHandoffPending.selector);
+        factory.setDefaults(currentDefaults);
+        vm.prank(owner);
+        factory.transferOwnership(correctedOwner);
+        assertEq(factory.ownershipTransferNonce(), 2);
+
+        vm.prank(nextOwner);
+        vm.expectRevert(IPegKeeperV3Factory.NotPendingOwner.selector);
+        factory.acceptOwnership(1);
+        vm.prank(correctedOwner);
+        vm.expectRevert(IPegKeeperV3Factory.InvalidOwnershipTransferNonce.selector);
+        factory.acceptOwnership(1);
+        vm.prank(correctedOwner);
+        factory.acceptOwnership(2);
+        assertEq(factory.owner(), correctedOwner);
+        assertEq(factory.pendingOwner(), address(0));
+
+        vm.prank(correctedOwner);
+        factory.setDefaults(currentDefaults);
     }
 
     function test_deployRequiresPolicyBoundToThisFactory() public {

@@ -13,6 +13,8 @@ interface IPegKeeperV3Factory {
 
     error NotOwner();
     error NotPendingOwner();
+    error OwnershipHandoffPending();
+    error InvalidOwnershipTransferNonce();
     error InvalidOwner();
     error InvalidImplementation();
     error InvalidDefaults();
@@ -42,6 +44,7 @@ interface IPegKeeperV3Factory {
 
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
+    function ownershipTransferNonce() external view returns (uint256);
     function controllerFactory() external view returns (address);
     function implementation() external view returns (address);
     function policy() external view returns (address);
@@ -53,7 +56,7 @@ interface IPegKeeperV3Factory {
     function activePegKeeperAt(uint256 index) external view returns (address);
     function is_active(address pegKeeper) external view returns (bool);
 
-    /// @notice Deploys a paused keeper that interacts only with `amm`.
+    /// @notice Deploys an unpaused, zero-allocation keeper that interacts only with `amm`.
     /// @dev The paired token is the non-crvUSD coin and the backing asset is derived for ERC-4626.
     function deployPegKeeper(
         address amm,
@@ -65,6 +68,7 @@ interface IPegKeeperV3Factory {
     function setDefaults(DeploymentDefaults calldata newDefaults) external;
     function setPolicy(address newPolicy) external;
     function set_active(address pegKeeper, bool active) external;
+    /// @notice Freezes configuration and increments the acceptance nonce for `newOwner`.
     function transferOwnership(address newOwner) external;
-    function acceptOwnership() external;
+    function acceptOwnership(uint256 expectedNonce) external;
 }

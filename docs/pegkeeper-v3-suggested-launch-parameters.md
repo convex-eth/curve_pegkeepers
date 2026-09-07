@@ -126,60 +126,57 @@ The draw is Factory-admin-only, policy-gated, cap/ceiling/balance/velocity bound
 
 ## Deployment/proposal sequence
 
-Dependency deployer CREATE order:
+Deployment sender sequence:
 
-1. locked keeper implementation;
-2. policy;
-3. Factory;
-4. frxUSD/USD adapter;
-5. USDe/USD adapter;
-6. USDC/USD adapter;
-7. USDT/USD adapter.
+1. deploy the locked keeper implementation;
+2. deploy policy and Factory with the deployment sender as initial owner and keeper admin;
+3. deploy the frxUSD/USD, USDe/USD, USDC/USD, and USDT/USD adapters;
+4. bind policy to Factory;
+5. deploy and configure all four unpaused keepers with zero ControllerFactory allocation;
+6. assign the primary, secondary, and tertiary tiers;
+7. change the Factory's dynamic keeper admin to the Curve Ownership Agent; and
+8. set the Curve Ownership Agent as pending owner of both Factory and policy, freezing old-owner configuration and recording the acceptance nonces. A corrected recipient increments its nonce and invalidates any already-built acceptance proposal.
 
 Proposal sequence:
 
-1. bind policy to Factory;
-2. set Factory defaults;
-3. deploy each direct keeper;
-4. assign primary/secondary/tertiary tier;
-5. set retained oracle and keeper-local policy;
-6. allocate frxUSD/USDC/USDT debt ceilings;
-7. leave sUSDe ceiling at zero;
-8. register all four keepers in both aggregate monetary policies;
-9. leave all directions paused.
+1. accept Factory ownership;
+2. accept policy ownership;
+3. register all four keepers in both aggregate monetary policies;
+4. assign 20 million crvUSD ControllerFactory ceilings to frxUSD, USDC, and USDT; and
+5. leave sUSDe at a zero ceiling.
 
-The proposal contains 33 actions and no activation, V2 removal, Regulator migration, or aggregate-oracle membership action.
+The proposal contains 13 actions. It does not deploy or configure keepers, toggle pause flags, remove V2 keepers, change a V2 Regulator, or edit aggregate-oracle membership. The proposal validates the complete preconfigured state and rejects a paused, prefunded, mutated, mis-owned, or incorrectly wired candidate before producing calldata.
 
 ## V2 coexistence and later removal
 
-The launch proposal intentionally appends each zero-debt V3 keeper to both aggregate monetary policies while leaving every V2 keeper registered. Both registrations are required: the oldest live controller still uses the legacy policy, while the other live controllers use the current policy. Each policy calls `debt()` on every registered keeper, and the V3 keepers expose that selector directly. Adding a fully paused keeper with zero deployed debt therefore preserves the aggregate PegKeeper debt input and the calculated rates.
+The launch proposal appends each zero-debt V3 keeper to both aggregate monetary policies while leaving every V2 keeper registered. Both registrations are required: the oldest live sfrxETH controller still uses the legacy policy, while the other live controllers use the current policy. Each policy calls `debt()` on every registered keeper. Adding zero-debt V3 keepers therefore preserves the aggregate PegKeeper debt input and calculated rates; assigning a ceiling then supplies the crvUSD that makes an unpaused keeper operational.
 
-A later V2 offboarding should be separately authorized and ordered as follows:
+A later full-system V2 retirement should be separately authorized and ordered as follows:
 
-1. Deploy, configure, and register the V3 keepers while they remain fully paused and report zero debt.
-2. Register each V2 keeper in `PegKeeperOffboarding`, then switch that V2 keeper to the offboarding regulator so new provision is forbidden and withdrawal remains available.
-3. Set the V2 ControllerFactory debt ceiling to zero so no new crvUSD allocation remains available.
-4. Leave the V2 keeper address in both aggregate monetary policies and in the old V2 Regulator while its residual `debt()` is nonzero. The monetary policies must continue counting that debt, and the old Regulator may still use the keeper as a debt/price reference for other V2 keepers.
-5. Allow the V2 LP position to contract until both keeper debt and ControllerFactory residual allocation are zero.
-6. Only then remove the old keeper from both monetary policies and, when it is no longer needed as a peer reference, from the old V2 Regulator.
+1. Bring the preconfigured V3 keepers online through ownership acceptance, dual-policy registration, and the selected nonzero ceilings.
+2. Set the old V2 Regulator to `Killed.Provide`. This globally forbids every registered V2 keeper from expanding while leaving the Regulator's normal withdrawal path available.
+3. Set every V2 ControllerFactory debt ceiling to zero. This burns currently idle crvUSD and prevents new Factory allocation, but it does not burn crvUSD returned by later LP contraction.
+4. Leave each V2 keeper address in both aggregate monetary policies and leave the old Regulator list intact while debt unwinds. The monetary policies must continue counting nonzero `debt()`. There is no need to remove or repoint V2 keepers when the entire Regulator is being retired.
+5. Allow V2 LP positions to contract when the old Regulator's normal aggregate-price and local-price checks permit it. After contractions, call permissionless `ControllerFactory.rug_debt_ceiling(v2Keeper)` to burn returned crvUSD and reduce residual allocation; repeat as necessary.
+6. Once both keeper debt and ControllerFactory residual allocation are zero, remove the V2 keeper from both monetary policies if desired. The abandoned old Regulator may retain its stale keeper list permanently because V3 does not use it.
+
+`PegKeeperOffboarding` remains an optional per-keeper path when V2 keepers are retired asynchronously or governance wants withdrawal eligibility without the old Regulator's aggregate-price gate. It is not required for an all-at-once V2 shutdown.
 
 The monetary policies remove keepers by address and compact their arrays with the tail entry, so removing several zero-debt keepers does not require an index order. Removing an indebted keeper is unsafe: the legacy policy immediately stops counting that debt, while the current policy stops feeding it into subsequent debt-ratio EMA updates.
 
 The aggregate crvUSD oracle is a separate pool-source registry, not a PegKeeper registry. Replacing a keeper does not imply adding or removing its pool there. If a future proposal independently removes multiple oracle pools, `remove_price_pair(index)` swap-pops by numeric index; calls must use descending snapshot indices or recompute the live index after every removal. The contract also leaves stale data in `price_pairs(index)` beyond its private active count, so a nonzero getter alone does not prove that a pair remains active.
 
-## Activation order
+## Launch verification
 
-If separately authorized:
+Before authorization:
 
-1. Reconfirm implementation, policy, Factory, and oracle adapter hashes.
+1. Reconfirm implementation, policy, Factory, keeper, and oracle-adapter identities.
 2. Reconfirm all pool coin orders, selected fixed/dynamic liquidity ABI modes, rate behavior, virtual prices, fee parameters, balances, and one-coin quote behavior.
 3. Reassess every local max and ControllerFactory debt ceiling against current pool depth.
-4. Keep sUSDe at zero until governance deliberately funds it.
-5. Confirm all keepers are active in Factory but directions `0`, `1`, and `2` remain paused.
-6. Before enabling V3 expansion for a pool with a live V2 keeper, register that V2 keeper in `PegKeeperOffboarding`, switch it to the offboarding regulator, and set its ControllerFactory debt ceiling to zero. Keep its address in both monetary policies and in the old Regulator while residual debt remains.
-7. Unpause V3 contraction (`1`) first.
-8. Unpause global execution (`2`).
-9. Unpause expansion (`0`) for one V3 keeper under a deliberately bounded ceiling, then run expansion followed by contraction canaries and verify all balance/debt deltas.
-10. Enable additional V3 expansion capacity only after the preceding keeper passes. Do not leave V2 and V3 permissionless expansion enabled concurrently for the same pool during cutover.
+4. Confirm the deployment sender still owns Factory and policy, Curve is pending owner of both, Curve is already the dynamic keeper admin, all four keepers are unpaused and debt-free, and every ControllerFactory ceiling is zero.
+5. Keep sUSDe at zero until governance deliberately funds it.
+6. Simulate the exact 13-action vote and verify that frxUSD, USDC, and USDT receive their ceilings only after ownership acceptance and dual-policy registration.
+7. Immediately after execution, run bounded expansion and contraction canaries and verify every balance/debt delta.
+8. Retire V2 globally with `Killed.Provide`, zero ceilings, and periodic `rug_debt_ceiling` calls when separately authorized. If any overlap between V2 and V3 expansion is unacceptable, include those V2 shutdown actions in the same atomic vote before the V3 ceiling assignments.
 
 A current-block canary is mandatory before any production action. Pinned-fork success is evidence of code behavior, not authorization or current market safety.

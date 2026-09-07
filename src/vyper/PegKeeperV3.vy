@@ -278,9 +278,9 @@ def initialize(
     self.min_intervention_delay = 12
     self.last_expansion_pressure_update = block.timestamp
 
-    self.expansion_paused = True
-    self.contraction_paused = True
-    self.all_execution_paused = True
+    self.expansion_paused = False
+    self.contraction_paused = False
+    self.all_execution_paused = False
 
 
 @external

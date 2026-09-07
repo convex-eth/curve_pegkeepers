@@ -67,6 +67,7 @@ LOCAL_EXPANDABLE_SELECTOR: constant(Bytes[4]) = method_id("can_expand_without_po
 
 owner: public(address)
 pendingOwner: public(address)
+ownershipTransferNonce: public(uint256)
 factory: public(address)
 aggregateCrvUsdOracle: public(address)
 primaryUtilizationBps: public(uint256)
@@ -214,18 +215,22 @@ def can_contract(_keeper: address) -> bool:
 
 @external
 def transferOwnership(_new_owner: address):
-    self._check_owner()
+    if msg.sender != self.owner:
+        raw_revert(method_id("NotOwner()"))
     if _new_owner == empty(address) or _new_owner == self.owner:
         raw_revert(method_id("InvalidOwner()"))
 
     self.pendingOwner = _new_owner
+    self.ownershipTransferNonce += 1
     log OwnershipTransferStarted(self.owner, _new_owner)
 
 
 @external
-def acceptOwnership():
+def acceptOwnership(_expected_nonce: uint256):
     if msg.sender != self.pendingOwner:
         raw_revert(method_id("NotPendingOwner()"))
+    if _expected_nonce != self.ownershipTransferNonce:
+        raw_revert(method_id("InvalidOwnershipTransferNonce()"))
 
     old_owner: address = self.owner
     self.owner = msg.sender
@@ -238,6 +243,8 @@ def acceptOwnership():
 def _check_owner():
     if msg.sender != self.owner:
         raw_revert(method_id("NotOwner()"))
+    if self.pendingOwner != empty(address):
+        raw_revert(method_id("OwnershipHandoffPending()"))
 
 
 @internal

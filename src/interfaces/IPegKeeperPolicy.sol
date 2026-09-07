@@ -5,6 +5,8 @@ pragma solidity ^0.8.30;
 interface IPegKeeperPolicy {
     error NotOwner();
     error NotPendingOwner();
+    error OwnershipHandoffPending();
+    error InvalidOwnershipTransferNonce();
     error InvalidOwner();
     error InvalidFactory();
     error InvalidOracle();
@@ -22,6 +24,7 @@ interface IPegKeeperPolicy {
 
     function owner() external view returns (address);
     function pendingOwner() external view returns (address);
+    function ownershipTransferNonce() external view returns (uint256);
     function factory() external view returns (address);
     function aggregateCrvUsdOracle() external view returns (address);
     function primaryUtilizationBps() external view returns (uint256);
@@ -41,6 +44,7 @@ interface IPegKeeperPolicy {
     function set_aggregate_crvusd_oracle(address newOracle) external;
     function set_primary_utilization_bps(uint256 newUtilizationBps) external;
     function set_tier(address pegKeeper, uint256 newTier) external;
+    /// @notice Freezes configuration and increments the acceptance nonce for `newOwner`.
     function transferOwnership(address newOwner) external;
-    function acceptOwnership() external;
+    function acceptOwnership(uint256 expectedNonce) external;
 }

@@ -30,6 +30,8 @@ interface ILpPegKeeperV3 {
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function max_intervention_share_bps() external view returns (uint256);
     function min_intervention_delay() external view returns (uint256);
+    function expansion_paused() external view returns (bool);
+    function all_execution_paused() external view returns (bool);
     function last_intervention_at() external view returns (uint256);
     function expansion_pressure() external view returns (uint256);
     function available_expansion() external view returns (uint256);
@@ -758,7 +760,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_sweepDonationIsBlockedByExpansionPause() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
         vm.prank(governance);
-        keeper.set_direction_paused(2, false);
+        keeper.set_direction_paused(0, true);
         crvUsd.mint(address(keeper), 12_000e18);
         yieldToken.mint(address(keeper), 12_000e18);
 
@@ -1189,6 +1191,8 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 pausedKeeper = _deployKeeper(address(yieldAmm));
         crvUsd.mint(address(pausedKeeper), 100_000e18);
         vm.prank(governance);
+        pausedKeeper.set_direction_paused(0, true);
+        vm.prank(governance);
         vm.expectRevert();
         pausedKeeper.borrow_crvusd(10_000e18, receiver);
 
@@ -1295,6 +1299,22 @@ contract PegKeeperV3LpYieldTest is Test {
         aggregateCrvUsdOracle.setPrice(1e18);
         assertGt(keeper.available_expansion(), 0);
         keeper.expand_supply(10_000e18);
+    }
+
+    function test_unpausedKeeperCannotUseDonatedCrvUsdAtZeroFactoryCeiling() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+        factory.setDebtCeiling(address(keeper), 0);
+        crvUsd.mint(address(keeper), 100_000e18);
+        yieldAmm.setBalances(0, 100_000_000e18);
+        vm.warp(block.timestamp + keeper.min_intervention_delay());
+
+        assertFalse(keeper.expansion_paused());
+        assertFalse(keeper.all_execution_paused());
+        assertEq(keeper.available_expansion(), 0);
+        assertFalse(keeper.can_expand_without_policy());
+        vm.expectRevert();
+        keeper.expand_supply(10_000e18);
+        assertEq(keeper.deployed_crvusd(), 0);
     }
 
     function test_sameBlockDonationSweepCannotRoundTripWithoutExitEdge() public {

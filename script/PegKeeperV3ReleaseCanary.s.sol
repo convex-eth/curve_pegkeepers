@@ -61,11 +61,9 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
         vm.prank(FACTORY_ADMIN);
         IControllerFactory(FACTORY).set_debt_ceiling(address(pegKeeper), ALLOCATION);
-        vm.startPrank(CANARY_ADMIN);
-        pegKeeper.set_direction_paused(2, false);
-        pegKeeper.set_direction_paused(1, false);
-        pegKeeper.set_direction_paused(0, false);
-        vm.stopPrank();
+        require(!pegKeeper.expansion_paused(), "expansion unexpectedly paused");
+        require(!pegKeeper.contraction_paused(), "contraction unexpectedly paused");
+        require(!pegKeeper.all_execution_paused(), "execution unexpectedly paused");
 
         // Make the paired token abundant in the direct AMM.
         deal(FRXUSD, CANARY_TRADER, EXPANSION_MARKET_TRADE);
@@ -138,7 +136,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     function _deployCanary(address aggregateOracle) internal returns (IPegKeeperV3 pegKeeper) {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
-        DeployPegKeeperV3.Config memory config = deployer.mainnetConfig();
+        DeployPegKeeperV3.Config memory config = deployer.mainnetConfig(CANARY_FACTORY_OWNER);
         config.owner = CANARY_FACTORY_OWNER;
         config.controllerFactory = FACTORY;
         config.aggregateCrvUsdOracle = aggregateOracle;
@@ -147,13 +145,23 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         config.feeReceiver = FEE_SPLITTER;
         config.maxDeployedCrvUsd = ALLOCATION;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
-        DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
+        DeployPegKeeperV3.Deployment memory deployment = deployer.deployDependencies(config);
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
         vm.prank(CANARY_FACTORY_OWNER);
         policy.set_factory(deployment.factory);
 
         IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(deployment.factory);
+        vm.prank(CANARY_FACTORY_OWNER);
+        deploymentFactory.setDefaults(
+            IPegKeeperV3Factory.DeploymentDefaults({
+                admin: CANARY_ADMIN,
+                emergencyAdmin: EMERGENCY_ADMIN,
+                feeReceiver: FEE_SPLITTER,
+                maxDeployedCrvUsd: ALLOCATION,
+                ammExecutionBufferBps: AMM_EXECUTION_BUFFER_BPS
+            })
+        );
         address expectedKeeper = _computeCreateAddress(deployment.factory, 1);
         vm.prank(CANARY_FACTORY_OWNER);
         pegKeeper = IPegKeeperV3(

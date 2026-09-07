@@ -143,7 +143,7 @@ deployPegKeeper(
 )
 ```
 
-Every deployed keeper is added to the active list and starts with expansion, contraction, and global execution paused.
+Every deployed keeper is added to the active list and starts unpaused. Before governance assigns a ControllerFactory debt ceiling, its zero allocation prevents expansion and its zero LP/debt position leaves nothing to contract.
 
 The environment-free dependency deployer performs seven monotonic CREATEs:
 
@@ -155,11 +155,11 @@ The environment-free dependency deployer performs seven monotonic CREATEs:
 6. USDC/USD Chainlink adapter;
 7. USDT/USD Chainlink adapter.
 
-The policy is intentionally unbound until the governance proposal executes its first action. No keeper can be deployed through the Factory while the policy is unbound.
+The deployment sender initially owns the Factory and policy. The deployer binds the policy, creates and configures all four keepers, changes the dynamic keeper admin to the Curve Ownership Agent, and sets that agent as pending owner of both Factory and policy. Starting either pending handoff freezes old-owner configuration. Any recipient correction increments its acceptance nonce and invalidates an already-built proposal, preventing stale deployment state from being accepted during the governance vote. The deployment JSON records every dependency, keeper address, and handoff nonce for independent verification.
 
-## Canonical paused launch proposal
+## Canonical launch proposal
 
-The current proposal creates four direct keepers:
+The current proposal accepts the two ownership handoffs, registers four preconfigured direct keepers, and funds three:
 
 | Tier | Paired token | AMM | Liquidity ABI | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
 |---|---|---|---|---|---:|---:|---:|---:|
@@ -168,7 +168,7 @@ The current proposal creates four direct keepers:
 | Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 5 bp | 1 bp |
 | Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 5 bp | 1 bp |
 
-The proposal leaves all four fully paused. It would deploy and register sUSDe without a production debt ceiling; governance must remeasure live liquidity and independently choose its local cap and ControllerFactory ceiling before activation.
+The proposal contains 13 actions: two ownership acceptances, eight registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD. sUSDe remains inert at a zero ceiling pending a separate liquidity decision.
 
 ## Runtime identity
 
@@ -176,20 +176,20 @@ Pinned Vyper `0.3.10`, `--optimize codesize`, Shanghai:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 17,847 bytes
-implementation runtime:  17,764 bytes
-EIP-170 headroom:          6,812 bytes
+implementation initcode: 17,844 bytes
+implementation runtime:  17,761 bytes
+EIP-170 headroom:          6,815 bytes
 implementation hash:
-0xcef94a7ce7d9c25978a7866c4fb82045191148e8fdc05f97e24bfbc9cb4292ff
+0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589
 
-PegKeeperPolicy runtime:   4,394 bytes
+PegKeeperPolicy runtime:   4,609 bytes
 policy hash:
-0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078
+0x6376ddbee90ea97a1d013d23817710553fd8b4247941b7a778102fc5c41ad9e9
 
-Factory semantic runtime:  3,875 bytes
-Factory deployed runtime:  3,939 bytes
+Factory semantic runtime:  4,085 bytes
+Factory deployed runtime:  4,149 bytes
 Factory semantic hash:
-0x73b019397ebccae92946c77188a3cf07577efc3b3ded1fb331774cae36a1bbb0
+0x064f8195a49c3a02fda40e84785ac1a3abc380ffa596a4f9976a1b2f2c0f16df
 ```
 
 The detached preview module has been removed; preview logic is back in the core.

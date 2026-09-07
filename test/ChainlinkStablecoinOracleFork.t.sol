@@ -11,9 +11,10 @@ contract ChainlinkStablecoinOracleForkTest is Test {
         vm.createSelectFork(vm.envOr("ETH_RPC_URL", string("https://mainnet.gateway.tenderly.co")));
     }
 
-    function test_unifiedDeploymentCreatesLiveFrxUsdAdapter() public {
+    function test_dependencyDeploymentCreatesLiveFrxUsdAdapter() public {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
-        DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(deployer.mainnetConfig());
+        DeployPegKeeperV3.Deployment memory deployment =
+            deployer.deployDependencies(deployer.mainnetConfig(address(deployer)));
 
         IChainlinkStablecoinOracle frxUsdOracle =
             IChainlinkStablecoinOracle(deployment.frxUsdUsdOracle);

@@ -291,7 +291,7 @@ Directions:
 2 all execution
 ```
 
-Factory `admin()` may pause or unpause. `emergency_admin()` may only pause. Every Factory-created keeper starts fully paused.
+Factory `admin()` may pause or unpause. `emergency_admin()` may only pause. Every Factory-created keeper starts unpaused and with no ControllerFactory allocation; a zero ceiling is the launch-time exposure gate.
 
 `execute(target,value,data)` remains an admin-only arbitrary execution/recovery hook with bubbled revert data. It is not permissionless and does not silently modify debt.
 
@@ -334,9 +334,7 @@ Historical deployment membership is private. The public policy-facing registry c
 | Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
 | Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
 
-The proposal deploys all keepers, registers them in both aggregate monetary policies, assigns tiers, and leaves them fully paused. There is no sUSDe production allocation action.
-
-The dependency deployer creates implementation, policy, Factory, and four Chainlink adapters. The governance proposal first binds policy, then deploys/configures keepers.
+The deployment sender initially owns the Factory and policy, binds them, creates and configures all four keepers, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, registers every keeper in both aggregate monetary policies, and assigns 20 million crvUSD ceilings to frxUSD, USDC, and USDT. Those three become active immediately; sUSDe stays at zero allocation.
 
 ## 14. Compiled identity
 
@@ -344,20 +342,20 @@ Pinned Vyper `0.3.10`, codesize optimization, Shanghai:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 17,847 bytes
-implementation runtime:  17,764 bytes
+implementation initcode: 17,844 bytes
+implementation runtime:  17,761 bytes
 implementation hash:
-0xcef94a7ce7d9c25978a7866c4fb82045191148e8fdc05f97e24bfbc9cb4292ff
-EIP-170 headroom:          6,812 bytes
+0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589
+EIP-170 headroom:          6,815 bytes
 
-PegKeeperPolicy runtime:   4,394 bytes
+PegKeeperPolicy runtime:   4,609 bytes
 policy hash:
-0x958aef56c99aefc7f1f3fd7a39097d71d04a5dcfe51993a6488f1df53e7c7078
+0x6376ddbee90ea97a1d013d23817710553fd8b4247941b7a778102fc5c41ad9e9
 
-Factory semantic runtime:  3,875 bytes
-Factory deployed runtime:  3,939 bytes
+Factory semantic runtime:  4,085 bytes
+Factory deployed runtime:  4,149 bytes
 Factory semantic hash:
-0x73b019397ebccae92946c77188a3cf07577efc3b3ded1fb331774cae36a1bbb0
+0x064f8195a49c3a02fda40e84785ac1a3abc380ffa596a4f9976a1b2f2c0f16df
 ```
 
 The existing `3.0.0` manifest and release checklist predate this source snapshot. They must be regenerated from the final committed source before release rather than edited inside the source batch.

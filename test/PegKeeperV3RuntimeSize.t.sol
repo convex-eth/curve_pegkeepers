@@ -9,10 +9,10 @@ contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
     uint256 internal constant DIRECT_IMPLEMENTATION_RUNTIME_BUDGET = 18_000;
-    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 17_847;
-    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 17_764;
+    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 17_844;
+    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 17_761;
     bytes32 internal constant RELEASE_IMPLEMENTATION_RUNTIME_HASH =
-        0xcef94a7ce7d9c25978a7866c4fb82045191148e8fdc05f97e24bfbc9cb4292ff;
+        0x319af9b8baa36db429db07b649d5214debb7df2e7e71663458a16efa09ec6589;
     uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
     uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 

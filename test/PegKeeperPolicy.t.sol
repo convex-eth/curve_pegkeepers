@@ -345,6 +345,33 @@ contract PegKeeperPolicyTest is Test {
         vm.stopPrank();
     }
 
+    function test_pendingOwnershipHandoffFreezesPolicyUntilAcceptance() public {
+        address nextOwner = makeAddr("nextOwner");
+        address correctedOwner = makeAddr("correctedOwner");
+        policy.transferOwnership(nextOwner);
+        assertEq(policy.ownershipTransferNonce(), 1);
+
+        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
+        policy.set_primary_utilization_bps(7_500);
+        policy.transferOwnership(correctedOwner);
+        assertEq(policy.ownershipTransferNonce(), 2);
+
+        vm.prank(nextOwner);
+        vm.expectRevert(IPegKeeperPolicy.NotPendingOwner.selector);
+        policy.acceptOwnership(1);
+        vm.prank(correctedOwner);
+        vm.expectRevert(IPegKeeperPolicy.InvalidOwnershipTransferNonce.selector);
+        policy.acceptOwnership(1);
+        vm.prank(correctedOwner);
+        policy.acceptOwnership(2);
+        assertEq(policy.owner(), correctedOwner);
+        assertEq(policy.pendingOwner(), address(0));
+
+        vm.prank(correctedOwner);
+        policy.set_primary_utilization_bps(7_500);
+        assertEq(policy.primaryUtilizationBps(), 7_500);
+    }
+
     function _newKeeper() internal returns (PolicyKeeperMock keeper) {
         keeper = new PolicyKeeperMock(address(factory), address(controllerFactory));
         factory.setActive(address(keeper), true);

@@ -3,7 +3,7 @@
 @title PegKeeperV3Factory
 @license MIT
 @notice Deploys and records PegKeeperV3 contracts using settings chosen by the owner.
-@dev Each new keeper is fixed to one base contract and starts paused.
+@dev Each new keeper is fixed to one base contract and starts unpaused with zero allocation.
 """
 
 
@@ -94,6 +94,7 @@ IMPLEMENTATION: immutable(address)
 
 owner: public(address)
 pendingOwner: public(address)
+ownershipTransferNonce: public(uint256)
 policy: public(address)
 _defaults: DeploymentDefaults
 
@@ -195,7 +196,7 @@ def deployPegKeeper(
     _backingOracle: address,
 ) -> address:
     """
-    @notice Lets the owner deploy and record a paused direct-liquidity keeper.
+    @notice Lets the owner deploy and record an unpaused direct-liquidity keeper.
     """
     self._check_owner()
     if PegKeeperPolicy(self.policy).factory() != self:
@@ -274,23 +275,27 @@ def set_active(_peg_keeper: address, _active: bool):
 @external
 def transferOwnership(_newOwner: address):
     """
-    @notice Names the account that may accept factory ownership.
+    @notice Freezes configuration and increments the acceptance nonce for the named account.
     """
-    self._check_owner()
+    if msg.sender != self.owner:
+        raw_revert(method_id("NotOwner()"))
     if _newOwner == empty(address) or _newOwner == self.owner:
         raw_revert(method_id("InvalidOwner()"))
 
     self.pendingOwner = _newOwner
+    self.ownershipTransferNonce += 1
     log OwnershipTransferStarted(self.owner, _newOwner)
 
 
 @external
-def acceptOwnership():
+def acceptOwnership(_expected_nonce: uint256):
     """
     @notice Accepts factory ownership for the pending owner.
     """
     if msg.sender != self.pendingOwner:
         raw_revert(method_id("NotPendingOwner()"))
+    if _expected_nonce != self.ownershipTransferNonce:
+        raw_revert(method_id("InvalidOwnershipTransferNonce()"))
 
     old_owner: address = self.owner
     self.owner = msg.sender
@@ -318,6 +323,8 @@ def __default__() -> address:
 def _check_owner():
     if msg.sender != self.owner:
         raw_revert(method_id("NotOwner()"))
+    if self.pendingOwner != empty(address):
+        raw_revert(method_id("OwnershipHandoffPending()"))
 
 
 @internal
