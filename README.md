@@ -67,27 +67,26 @@ Factory ownership can replace a policy only after the replacement is bound to th
 
 ### Three-layer expansion priority
 
-The candidate threshold is `8_000 bps` (`80%`).
+The shared priority threshold is `8_000 bps` (`80%`).
 
-1. **Primary — frxUSD:** may expand whenever its own local probe passes.
-2. **Secondary — sUSDe:** may expand when locally viable and the primary is either unavailable or at least 80% utilized.
-3. **Tertiary — USDC and USDT:** may expand only when locally viable, the primary is unavailable, and every active secondary is unavailable.
+1. **Primary — frxUSD:** may expand whenever its own local execution checks pass.
+2. **Secondary — sUSDe:** may expand when locally executable after the primary stops retaining priority.
+3. **Tertiary — USDC and USDT:** may expand when locally executable only after the primary and every funded secondary stop retaining priority.
 
-An unset primary is unavailable rather than a global stop: secondaries may expand, while
-tertiaries must still defer to any active, locally expandable secondary.
+A higher-tier keeper retains priority while it is active and Factory-bound, unpaused, backed by a healthy retained-backing oracle, funded with a nonzero effective cap, and below 80% utilization. Policy checks those states directly. Temporary local non-executability from pool imbalance, intervention delay, velocity, loose balance, AMM quote, or minimum-profit economics does not release priority.
 
-Primary utilization is:
+Priority utilization for each higher-tier keeper is:
 
 ```text
-primary.debt()
+keeper.debt()
 -----------------------------------------------
-min(primary.max_deployed_crvusd(),
-    ControllerFactory.debt_ceiling(primary))
+min(keeper.max_deployed_crvusd(),
+    ControllerFactory.debt_ceiling(keeper))
 ```
 
-The policy deliberately does not reconstruct allocation as `crvUSD.balanceOf(primary) + debt()`: a direct token donation could otherwise inflate the denominator and grief secondary admission.
+The policy deliberately does not reconstruct allocation as `crvUSD.balanceOf(keeper) + debt()`: a direct token donation could otherwise inflate the denominator and grief lower-tier admission. An unset, inactive, paused, oracle-unhealthy, or zero-capacity higher tier does not block the next tier.
 
-`can_expand_without_policy()` is the non-recursive keeper probe. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, velocity, and minimum-size preview economics. Policy calls isolate a reverting predecessor as unavailable, allowing a lower tier to operate.
+`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, velocity, and minimum-size preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
 
 The aggregate direction boundary remains exact:
 
@@ -198,9 +197,9 @@ EIP-170 headroom:          6,344 bytes
 implementation hash:
 0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c
 
-PegKeeperPolicy runtime:   4,862 bytes
+PegKeeperPolicy runtime:   5,490 bytes
 policy hash:
-0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd
+0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes

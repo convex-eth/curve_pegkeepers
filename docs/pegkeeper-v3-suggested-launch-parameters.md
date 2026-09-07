@@ -35,7 +35,7 @@ The proposal deploys/configures/registers sUSDe but deliberately assigns no prod
 | emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
 | fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
 | AMM execution buffer | `3 bps` |
-| primary utilization threshold | `8_000 bps` |
+| priority utilization threshold | `8_000 bps` |
 
 The aggregate crvUSD oracle is owned by `PegKeeperPolicy`, not the Factory:
 
@@ -47,14 +47,11 @@ The aggregate crvUSD oracle is owned by `PegKeeperPolicy`, not the Factory:
 
 ### Primary
 
-frxUSD can expand whenever its own `can_expand_without_policy()` probe succeeds.
+frxUSD can expand whenever its own local execution checks pass. While active, unpaused, backed by a healthy oracle, funded, and below 80% of its effective cap, it retains priority even when pool imbalance, delay, velocity, or entry economics temporarily prevent another expansion.
 
 ### Secondary
 
-sUSDe can expand when its local probe succeeds and either:
-
-- frxUSD is locally unavailable due to pause, oracle, delay, capacity, local imbalance, or executable economics; or
-- frxUSD debt is at least 80% of its effective cap.
+sUSDe can expand when its local execution checks pass and frxUSD no longer retains priority. frxUSD releases priority only when it is unset, inactive or misbound, globally or expansion-paused, below its retained-backing oracle floor, unfunded, or at least 80% utilized.
 
 Effective cap is the tighter of the keeper-local maximum and ControllerFactory ceiling. Raw crvUSD balance is not used.
 
@@ -63,8 +60,10 @@ Effective cap is the tighter of the keeper-local maximum and ControllerFactory c
 USDC or USDT can expand only when:
 
 - the candidate itself is locally viable;
-- frxUSD is unavailable; and
-- every active secondary is unavailable.
+- frxUSD no longer retains priority; and
+- every funded, healthy, unpaused secondary has independently reached 80% utilization or otherwise stopped retaining priority.
+
+Temporary local non-executability never releases a higher tier. A primary expansion that consumes its same-block delay or velocity therefore cannot unlock a secondary, and a secondary expansion cannot unlock the tertiary tier.
 
 This intentionally makes plain non-yielding pools last-resort liquidity.
 

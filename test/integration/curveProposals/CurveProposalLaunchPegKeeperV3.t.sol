@@ -16,6 +16,7 @@ import {IERC20} from "../../../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IPegKeeperV3Factory} from "../../../src/interfaces/IPegKeeperV3Factory.sol";
+import {IStableSwap2Pool} from "../../../src/interfaces/IStableSwap2Pool.sol";
 
 contract CurveDebtCeilingProposalHarness is BaseCurveProposal {
     address internal immutable keeper;
@@ -52,6 +53,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant USDE = 0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
     address internal constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address internal constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
+    address internal constant FRXUSD_CRVUSD_POOL = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1;
 
     uint256 internal constant CAP = 20_000_000e18;
     uint256 internal constant VOTING_PERIOD = 8 days;
@@ -352,6 +354,38 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(debtAdded, 10_000e18);
         assertGt(lpReceived, 0);
         assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
+    }
+
+    function test_primaryCooldownCannotUnlockSecondaryInSameBlock() public {
+        _executeActionsDirectly();
+        vm.prank(OWNERSHIP_AGENT);
+        ICurveEDAOAdminProxy(EDAO_PROXY)
+            .execute(
+                CONTROLLER_FACTORY,
+                abi.encodeCall(
+                    IControllerFactory.set_debt_ceiling, (expectedSUsdeKeeper, 20_000_000e18)
+                )
+            );
+
+        address trader = makeAddr("frxUSD expansion trader");
+        uint256 marketTrade = 2_000_000e18;
+        deal(FRXUSD, trader, marketTrade);
+        vm.startPrank(trader);
+        IERC20(FRXUSD).approve(FRXUSD_CRVUSD_POOL, marketTrade);
+        IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(0, 1, marketTrade, 0);
+        vm.stopPrank();
+
+        IPegKeeperV3 primaryKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
+        IPegKeeperV3 secondaryKeeper = IPegKeeperV3(expectedSUsdeKeeper);
+        assertTrue(keeperPolicy.can_expand(expectedFrxUsdKeeper));
+        assertTrue(secondaryKeeper.can_expand_without_policy());
+
+        primaryKeeper.expand_supply(10_000e18);
+
+        assertFalse(primaryKeeper.can_expand_without_policy());
+        assertLt(primaryKeeper.debt() * 10_000, primaryKeeper.max_deployed_crvusd() * 8_000);
+        assertFalse(keeperPolicy.can_allocate(expectedSUsdeKeeper));
+        assertFalse(keeperPolicy.can_expand(expectedSUsdeKeeper));
     }
 
     function _executeProposal() internal {

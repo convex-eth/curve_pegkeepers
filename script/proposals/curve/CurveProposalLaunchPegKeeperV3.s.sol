@@ -19,9 +19,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 18_232;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
         0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c;
-    uint256 public constant POLICY_RUNTIME_SIZE = 4_862;
+    uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd;
+        0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
     uint256 public constant FACTORY_CORE_SIZE = 3_963;
     uint256 public constant FACTORY_RUNTIME_SIZE = 4_027;
     bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
@@ -242,7 +242,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(policy.ownershipTransferNonce() == policyOwnershipNonce, "policy handoff nonce");
         require(policy.factory() == deploymentFactory, "policy factory");
         require(policy.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
-        require(policy.primaryUtilizationBps() == 8_000, "primary threshold");
+        require(policy.priorityUtilizationBps() == 8_000, "priority threshold");
         require(
             policy.keeper_profit_share_bps(frxUsdKeeper) == KEEPER_PROFIT_SHARE_BPS,
             "frxUSD profit share"

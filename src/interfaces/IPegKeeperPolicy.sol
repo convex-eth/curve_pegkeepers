@@ -17,7 +17,7 @@ interface IPegKeeperPolicy {
 
     event FactorySet(address indexed factory);
     event AggregateCrvUsdOracleUpdated(address indexed oldOracle, address indexed newOracle);
-    event PrimaryUtilizationUpdated(uint256 oldUtilizationBps, uint256 newUtilizationBps);
+    event PriorityUtilizationUpdated(uint256 oldUtilizationBps, uint256 newUtilizationBps);
     event KeeperProfitShareUpdated(
         uint256 oldKeeperProfitShareBps, uint256 newKeeperProfitShareBps
     );
@@ -30,7 +30,7 @@ interface IPegKeeperPolicy {
     function ownershipTransferNonce() external view returns (uint256);
     function factory() external view returns (address);
     function aggregateCrvUsdOracle() external view returns (address);
-    function primaryUtilizationBps() external view returns (uint256);
+    function priorityUtilizationBps() external view returns (uint256);
     function keeper_profit_share_bps(address pegKeeper) external view returns (uint256);
     function primary() external view returns (address);
     function tier(address pegKeeper) external view returns (uint256);
@@ -46,7 +46,7 @@ interface IPegKeeperPolicy {
 
     function set_factory(address factory_) external;
     function set_aggregate_crvusd_oracle(address newOracle) external;
-    function set_primary_utilization_bps(uint256 newUtilizationBps) external;
+    function set_priority_utilization_bps(uint256 newUtilizationBps) external;
     function set_keeper_profit_share_bps(uint256 newKeeperProfitShareBps) external;
     function set_tier(address pegKeeper, uint256 newTier) external;
     /// @notice Freezes configuration and increments the acceptance nonce for `newOwner`.

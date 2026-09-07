@@ -58,7 +58,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(deployment.policyOwnershipNonce, 1);
         assertEq(policy.factory(), deployment.factory);
         assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
-        assertEq(policy.primaryUtilizationBps(), config.primaryUtilizationBps);
+        assertEq(policy.priorityUtilizationBps(), config.priorityUtilizationBps);
         assertEq(
             policy.keeper_profit_share_bps(deployment.frxUsdPegKeeper), config.keeperProfitShareBps
         );
@@ -113,7 +113,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         factory.setDefaults(defaults_);
         vm.prank(config.owner);
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_primary_utilization_bps(config.primaryUtilizationBps);
+        policy.set_priority_utilization_bps(config.priorityUtilizationBps);
         vm.prank(config.owner);
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_keeper_profit_share_bps(config.keeperProfitShareBps);
@@ -156,7 +156,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.admin, deployer.CURVE_OWNERSHIP_AGENT());
         assertEq(config.emergencyAdmin, deployer.EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
-        assertEq(config.primaryUtilizationBps, 8_000);
+        assertEq(config.priorityUtilizationBps, 8_000);
         assertEq(config.keeperProfitShareBps, 3_000);
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
         assertEq(config.maxExpansionBurstBps, 500);
@@ -199,7 +199,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         config.admin = finalOwner;
         config.emergencyAdmin = makeAddr("emergencyAdmin");
         config.feeReceiver = makeAddr("feeReceiver");
-        config.primaryUtilizationBps = 8_000;
+        config.priorityUtilizationBps = 8_000;
         config.keeperProfitShareBps = 3_000;
         config.maxDeployedCrvUsd = 2_500_000e18;
         config.maxExpansionBurstBps = 700;

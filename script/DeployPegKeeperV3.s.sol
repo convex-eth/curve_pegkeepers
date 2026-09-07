@@ -35,7 +35,7 @@ contract DeployPegKeeperV3 is Script {
 
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant RECOMMENDED_USDE_CHAINLINK_MAX_DELAY = 25 hours;
-    uint256 public constant PRIMARY_UTILIZATION_BPS = 8_000;
+    uint256 public constant PRIORITY_UTILIZATION_BPS = 8_000;
     uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
     uint256 public constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
@@ -62,7 +62,7 @@ contract DeployPegKeeperV3 is Script {
         address admin;
         address emergencyAdmin;
         address feeReceiver;
-        uint256 primaryUtilizationBps;
+        uint256 priorityUtilizationBps;
         uint256 keeperProfitShareBps;
         uint256 maxDeployedCrvUsd;
         uint256 maxExpansionBurstBps;
@@ -123,7 +123,7 @@ contract DeployPegKeeperV3 is Script {
         config.admin = CURVE_OWNERSHIP_AGENT;
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
-        config.primaryUtilizationBps = PRIMARY_UTILIZATION_BPS;
+        config.priorityUtilizationBps = PRIORITY_UTILIZATION_BPS;
         config.keeperProfitShareBps = KEEPER_PROFIT_SHARE_BPS;
         config.maxDeployedCrvUsd = INITIAL_MAX_DEPLOYED_CRVUSD;
         config.maxExpansionBurstBps = MAX_EXPANSION_BURST_BPS;
@@ -209,7 +209,7 @@ contract DeployPegKeeperV3 is Script {
                 abi.encode(
                     config.owner,
                     config.aggregateCrvUsdOracle,
-                    config.primaryUtilizationBps,
+                    config.priorityUtilizationBps,
                     config.keeperProfitShareBps
                 )
             )
@@ -365,8 +365,8 @@ contract DeployPegKeeperV3 is Script {
             "aggregate oracle mismatch"
         );
         require(
-            policy.primaryUtilizationBps() == config.primaryUtilizationBps,
-            "primary threshold mismatch"
+            policy.priorityUtilizationBps() == config.priorityUtilizationBps,
+            "priority threshold mismatch"
         );
         require(
             policy.keeper_profit_share_bps(address(0)) == config.keeperProfitShareBps,
@@ -533,7 +533,7 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Factory admin", config.admin);
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);
-        console2.log("Primary utilization (bps)", config.primaryUtilizationBps);
+        console2.log("Priority utilization (bps)", config.priorityUtilizationBps);
         console2.log("Keeper profit share (bps)", config.keeperProfitShareBps);
         console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
         console2.log("Maximum expansion burst (bps)", config.maxExpansionBurstBps);

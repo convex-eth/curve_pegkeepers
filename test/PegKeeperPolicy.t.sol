@@ -62,14 +62,19 @@ contract PolicyFactoryMock {
 contract PolicyKeeperMock {
     address public immutable factory;
     address public immutable controller_factory;
+    address public immutable backing_oracle;
+    uint256 public min_backing_oracle_price = 0.999e18;
     uint256 public max_deployed_crvusd = 100e18;
     uint256 public debt;
     bool public locallyExpandable = true;
     bool public localProbeReverts;
+    bool public all_execution_paused;
+    bool public expansion_paused;
 
-    constructor(address keeperFactory, address controllerFactory) {
+    constructor(address keeperFactory, address controllerFactory, address backingOracle) {
         factory = keeperFactory;
         controller_factory = controllerFactory;
+        backing_oracle = backingOracle;
     }
 
     function setMaxDeployedCrvUsd(uint256 maximum) external {
@@ -88,9 +93,17 @@ contract PolicyKeeperMock {
         localProbeReverts = value;
     }
 
+    function setExpansionPaused(bool value) external {
+        expansion_paused = value;
+    }
+
+    function setAllExecutionPaused(bool value) external {
+        all_execution_paused = value;
+    }
+
     function can_expand_without_policy() external view returns (bool) {
         require(!localProbeReverts, "local probe failure");
-        return locallyExpandable;
+        return locallyExpandable && !all_execution_paused && !expansion_paused;
     }
 }
 
@@ -166,6 +179,61 @@ contract PegKeeperPolicyTest is Test {
         assertTrue(policy.can_expand(address(secondaryOne)));
     }
 
+    function test_primaryTransientLocalFailureDoesNotReleaseSecondaryPriority() public {
+        primary.setDebt(0);
+        primary.setLocallyExpandable(false);
+
+        assertFalse(policy.can_allocate(address(secondaryOne)));
+        assertFalse(policy.can_expand(address(secondaryOne)));
+
+        primary.setLocalProbeReverts(true);
+        assertFalse(policy.can_allocate(address(secondaryOne)));
+        assertFalse(policy.can_expand(address(secondaryOne)));
+    }
+
+    function test_everyFundedSecondaryMustReachThresholdBeforeTertiary() public {
+        primary.setDebt(80e18);
+        primary.setLocallyExpandable(false);
+        secondaryOne.setDebt(80e18);
+        secondaryOne.setLocallyExpandable(false);
+        secondaryTwo.setDebt(80e18 - 1);
+        secondaryTwo.setLocallyExpandable(false);
+
+        assertFalse(policy.can_allocate(address(tertiary)));
+        assertFalse(policy.can_expand(address(tertiary)));
+
+        secondaryTwo.setDebt(80e18);
+        assertTrue(policy.can_allocate(address(tertiary)));
+        assertTrue(policy.can_expand(address(tertiary)));
+    }
+
+    function test_zeroCapacityPauseAndBadBackingOracleReleasePriority() public {
+        primary.setExpansionPaused(true);
+        assertTrue(policy.can_expand(address(secondaryOne)));
+
+        primary.setExpansionPaused(false);
+        primary.setAllExecutionPaused(true);
+        assertTrue(policy.can_expand(address(secondaryOne)));
+
+        primary.setAllExecutionPaused(false);
+        PolicyPriceOracleMock(primary.backing_oracle()).setShouldRevert(true);
+        assertTrue(policy.can_expand(address(secondaryOne)));
+
+        PolicyPriceOracleMock(primary.backing_oracle()).setShouldRevert(false);
+        PolicyPriceOracleMock(primary.backing_oracle()).setPrice(0.999e18 - 1);
+        assertTrue(policy.can_expand(address(secondaryOne)));
+
+        PolicyPriceOracleMock(primary.backing_oracle()).setPrice(1e18);
+        primary.setDebt(80e18);
+        secondaryOne.setDebt(80e18);
+        secondaryTwo.setExpansionPaused(true);
+        assertTrue(policy.can_expand(address(tertiary)));
+
+        secondaryTwo.setExpansionPaused(false);
+        controllerFactory.setDebtCeiling(address(secondaryTwo), 0);
+        assertTrue(policy.can_expand(address(tertiary)));
+    }
+
     function test_secondaryUsesTighterLocalMaximumAsUtilizationDenominator() public {
         primary.setMaxDeployedCrvUsd(50e18);
         primary.setDebt(40e18 - 1);
@@ -185,12 +253,6 @@ contract PegKeeperPolicyTest is Test {
         assertTrue(policy.can_expand(address(secondaryOne)));
     }
 
-    function test_secondaryCanExpandWhenPrimaryIsLocallyBlocked() public {
-        primary.setDebt(0);
-        primary.setLocallyExpandable(false);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-    }
-
     function test_allocationDoesNotRequireCandidateLocalExpansion() public {
         primary.setDebt(80e18);
         secondaryOne.setLocallyExpandable(false);
@@ -199,21 +261,18 @@ contract PegKeeperPolicyTest is Test {
         assertFalse(policy.can_expand(address(secondaryOne)));
     }
 
-    function test_allocationStillEnforcesPriorityAndActiveMembership() public {
+    function test_allocationIgnoresPrimaryLocalProbeButEnforcesSaturationAndMembership() public {
         primary.setDebt(80e18 - 1);
         assertFalse(policy.can_allocate(address(secondaryOne)));
 
         primary.setLocallyExpandable(false);
+        assertFalse(policy.can_allocate(address(secondaryOne)));
+
+        primary.setDebt(80e18);
         assertTrue(policy.can_allocate(address(secondaryOne)));
 
         factory.setActive(address(secondaryOne), false);
         assertFalse(policy.can_allocate(address(secondaryOne)));
-    }
-
-    function test_secondaryCanExpandWhenPrimaryProbeReverts() public {
-        primary.setDebt(0);
-        primary.setLocalProbeReverts(true);
-        assertTrue(policy.can_expand(address(secondaryOne)));
     }
 
     function test_secondaryCanExpandWhenPrimaryIsInactive() public {
@@ -230,39 +289,36 @@ contract PegKeeperPolicyTest is Test {
         assertTrue(policy.can_expand(address(secondaryOne)));
     }
 
-    function test_tertiaryRemainsBlockedByExpandableSecondaryWhenPrimaryIsUnset() public {
+    function test_tertiaryRemainsBlockedByFundedUnsaturatedSecondaryWhenPrimaryIsUnset() public {
         policy.set_tier(address(primary), NONE);
 
         assertFalse(policy.can_allocate(address(tertiary)));
         assertFalse(policy.can_expand(address(tertiary)));
     }
 
-    function test_tertiaryCanExpandWhenPrimaryIsUnsetAndSecondariesAreBlocked() public {
+    function test_tertiaryCanExpandWhenPrimaryIsUnsetAndSecondariesAreSaturated() public {
         policy.set_tier(address(primary), NONE);
-        secondaryOne.setLocallyExpandable(false);
-        secondaryTwo.setLocallyExpandable(false);
+        secondaryOne.setDebt(80e18);
+        secondaryTwo.setDebt(80e18);
 
         assertTrue(policy.can_allocate(address(tertiary)));
         assertTrue(policy.can_expand(address(tertiary)));
     }
 
-    function test_tertiaryRequiresPrimaryAndEveryActiveSecondaryToBeBlocked() public {
-        primary.setDebt(100e18);
+    function test_tertiaryRequiresPrimaryAndEveryActiveSecondaryToReachThreshold() public {
+        primary.setDebt(80e18);
         assertFalse(policy.can_expand(address(tertiary)));
 
-        primary.setLocallyExpandable(false);
+        secondaryOne.setDebt(80e18);
         assertFalse(policy.can_expand(address(tertiary)));
 
-        secondaryOne.setLocallyExpandable(false);
-        assertFalse(policy.can_expand(address(tertiary)));
-
-        secondaryTwo.setLocallyExpandable(false);
+        secondaryTwo.setDebt(80e18);
         assertTrue(policy.can_expand(address(tertiary)));
     }
 
     function test_inactiveSecondaryDoesNotBlockTertiary() public {
-        primary.setLocallyExpandable(false);
-        secondaryOne.setLocallyExpandable(false);
+        primary.setDebt(80e18);
+        secondaryOne.setDebt(80e18);
         factory.setActive(address(secondaryTwo), false);
         assertTrue(policy.can_expand(address(tertiary)));
     }
@@ -385,7 +441,7 @@ contract PegKeeperPolicyTest is Test {
         vm.expectRevert();
         policy.set_tier(address(primary), NONE);
         vm.expectRevert();
-        policy.set_primary_utilization_bps(7_500);
+        policy.set_priority_utilization_bps(7_500);
         vm.expectRevert();
         policy.set_aggregate_crvusd_oracle(address(oracle));
         vm.stopPrank();
@@ -398,7 +454,7 @@ contract PegKeeperPolicyTest is Test {
         assertEq(policy.ownershipTransferNonce(), 1);
 
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_primary_utilization_bps(7_500);
+        policy.set_priority_utilization_bps(7_500);
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_keeper_profit_share_bps(2_000);
         policy.transferOwnership(correctedOwner);
@@ -416,12 +472,15 @@ contract PegKeeperPolicyTest is Test {
         assertEq(policy.pendingOwner(), address(0));
 
         vm.prank(correctedOwner);
-        policy.set_primary_utilization_bps(7_500);
-        assertEq(policy.primaryUtilizationBps(), 7_500);
+        policy.set_priority_utilization_bps(7_500);
+        assertEq(policy.priorityUtilizationBps(), 7_500);
     }
 
     function _newKeeper() internal returns (PolicyKeeperMock keeper) {
-        keeper = new PolicyKeeperMock(address(factory), address(controllerFactory));
+        PolicyPriceOracleMock backingOracle = new PolicyPriceOracleMock();
+        keeper = new PolicyKeeperMock(
+            address(factory), address(controllerFactory), address(backingOracle)
+        );
         factory.setActive(address(keeper), true);
         controllerFactory.setDebtCeiling(address(keeper), 100e18);
     }

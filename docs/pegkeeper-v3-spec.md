@@ -59,7 +59,7 @@ Deployment is blocked until `policy.factory() == address(factory)`. Factory poli
 `PegKeeperPolicy` owns configurable cross-keeper admission rules:
 
 - aggregate crvUSD oracle;
-- primary utilization threshold;
+- shared priority-utilization threshold;
 - one global keeper profit share;
 - one primary;
 - multiple indexed secondaries;
@@ -86,7 +86,7 @@ A keeper exposes `can_expand_without_policy()`. This is a non-recursive local pr
 - retained-backing oracle floor;
 - direct AMM quote, entry-profit floor, reward, and final solvency preview.
 
-Expected economic failure returns `false`. A malformed or reverting external dependency may revert; policy calls the probe with a low-level static call and treats failure as unavailable.
+Expected economic failure returns `false`. A malformed or reverting external dependency may revert; policy calls the candidate probe with a low-level static call and treats failure as candidate non-executability. That result never releases a higher tier's priority.
 
 `policy.can_expand(keeper)` requires:
 
@@ -117,32 +117,39 @@ Secondary:
 ```text
 candidate must be active and locally expandable
 AND
-(
-    primary is not locally expandable
-    OR
-    primary utilization >= primaryUtilizationBps
-)
+primary does not retain priority
 ```
 
 Tertiary:
 
 ```text
 candidate must be active and locally expandable
-AND primary is not locally expandable
-AND every active secondary is not locally expandable
+AND primary does not retain priority
+AND every configured secondary does not retain priority
 ```
 
-An unset primary counts as unavailable, not as a global expansion stop. A configured
-secondary may therefore expand without a primary; a tertiary still must wait until every
-active secondary is also unavailable.
+A higher-tier keeper retains priority exactly when it is active and bound to this Factory,
+neither globally nor expansion-paused, has a valid retained-backing oracle price at or above
+its configured floor, has nonzero effective capacity, and remains below the shared priority
+utilization threshold. Policy checks those facts directly.
 
-The `80%` primary utilization check uses:
+Temporary local non-executability does not release priority. In particular, pool imbalance,
+intervention delay, velocity pressure, loose crvUSD, AMM quote, and entry-profit viability are
+candidate execution checks rather than predecessor-priority checks. This prevents one
+same-block transaction from expanding a primary, consuming its immediate local capacity, and
+then cascading through secondary and tertiary keepers.
+
+An unset primary counts as unavailable, not as a global expansion stop. A configured secondary
+may therefore expand without a primary; a tertiary still waits until every funded, healthy,
+unpaused secondary reaches the same utilization threshold or otherwise stops retaining priority.
+
+The shared `80%` priority-utilization check uses independently for each higher-tier keeper:
 
 ```text
-used = primary.debt()
+used = keeper.debt()
 cap  = min(
-    primary.max_deployed_crvusd(),
-    ControllerFactory.debt_ceiling(primary)
+    keeper.max_deployed_crvusd(),
+    ControllerFactory.debt_ceiling(keeper)
 )
 require used >= ceil(cap * 8_000 / 10_000)
 ```
@@ -358,9 +365,9 @@ implementation hash:
 0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c
 EIP-170 headroom:          6,344 bytes
 
-PegKeeperPolicy runtime:   4,862 bytes
+PegKeeperPolicy runtime:   5,490 bytes
 policy hash:
-0x20f48aaea2b14836a961662bcae1706944b96dc17339a8e215a6fe3e82a608fd
+0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes
