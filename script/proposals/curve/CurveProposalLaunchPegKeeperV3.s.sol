@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 18_232;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_895;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c;
+        0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5;
     uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
@@ -42,11 +42,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
     uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
-    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
+    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
-    uint256 public constant MAX_EXPANSION_BURST_BPS = 500;
-    uint256 public constant EXPANSION_REFILL_PERIOD = 5 minutes;
+    uint256 public constant MAX_EXPANSION_BURST_BPS = 1_000;
+    uint256 public constant EXPANSION_REFILL_PERIOD = 36 seconds;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant USDE_CHAINLINK_MAX_DELAY = 25 hours;
@@ -343,7 +342,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");
-        require(keeper.min_expansion_amount() == MIN_EXPANSION_AMOUNT, "minimum expansion");
         require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
         require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");

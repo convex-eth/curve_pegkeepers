@@ -346,12 +346,12 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         assertFalse(IPegKeeperV3(expectedFrxUsdKeeper).can_expand_without_policy());
         assertTrue(keeperPolicy.can_expand(expectedSUsdeKeeper));
-        (uint256 expectedDebt,,, uint256 expectedLp) = sUsdeKeeper.preview_expansion(10_000e18);
-        assertEq(expectedDebt, 10_000e18);
+        (uint256 expectedDebt,,, uint256 expectedLp) = sUsdeKeeper.preview_expansion();
+        assertGt(expectedDebt, 0);
         assertGt(expectedLp, 0);
 
-        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand_supply(10_000e18);
-        assertEq(debtAdded, 10_000e18);
+        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand_supply();
+        assertEq(debtAdded, expectedDebt);
         assertGt(lpReceived, 0);
         assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
     }
@@ -380,7 +380,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertTrue(keeperPolicy.can_expand(expectedFrxUsdKeeper));
         assertTrue(secondaryKeeper.can_expand_without_policy());
 
-        primaryKeeper.expand_supply(10_000e18);
+        primaryKeeper.expand_supply();
 
         assertFalse(primaryKeeper.can_expand_without_policy());
         assertLt(primaryKeeper.debt() * 10_000, primaryKeeper.max_deployed_crvusd() * 8_000);

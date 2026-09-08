@@ -45,10 +45,18 @@ interface Pool:
 interface DynamicLiquidityPool:
     def calc_token_amount(_amounts: DynArray[uint256, 2], _is_deposit: bool) -> uint256: view
     def add_liquidity(_amounts: DynArray[uint256, 2], _min_mint_amount: uint256) -> uint256: nonpayable
+    def remove_liquidity_imbalance(
+        _amounts: DynArray[uint256, 2],
+        _max_burn_amount: uint256,
+    ) -> uint256: nonpayable
 
 interface FixedLiquidityPool:
     def calc_token_amount(_amounts: uint256[2], _is_deposit: bool) -> uint256: view
     def add_liquidity(_amounts: uint256[2], _min_mint_amount: uint256) -> uint256: nonpayable
+    def remove_liquidity_imbalance(
+        _amounts: uint256[2],
+        _max_burn_amount: uint256,
+    ) -> uint256: nonpayable
 
 interface PairedToken:
     def asset() -> address: view
@@ -118,7 +126,6 @@ event CrvUsdBorrowed:
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
-    min_expansion_amount: uint256
     max_deployed_crvusd: uint256
 
 event InterventionPolicyUpdated:
@@ -142,8 +149,8 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
-DEFAULT_MAX_EXPANSION_BURST_BPS: constant(uint256) = 500
-DEFAULT_EXPANSION_REFILL_PERIOD: constant(uint256) = 5 * 60
+DEFAULT_MAX_EXPANSION_BURST_BPS: constant(uint256) = 1_000
+DEFAULT_EXPANSION_REFILL_PERIOD: constant(uint256) = 36
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
@@ -167,7 +174,6 @@ pool_paired_token_index: public(uint256)
 
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
-min_expansion_amount: public(uint256)
 max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
 min_intervention_delay: public(uint256)
@@ -277,9 +283,8 @@ def initialize(
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
     self.entry_min_profit_ppm = 10
     self.normal_exit_min_profit_ppm = 500
-    self.min_expansion_amount = 10_000 * 10 ** 18
     self.max_deployed_crvusd = _max_deployed_crvusd
-    self.max_intervention_share_bps = 3_333
+    self.max_intervention_share_bps = 2_000
     self.min_intervention_delay = 12
     self.max_expansion_burst_bps = DEFAULT_MAX_EXPANSION_BURST_BPS
     self.expansion_refill_period = DEFAULT_EXPANSION_REFILL_PERIOD
@@ -648,6 +653,18 @@ def protocol_surplus() -> uint256:
 
 @external
 @view
+def calc_profit() -> uint256:
+    """
+    @notice Returns current protocol surplus in crvUSD-value terms for V2 tooling compatibility.
+    """
+    trusted_value: uint256 = self._trusted_backing_value()
+    if trusted_value > self.deployed_crvusd:
+        return trusted_value - self.deployed_crvusd
+    return 0
+
+
+@external
+@view
 def debt() -> uint256:
     """
     @notice Returns the recorded crvUSD amount for compatibility with existing tools.
@@ -711,23 +728,47 @@ def _available_expansion_without_policy() -> uint256:
         return 0
     if not self._intervention_delay_elapsed():
         return 0
-    return min(
-        self._local_expansion_limit(),
-        min(
-            staticcall self._crv_usd.balanceOf(self),
-            min(self._available_velocity(), self._remaining_exposure_capacity()),
-        ),
+
+    budget: uint256 = min(
+        staticcall self._crv_usd.balanceOf(self),
+        min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
+    donated_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
+    if budget <= donated_value:
+        return 0
+    return min(self._local_expansion_limit(), budget - donated_value)
+
+
+@internal
+@view
+def _available_contraction_without_policy() -> uint256:
+    if self.all_execution_paused or self.contraction_paused:
+        return 0
+    if not self._intervention_delay_elapsed():
+        return 0
+
+    held: uint256 = self._lp_inventory()
+    if held == 0:
+        return 0
+    inventory_output: uint256 = staticcall self.pool.calc_withdraw_one_coin(
+        held,
+        convert(self.pool_crvusd_index, int128),
+    )
+    inventory_output = inventory_output * (BPS - self.amm_execution_buffer_bps) // BPS
+    if inventory_output == 0:
+        return 0
+    inventory_output -= 1
+    return min(self._local_contraction_limit(), inventory_output)
 
 
 @external
 @view
 def can_expand_without_policy() -> bool:
     """
-    @notice Reports whether the configured minimum expansion is locally executable, excluding system policy.
+    @notice Reports whether the canonical expansion is locally executable, excluding system policy.
     """
-    amount: uint256 = self.min_expansion_amount
-    if amount == 0 or self._available_expansion_without_policy() < amount:
+    cap: uint256 = self._available_expansion_without_policy()
+    if cap == 0:
         return False
 
     ok: bool = False
@@ -744,7 +785,7 @@ def can_expand_without_policy() -> bool:
     if convert(slice(oracle_response, 0, 32), uint256) < self.min_backing_oracle_price:
         return False
 
-    return self._expansion_preview_viable(amount)
+    return self._expansion_preview_viable(cap)
 
 
 @external
@@ -756,6 +797,49 @@ def available_expansion() -> uint256:
     if not staticcall PegKeeperPolicy(self._policy_address()).can_expand(self):
         return 0
     return self._available_expansion_without_policy()
+
+
+@external
+@view
+def available_contraction() -> uint256:
+    """
+    @notice Returns the most crvUSD that can be withdrawn by a policy-approved contraction now.
+    """
+    if not staticcall PegKeeperPolicy(self._policy_address()).can_contract(self):
+        return 0
+    return self._available_contraction_without_policy()
+
+
+@external
+@view
+def estimate_caller_profit() -> uint256:
+    """
+    @notice Estimates update() caller compensation in crvUSD-value terms; returns zero when unavailable.
+    """
+    ok: bool = False
+    response: Bytes[128] = empty(Bytes[128])
+    ok, response = raw_call(
+        self,
+        method_id("preview_expansion()"),
+        max_outsize=128,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if ok and len(response) == 128:
+        lp_reward: uint256 = convert(slice(response, 64, 32), uint256)
+        return self._lp_value(lp_reward)
+
+    contraction_response: Bytes[96] = empty(Bytes[96])
+    ok, contraction_response = raw_call(
+        self,
+        method_id("preview_contraction()"),
+        max_outsize=96,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if ok and len(contraction_response) == 96:
+        return convert(slice(contraction_response, 64, 32), uint256)
+    return 0
 
 
 @internal
@@ -822,26 +906,22 @@ def _settle_keeper_contraction_and_reduce_exposure(
 
 @external
 @view
-def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
+def preview_contraction() -> (uint256, uint256, uint256):
     """
-    @notice Estimates burning pool LP tokens to withdraw crvUSD.
+    @notice Estimates the canonical exact-crvUSD contraction.
     """
-    assert not self.all_execution_paused
-    assert not self.contraction_paused
     self._require_contraction_policy()
-    assert self._intervention_delay_elapsed()
+    expected_crv_usd: uint256 = self._available_contraction_without_policy()
+    assert expected_crv_usd > 0
 
     accounted: uint256 = self._lp_inventory()
-    assert _amount > 0 and _amount <= accounted
+    quoted_lp_burn: uint256 = self._calc_lp_burn(expected_crv_usd)
+    maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
+    assert maximum_lp_burn <= accounted
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     trusted_before: uint256 = self._lp_value_at(accounted, virtual_price)
-    trusted_after: uint256 = self._lp_value_at(accounted - _amount, virtual_price)
+    trusted_after: uint256 = self._lp_value_at(accounted - maximum_lp_burn, virtual_price)
     trusted_removed: uint256 = trusted_before - trusted_after
-    expected_crv_usd: uint256 = staticcall self.pool.calc_withdraw_one_coin(
-        _amount,
-        convert(self.pool_crvusd_index, int128),
-    )
-    assert expected_crv_usd <= self._local_contraction_limit()
     gross_profit: uint256 = self._realized_contraction_profit(
         expected_crv_usd,
         trusted_removed,
@@ -862,16 +942,14 @@ def preview_contraction(_amount: uint256) -> (uint256, uint256, uint256):
 
 @external
 @view
-def preview_expansion(_amount: uint256) -> (uint256, uint256, uint256, uint256):
+def preview_expansion() -> (uint256, uint256, uint256, uint256):
     """
-    @notice Estimates an expansion from current data; actual results may differ.
+    @notice Estimates the canonical expansion from current data; actual results may differ.
     """
-    assert not self.all_execution_paused
-    assert not self.expansion_paused
     self._require_expansion_policy()
-    assert self._intervention_delay_elapsed()
-    assert _amount <= self._local_expansion_limit()
-    return self._preview_expansion(_amount)
+    amount: uint256 = self._available_expansion_without_policy()
+    assert amount > 0
+    return self._preview_expansion(amount)
 
 
 @external
@@ -898,7 +976,7 @@ def set_backing_oracle_policy(
 @external
 def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     """
-    @notice Changes the largest allowed drop below the AMM's LP quote.
+    @notice Changes the allowed LP-mint shortfall or LP-burn excess against AMM quotes.
     """
     assert self._is_admin_or_factory(msg.sender)
     assert _execution_buffer_bps <= BPS
@@ -929,6 +1007,48 @@ def _calc_token_amount(_crv_usd_amount: uint256, _paired_token_amount: uint256) 
         fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
         fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
         return staticcall FixedLiquidityPool(self.pool.address).calc_token_amount(fixed_amounts, True)
+
+
+@internal
+@view
+def _calc_lp_burn(_crv_usd_amount: uint256) -> uint256:
+    if self.pool_uses_dynamic_arrays:
+        dynamic_amounts: DynArray[uint256, 2] = [0, 0]
+        dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        return staticcall DynamicLiquidityPool(self.pool.address).calc_token_amount(dynamic_amounts, False)
+    else:
+        fixed_amounts: uint256[2] = empty(uint256[2])
+        fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        return staticcall FixedLiquidityPool(self.pool.address).calc_token_amount(fixed_amounts, False)
+
+
+@internal
+@view
+def _maximum_lp_burn(_quoted_lp_burn: uint256) -> uint256:
+    multiplier: uint256 = BPS + self.amm_execution_buffer_bps
+    return (
+        _quoted_lp_burn // BPS * multiplier
+        + (_quoted_lp_burn % BPS * multiplier + BPS - 1) // BPS
+        + 1
+    )
+
+
+@internal
+def _remove_exact_crv_usd(_crv_usd_amount: uint256, _maximum_lp_tokens: uint256) -> uint256:
+    if self.pool_uses_dynamic_arrays:
+        dynamic_amounts: DynArray[uint256, 2] = [0, 0]
+        dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        return extcall DynamicLiquidityPool(self.pool.address).remove_liquidity_imbalance(
+            dynamic_amounts,
+            _maximum_lp_tokens,
+        )
+    else:
+        fixed_amounts: uint256[2] = empty(uint256[2])
+        fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
+        return extcall FixedLiquidityPool(self.pool.address).remove_liquidity_imbalance(
+            fixed_amounts,
+            _maximum_lp_tokens,
+        )
 
 
 @internal
@@ -977,7 +1097,6 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
 @internal
 @view
 def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256):
-    assert _crv_usd_amount >= self.min_expansion_amount
     self._backing_price()
 
     lp_before: uint256 = self._lp_inventory()
@@ -1079,18 +1198,11 @@ def _settle_lp_expansion(
     return gross_profit, keeper_reward
 
 
-@external
-@nonreentrant
-def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
-    """
-    @notice Deposits crvUSD and any donated paired token directly into the keeper's AMM.
-    """
-    assert not self.all_execution_paused
-    assert not self.expansion_paused
-    assert _crv_usd_amount >= self.min_expansion_amount
+@internal
+def _expand_supply() -> (uint256, uint256, uint256):
     self._require_expansion_policy()
-    assert self._intervention_delay_elapsed()
-    assert _crv_usd_amount <= self._local_expansion_limit()
+    crv_usd_amount: uint256 = self._available_expansion_without_policy()
+    assert crv_usd_amount > 0
     self._backing_price()
 
     crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
@@ -1100,7 +1212,7 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_before)
 
-    crv_usd_deployed: uint256 = _crv_usd_amount + donated_paired_token_value
+    crv_usd_deployed: uint256 = crv_usd_amount + donated_paired_token_value
     assert crv_usd_deployed <= crv_usd_before
     assert crv_usd_deployed <= self._remaining_exposure_capacity()
     self._consume_velocity(crv_usd_deployed)
@@ -1135,6 +1247,15 @@ def expand_supply(_crv_usd_amount: uint256) -> (uint256, uint256, uint256):
     return crv_usd_deployed, lp_received, keeper_reward
 
 
+@external
+@nonreentrant
+def expand_supply() -> (uint256, uint256, uint256):
+    """
+    @notice Executes the canonical policy-approved crvUSD expansion.
+    """
+    return self._expand_supply()
+
+
 @internal
 @view
 def _donation_match_amount(_donated_paired_token_value: uint256) -> uint256:
@@ -1157,7 +1278,6 @@ def _donation_match_amount(_donated_paired_token_value: uint256) -> uint256:
 def _settle_donated_paired_token(
     _max_paired_token_amount: uint256,
     _matching_budget: uint256,
-    _require_minimum: bool,
 ) -> (uint256, uint256, uint256, uint256):
     paired_token_swept: uint256 = min(_max_paired_token_amount, self._paired_token_inventory())
     if paired_token_swept == 0:
@@ -1165,9 +1285,6 @@ def _settle_donated_paired_token(
 
     self._backing_price()
     donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_swept)
-    if _require_minimum:
-        assert donated_paired_token_value >= self.min_expansion_amount
-
     crv_usd_matched: uint256 = min(
         self._donation_match_amount(donated_paired_token_value),
         _matching_budget,
@@ -1226,7 +1343,6 @@ def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, u
     return self._settle_donated_paired_token(
         _max_paired_token_amount,
         matching_budget,
-        True,
     )
 
 
@@ -1261,7 +1377,6 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     self._settle_donated_paired_token(
         self._paired_token_inventory(),
         available_budget - withdrawal_reserve,
-        False,
     )
 
     trusted_backing: uint256 = self._oracle_backing_value()
@@ -1302,44 +1417,32 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     return crv_usd_transferred
 
 
-@external
-@nonreentrant
-def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
-    """
-    @notice Burns held pool LP tokens and withdraws only crvUSD.
-    """
-    assert not self.all_execution_paused
-    assert not self.contraction_paused
+@internal
+def _contract_supply() -> (uint256, uint256, uint256):
     self._require_contraction_policy()
-    assert self._intervention_delay_elapsed()
-    lp_before: uint256 = self._lp_inventory()
-    assert _lp_token_amount > 0 and _lp_token_amount <= lp_before
+    crv_usd_amount: uint256 = self._available_contraction_without_policy()
+    assert crv_usd_amount > 0
 
+    lp_before: uint256 = self._lp_inventory()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
-    local_contraction_limit: uint256 = self._local_contraction_limit()
-    quoted_crv_usd: uint256 = staticcall self.pool.calc_withdraw_one_coin(
-        _lp_token_amount,
-        convert(self.pool_crvusd_index, int128),
-    )
-    assert quoted_crv_usd <= local_contraction_limit
-    min_crv_usd: uint256 = quoted_crv_usd * (
-        BPS - self.amm_execution_buffer_bps
-    ) // BPS
+    quoted_lp_burn: uint256 = self._calc_lp_burn(crv_usd_amount)
+    maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
+    assert maximum_lp_burn <= lp_before
     crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
 
-    extcall self.pool.remove_liquidity_one_coin(
-        _lp_token_amount,
-        convert(self.pool_crvusd_index, int128),
-        min_crv_usd,
+    reported_lp_burn: uint256 = self._remove_exact_crv_usd(
+        crv_usd_amount,
+        maximum_lp_burn,
     )
 
     lp_after: uint256 = self._lp_inventory()
-    assert lp_before - lp_after == _lp_token_amount
+    lp_burned: uint256 = lp_before - lp_after
+    assert lp_burned > 0 and lp_burned <= maximum_lp_burn
+    assert reported_lp_burn == lp_burned
     crv_usd_after_withdrawal: uint256 = staticcall self._crv_usd.balanceOf(self)
     crv_usd_received: uint256 = crv_usd_after_withdrawal - crv_usd_before
-    assert crv_usd_received >= min_crv_usd
-    assert crv_usd_received <= local_contraction_limit
+    assert crv_usd_received == crv_usd_amount
 
     virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_after: uint256 = self._lp_value_at(lp_after, virtual_price_after)
@@ -1361,12 +1464,44 @@ def contract_supply(_lp_token_amount: uint256) -> (uint256, uint256, uint256):
 
     log Contracted(
         keeper=msg.sender,
-        lp_tokens_burned=_lp_token_amount,
+        lp_tokens_burned=lp_burned,
         crv_usd_received=crv_usd_received,
         gross_profit=gross_profit,
         keeper_reward=keeper_reward,
     )
-    return _lp_token_amount, crv_usd_received, keeper_reward
+    return lp_burned, crv_usd_received, keeper_reward
+
+
+@external
+@nonreentrant
+def contract_supply() -> (uint256, uint256, uint256):
+    """
+    @notice Executes the canonical exact-crvUSD contraction.
+    """
+    return self._contract_supply()
+
+
+@external
+@nonreentrant
+def update() -> uint256:
+    """
+    @notice Executes the sole canonical intervention and returns caller reward in crvUSD-value terms.
+    """
+    if not self._intervention_delay_elapsed():
+        return 0
+    if self._local_expansion_limit() > 0:
+        crv_usd_deployed: uint256 = 0
+        lp_received: uint256 = 0
+        keeper_reward_lp: uint256 = 0
+        crv_usd_deployed, lp_received, keeper_reward_lp = self._expand_supply()
+        return self._lp_value(keeper_reward_lp)
+    if self._local_contraction_limit() > 0:
+        lp_burned: uint256 = 0
+        crv_usd_received: uint256 = 0
+        keeper_reward: uint256 = 0
+        lp_burned, crv_usd_received, keeper_reward = self._contract_supply()
+        return keeper_reward
+    raise
 
 
 @external
@@ -1378,8 +1513,7 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
     assert self._is_admin(msg.sender)
     assert not self.all_execution_paused
     assert not self.expansion_paused
-    assert _receiver != empty(address)
-    assert _amount >= self.min_expansion_amount
+    assert _amount > 0 and _receiver != empty(address)
     self._require_expansion_policy()
     assert self._intervention_delay_elapsed()
     assert _amount <= self._local_expansion_limit()
@@ -1492,27 +1626,23 @@ def set_velocity_policy(
 def set_policy(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
-    _min_expansion_amount: uint256,
     _max_deployed_crvusd: uint256,
 ):
     """
-    @notice Changes local profit, minimum trade, and crvUSD limits.
+    @notice Changes local profit and crvUSD limits.
     """
     assert self._is_admin(msg.sender)
     assert _normal_exit_min_profit_ppm <= PPM
-    assert _min_expansion_amount > 0
     assert _max_deployed_crvusd > 0
 
     self._checkpoint_velocity()
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
-    self.min_expansion_amount = _min_expansion_amount
     self.max_deployed_crvusd = _max_deployed_crvusd
 
     log PolicyUpdated(
         entry_min_profit_ppm=_entry_min_profit_ppm,
         normal_exit_min_profit_ppm=_normal_exit_min_profit_ppm,
-        min_expansion_amount=_min_expansion_amount,
         max_deployed_crvusd=_max_deployed_crvusd,
     )
 

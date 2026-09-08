@@ -49,10 +49,7 @@ interface IPegKeeperV3 {
         uint256 deployedCrvUsdAfter
     );
     event PolicyUpdated(
-        uint256 entryMinProfitPpm,
-        uint256 normalExitMinProfitPpm,
-        uint256 minExpansionAmount,
-        uint256 maxDeployedCrvUsd
+        uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDeployedCrvUsd
     );
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
     event VelocityPolicyUpdated(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod);
@@ -88,11 +85,11 @@ interface IPegKeeperV3 {
     /// @notice Returns floor(LP balance * current virtual price / 1e18).
     function trusted_backing_value() external view returns (uint256);
     function protocol_surplus() external view returns (uint256);
+    function calc_profit() external view returns (uint256);
     function accounted_lp_tokens() external view returns (uint256);
 
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
-    function min_expansion_amount() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
     function max_intervention_share_bps() external view returns (uint256);
     function min_intervention_delay() external view returns (uint256);
@@ -124,7 +121,6 @@ interface IPegKeeperV3 {
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
     function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
@@ -135,8 +131,10 @@ interface IPegKeeperV3 {
     /// @notice Local viability probe used by PegKeeperPolicy; does not call policy itself.
     function can_expand_without_policy() external view returns (bool);
     function available_expansion() external view returns (uint256);
+    function available_contraction() external view returns (uint256);
+    function estimate_caller_profit() external view returns (uint256);
 
-    function preview_expansion(uint256 crvUsdAmount)
+    function preview_expansion()
         external
         view
         returns (
@@ -145,7 +143,7 @@ interface IPegKeeperV3 {
             uint256 expectedKeeperRewardLp,
             uint256 expectedLpTokensOut
         );
-    function expand_supply(uint256 crvUsdAmount)
+    function expand_supply()
         external
         returns (uint256 crvUsdDeployed, uint256 lpTokensReceived, uint256 keeperRewardLp);
 
@@ -159,8 +157,8 @@ interface IPegKeeperV3 {
             uint256 keeperRewardLp
         );
 
-    /// @notice Estimates a fixed one-coin LP withdrawal into crvUSD.
-    function preview_contraction(uint256 lpTokenAmount)
+    /// @notice Estimates the canonical exact-crvUSD contraction.
+    function preview_contraction()
         external
         view
         returns (
@@ -168,10 +166,11 @@ interface IPegKeeperV3 {
             uint256 expectedGrossProfit,
             uint256 expectedKeeperReward
         );
-    /// @notice Burns LP tokens and removes only crvUSD from the fixed AMM.
-    function contract_supply(uint256 lpTokenAmount)
+    /// @notice Removes the canonical exact crvUSD amount from the AMM.
+    function contract_supply()
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
+    function update() external returns (uint256 callerRewardValue);
 
     function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);

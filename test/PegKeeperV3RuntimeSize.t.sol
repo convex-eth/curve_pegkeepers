@@ -8,10 +8,10 @@ import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 contract PegKeeperV3RuntimeSizeTest is Test {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 18_348;
-    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 18_232;
+    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 20_012;
+    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 19_895;
     bytes32 internal constant RELEASE_IMPLEMENTATION_RUNTIME_HASH =
-        0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c;
+        0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5;
     uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
     uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 

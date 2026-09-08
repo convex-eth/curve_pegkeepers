@@ -46,11 +46,10 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
     uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
-    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
+    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
-    uint256 public constant MAX_EXPANSION_BURST_BPS = 500;
-    uint256 public constant EXPANSION_REFILL_PERIOD = 5 minutes;
+    uint256 public constant MAX_EXPANSION_BURST_BPS = 1_000;
+    uint256 public constant EXPANSION_REFILL_PERIOD = 36 seconds;
 
     uint256 public constant TIER_PRIMARY = 1;
     uint256 public constant TIER_SECONDARY = 2;
@@ -319,9 +318,7 @@ contract DeployPegKeeperV3 is Script {
     ) internal {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
         keeper.set_backing_oracle_policy(backingOracle, MIN_BACKING_ORACLE_PRICE);
-        keeper.set_policy(
-            entryMinProfitPpm, exitMinProfitPpm, MIN_EXPANSION_AMOUNT, config.maxDeployedCrvUsd
-        );
+        keeper.set_policy(entryMinProfitPpm, exitMinProfitPpm, config.maxDeployedCrvUsd);
         keeper.set_intervention_policy(MAX_INTERVENTION_SHARE_BPS, MIN_INTERVENTION_DELAY);
         keeper.set_velocity_policy(config.maxExpansionBurstBps, config.expansionRefillPeriod);
     }
@@ -495,7 +492,6 @@ contract DeployPegKeeperV3 is Script {
                 .keeper_profit_share_bps(keeperAddress) == config.keeperProfitShareBps,
             "keeper reward policy mismatch"
         );
-        require(keeper.min_expansion_amount() == MIN_EXPANSION_AMOUNT, "minimum expansion");
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
         require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");

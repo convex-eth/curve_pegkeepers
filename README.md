@@ -9,7 +9,7 @@ Foundry/Vyper workspace for Curve crvUSD PegKeeper research, V2 migration testin
 A PegKeeper uses crvUSD allocated by the ControllerFactory to rebalance a two-coin Curve pool:
 
 - when crvUSD is scarce, it deposits crvUSD and records the amount as debt;
-- when crvUSD is abundant, it burns held LP through a one-coin crvUSD withdrawal and reduces debt;
+- when crvUSD is abundant, it removes the canonical exact crvUSD amount and reduces debt;
 - it retains the LP token as backing and pays callers only from realized accounting profit.
 
 PegKeepers are not a hard peg guarantee. Their effectiveness depends on pool depth, oracle health, policy admission, available debt capacity, and executable economics.
@@ -26,13 +26,15 @@ expansion:
 
 contraction:
     retained LP
-        -> remove_liquidity_one_coin(..., crvUSD)
+        -> remove_liquidity_imbalance([exact crvUSD, 0], max LP burn)
         -> idle crvUSD
 ```
 
 The Factory derives the paired token from the AMM. For ERC-4626 paired tokens, it derives the retained backing asset through `asset()` and values loose shares with `convertToAssets()`. Held LP is valued only with `get_virtual_price()`; applying the ERC-4626 rate again would double-count it.
 
-Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage floors, gross-before-reward accounting, and final backing-versus-debt solvency.
+Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency.
+
+Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing, capacity, and expansion velocity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; like V2, it returns zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
 
 ## PegKeeperPolicy
 
@@ -86,7 +88,7 @@ min(keeper.max_deployed_crvusd(),
 
 The policy deliberately does not reconstruct allocation as `crvUSD.balanceOf(keeper) + debt()`: a direct token donation could otherwise inflate the denominator and grief lower-tier admission. An unset, inactive, paused, oracle-unhealthy, or zero-capacity higher tier does not block the next tier.
 
-`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, velocity, and minimum-size preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
+`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, velocity, and canonical-action preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
 
 The aggregate direction boundary remains exact:
 
@@ -110,7 +112,7 @@ borrow_crvusd(uint256 amount, address receiver)
 
 - requires the dynamic Factory admin;
 - requires `policy.can_expand(keeper)`;
-- independently enforces expansion/global pauses, minimum amount, delay, retained-oracle health, and the requested amount's local imbalance bound;
+- independently enforces expansion/global pauses, delay, retained-oracle health, and the requested amount's local imbalance bound;
 - enforces the keeper cap and ControllerFactory debt ceiling;
 - requires sufficient idle crvUSD;
 - consumes expansion velocity and updates the intervention timestamp;
@@ -145,7 +147,7 @@ loss-making withdrawals are never permitted by configuration.
 
 The tier profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. This is a soft economic bias rather than enforced cross-pool contraction ordering. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
-Each keeper's expansion velocity is independently admin-configurable through `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)`. Launch values are `500 bps` of the local cap with a `300 second` full linear refill. A zero burst disables new velocity capacity; the refill period must be nonzero. Configuration and local-cap changes checkpoint current pressure before applying the new rule, so elapsed time is never retroactively repriced.
+Each keeper's expansion velocity is independently admin-configurable through `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)`. Launch values are `1_000 bps` (`10%`) of the local cap with a `36 second` full linear refill. The bucket buys roughly three blocks for independent backing oracles to react; the separate `20%` local-imbalance action remains binding when tighter. A zero burst disables new velocity capacity; the refill period must be nonzero. Configuration and local-cap changes checkpoint current pressure before applying the new rule, so elapsed time is never retroactively repriced.
 
 ## Factory and deployment
 
@@ -193,11 +195,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 18,348 bytes
-implementation runtime:  18,232 bytes
-EIP-170 headroom:          6,344 bytes
+implementation initcode: 20,012 bytes
+implementation runtime:  19,895 bytes
+EIP-170 headroom:          4,681 bytes
 implementation hash:
-0xafcfe00a2bb14ebe33e68c3ea630d84a0f3ec2f88b1980547b5d3f9b8099701c
+0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:
@@ -219,9 +221,9 @@ make setup
 ETH_RPC_URL=https://an-archive-rpc.example make check
 ```
 
-Coverage includes fixed- and dynamic-array liquidity dispatch, direct expansion, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, contraction, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. Fixed-array USDC/USDT dispatch is covered against selector-counting pool fixtures; no mocked-pool test is presented as live-fork execution.
+Coverage includes fixed- and dynamic-array liquidity dispatch, canonical amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. A pinned fork test executes exact-crvUSD `remove_liquidity_imbalance` against all four production pools and verifies exact receipt plus the observed one-LP-wei quote/burn difference.
 
-The pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency without weakening the profit floor. It also funds through the real ownership-agent/eDAO-proxy/ControllerFactory path, zeros idle allocation, contracts deployed debt, permissionlessly rugs the returned crvUSD, and checks equal total-supply and residual-allocation reductions while the keeper's unlimited ControllerFactory allowance remains intact.
+The pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It executes a canonical `200,000 crvUSD` expansion under the `10%` burst and a canonical `240,517.600156528893943305 crvUSD` exact-output contraction under the `20%` intervention rule without weakening the profit floor. It also verifies policy direction, measured deltas, debt reduction, final solvency, real ownership-agent/eDAO-proxy/ControllerFactory funding, idle-allocation burning, permissionless residual rugging, and the keeper's persistent ControllerFactory allowance.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` predate the current `3.0.0` source candidate. They remain untouched in the source batch and must be regenerated from the final committed source snapshot before release.
 

@@ -27,6 +27,9 @@ interface IStableSwap2PoolDynamic is IStableSwap2Pool {
     function add_liquidity(uint256[] calldata amounts, uint256 minMintAmount)
         external
         returns (uint256 lpTokens);
+    function remove_liquidity_imbalance(uint256[] calldata amounts, uint256 maxBurnAmount)
+        external
+        returns (uint256 lpTokensBurned);
 }
 
 interface IStableSwap2PoolFixed is IStableSwap2Pool {
@@ -37,4 +40,7 @@ interface IStableSwap2PoolFixed is IStableSwap2Pool {
     function add_liquidity(uint256[2] calldata amounts, uint256 minMintAmount)
         external
         returns (uint256 lpTokens);
+    function remove_liquidity_imbalance(uint256[2] calldata amounts, uint256 maxBurnAmount)
+        external
+        returns (uint256 lpTokensBurned);
 }

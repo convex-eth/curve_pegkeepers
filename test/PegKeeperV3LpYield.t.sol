@@ -38,6 +38,10 @@ interface ILpPegKeeperV3 {
     function expansion_refill_period() external view returns (uint256);
     function available_expansion_velocity() external view returns (uint256);
     function available_expansion() external view returns (uint256);
+    function available_contraction() external view returns (uint256);
+    function estimate_caller_profit() external view returns (uint256);
+    function calc_profit() external view returns (uint256);
+    function update() external returns (uint256 callerRewardValue);
     function can_expand_without_policy() external view returns (bool);
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function set_velocity_policy(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod)
@@ -48,16 +52,17 @@ interface ILpPegKeeperV3 {
     function set_policy(
         uint256 entryMinProfitPpm,
         uint256 normalExitMinProfitPpm,
-        uint256 minExpansionAmount,
         uint256 maxDeployedCrvUsd
     ) external;
+
     function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
         external;
     function set_direction_paused(uint256 direction, bool paused) external;
-    function expand_supply(uint256 crvUsdAmount)
+    function expand_supply()
         external
         returns (uint256 crvUsdDeployed, uint256 lpTokensReceived, uint256 keeperReward);
-    function preview_expansion(uint256 crvUsdAmount)
+
+    function preview_expansion()
         external
         view
         returns (
@@ -66,6 +71,7 @@ interface ILpPegKeeperV3 {
             uint256 keeperReward,
             uint256 lpTokensOut
         );
+
     function sweep_donated_paired_token(uint256 maxYieldTokenAmount)
         external
         returns (
@@ -74,13 +80,15 @@ interface ILpPegKeeperV3 {
             uint256 lpTokensReceived,
             uint256 keeperReward
         );
-    function preview_contraction(uint256 lpTokenAmount)
+    function preview_contraction()
         external
         view
         returns (uint256 expectedCrvUsd, uint256 grossProfit, uint256 keeperReward);
-    function contract_supply(uint256 lpTokenAmount)
+
+    function contract_supply()
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
+
     function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     function borrow_crvusd(uint256 amount, address receiver) external;
@@ -253,11 +261,14 @@ contract LpYieldAmm is LpYieldToken {
     uint256 public lpMintBps = 10_000;
     uint256 public withdrawBps = 10_100;
     uint256 public actualWithdrawBps = 10_100;
+    uint256 public actualCrvUsdBps = 10_000;
     uint256 public withdrawBonus;
     uint256 public spendBps = 10_000;
     uint256 public addLiquidityCalls;
     uint256 public dynamicAddLiquidityCalls;
     uint256 public fixedAddLiquidityCalls;
+    uint256 public dynamicRemoveLiquidityCalls;
+    uint256 public fixedRemoveLiquidityCalls;
     uint256 public removeLiquidityCalls;
     bool public rejectDynamicLiquidityCalls;
     bool public rejectFixedLiquidityCalls;
@@ -312,6 +323,10 @@ contract LpYieldAmm is LpYieldToken {
         actualWithdrawBps = value;
     }
 
+    function setActualCrvUsdBps(uint256 value) external {
+        actualCrvUsdBps = value;
+    }
+
     function setWithdrawBps(uint256 value) external {
         withdrawBps = value;
         actualWithdrawBps = value;
@@ -326,9 +341,9 @@ contract LpYieldAmm is LpYieldToken {
         view
         returns (uint256)
     {
-        require(isDeposit, "deposit only");
         require(!rejectDynamicLiquidityCalls, "dynamic liquidity rejected");
-        return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
+        if (isDeposit) return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
+        return _quotedBurn(amounts[0] + amounts[1]);
     }
 
     function add_liquidity(uint256[] calldata amounts, uint256 minMintAmount)
@@ -346,9 +361,9 @@ contract LpYieldAmm is LpYieldToken {
         view
         returns (uint256)
     {
-        require(isDeposit, "deposit only");
         require(!rejectFixedLiquidityCalls, "fixed liquidity rejected");
-        return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
+        if (isDeposit) return (amounts[0] + amounts[1]) * lpMintBps / 10_000;
+        return _quotedBurn(amounts[0] + amounts[1]);
     }
 
     function add_liquidity(uint256[2] calldata amounts, uint256 minMintAmount)
@@ -399,6 +414,44 @@ contract LpYieldAmm is LpYieldToken {
         require(amountOut >= minAmount, "withdraw slippage");
         balanceOf[msg.sender] -= lpTokens;
         LpYieldToken(_coins[0]).mint(msg.sender, amountOut);
+    }
+
+    function remove_liquidity_imbalance(uint256[] calldata amounts, uint256 maxBurn)
+        external
+        returns (uint256 burned)
+    {
+        require(!rejectDynamicLiquidityCalls, "dynamic liquidity rejected");
+        dynamicRemoveLiquidityCalls++;
+        uint256[2] memory fixedAmounts = [amounts[0], amounts[1]];
+        return _removeLiquidityImbalance(fixedAmounts, maxBurn);
+    }
+
+    function remove_liquidity_imbalance(uint256[2] calldata amounts, uint256 maxBurn)
+        external
+        returns (uint256 burned)
+    {
+        require(!rejectFixedLiquidityCalls, "fixed liquidity rejected");
+        fixedRemoveLiquidityCalls++;
+        return _removeLiquidityImbalance(amounts, maxBurn);
+    }
+
+    function _quotedBurn(uint256 amountOut) internal view returns (uint256) {
+        uint256 principal = amountOut > withdrawBonus ? amountOut - withdrawBonus : 0;
+        uint256 actualBurn = (principal * 10_000 + withdrawBps - 1) / withdrawBps;
+        return actualBurn > 0 ? actualBurn - 1 : 0;
+    }
+
+    function _removeLiquidityImbalance(uint256[2] memory amounts, uint256 maxBurn)
+        internal
+        returns (uint256 burned)
+    {
+        require(amounts[1] == 0, "crvUSD only");
+        removeLiquidityCalls++;
+        uint256 principal = amounts[0] > withdrawBonus ? amounts[0] - withdrawBonus : 0;
+        burned = (principal * 10_000 + actualWithdrawBps - 1) / actualWithdrawBps;
+        require(burned <= maxBurn, "withdraw slippage");
+        balanceOf[msg.sender] -= burned;
+        LpYieldToken(_coins[0]).mint(msg.sender, amounts[0] * actualCrvUsdBps / 10_000);
     }
 }
 
@@ -463,7 +516,7 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
 
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         assertEq(yieldAmm.dynamicAddLiquidityCalls(), 1);
         assertEq(yieldAmm.fixedAddLiquidityCalls(), 0);
@@ -475,7 +528,7 @@ contract PegKeeperV3LpYieldTest is Test {
         );
         vm.startPrank(governance);
         keeper.set_amm_execution_buffer(0);
-        keeper.set_intervention_policy(3_333, 0);
+        keeper.set_intervention_policy(2_000, 0);
         keeper.set_direction_paused(2, false);
         keeper.set_direction_paused(0, false);
         vm.stopPrank();
@@ -483,11 +536,89 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
 
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         assertFalse(keeper.pool_uses_dynamic_arrays());
         assertEq(yieldAmm.dynamicAddLiquidityCalls(), 0);
         assertEq(yieldAmm.fixedAddLiquidityCalls(), 1);
+    }
+
+    function test_expansionUsesSoleCanonicalCrvUsdCap() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 2_000_000e18);
+
+        uint256 available = keeper.available_expansion();
+        assertEq(available, 2_000_000e18);
+        (uint256 previewedAmount,,,) = keeper.preview_expansion();
+        assertEq(previewedAmount, available);
+
+        (uint256 deployed,,) = keeper.expand_supply();
+        assertEq(deployed, available);
+        assertEq(keeper.deployed_crvusd(), available);
+    }
+
+    function test_expansionUsesTwentyPercentOfCurrentImbalance() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setBalances(0, 5_000_000e18);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 5_000_000e18);
+
+        assertEq(keeper.available_expansion(), 1_000_000e18);
+        (uint256 previewedAmount,,,) = keeper.preview_expansion();
+        assertEq(previewedAmount, 1_000_000e18);
+        (uint256 deployed,,) = keeper.expand_supply();
+        assertEq(deployed, 1_000_000e18);
+    }
+
+    function test_legacyCallerSelectedExpansionSelectorIsAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        (bool success,) =
+            address(keeper).call(abi.encodeWithSignature("expand_supply(uint256)", 10_000e18));
+        assertFalse(success);
+        (success,) = address(keeper)
+            .staticcall(abi.encodeWithSignature("preview_expansion(uint256)", 10_000e18));
+        assertFalse(success);
+    }
+
+    function test_updateAndEstimateCallerProfitUseMaximumExpansion() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 2_000_000e18);
+
+        uint256 estimatedRewardValue = keeper.estimate_caller_profit();
+        assertGt(estimatedRewardValue, 0);
+        uint256 rewardValue = keeper.update();
+
+        assertEq(rewardValue, estimatedRewardValue);
+        assertEq(keeper.deployed_crvusd(), 2_000_000e18);
+    }
+
+    function test_updateReturnsZeroWhenAnotherKeeperConsumedTheDelay() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        vm.prank(governance);
+        keeper.set_intervention_policy(2_000, 12);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 2_000_000e18);
+
+        keeper.expand_supply();
+        uint256 debtBefore = keeper.deployed_crvusd();
+
+        assertEq(keeper.estimate_caller_profit(), 0);
+        assertEq(keeper.update(), 0);
+        assertEq(keeper.deployed_crvusd(), debtBefore);
+    }
+
+    function test_v2CompatibilityProfitSelectorsUseCrvUsdValue() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.mint(address(keeper), 100e18);
+
+        assertEq(keeper.calc_profit(), keeper.trusted_backing_value());
+        assertEq(keeper.estimate_caller_profit(), 0);
+
+        (bool beneficiaryUpdateExists,) = address(keeper)
+            .call(abi.encodeWithSignature("update(address)", makeAddr("arbitrary beneficiary")));
+        assertFalse(beneficiaryUpdateExists);
     }
 
     function test_dynamicModeDoesNotFallbackToFixedArrayLiquidity() public {
@@ -497,7 +628,7 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 10_000e18);
 
         vm.expectRevert("dynamic liquidity rejected");
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
     }
 
     function test_fixedModeDoesNotFallbackToDynamicArrayLiquidity() public {
@@ -507,13 +638,13 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 10_000e18);
 
         vm.expectRevert("fixed liquidity rejected");
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
     }
 
     function test_interventionPolicyDefaultsAndAdminCanSetZeroDelay() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
-        assertEq(keeper.max_intervention_share_bps(), 3_333);
+        assertEq(keeper.max_intervention_share_bps(), 2_000);
         assertEq(keeper.min_intervention_delay(), 12);
         assertEq(keeper.last_intervention_at(), 0);
 
@@ -538,7 +669,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
         vm.prank(governance);
-        keeper.set_policy(500, 100, 10_000e18, 100_000_000e18);
+        keeper.set_policy(500, 100, 100_000_000e18);
 
         assertEq(keeper.entry_min_profit_ppm(), 500);
         assertEq(keeper.normal_exit_min_profit_ppm(), 100);
@@ -547,8 +678,8 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_velocityPolicyIsAdminConfigurableAndBounded() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
 
-        assertEq(keeper.max_expansion_burst_bps(), 500);
-        assertEq(keeper.expansion_refill_period(), 5 minutes);
+        assertEq(keeper.max_expansion_burst_bps(), 1_000);
+        assertEq(keeper.expansion_refill_period(), 36 seconds);
 
         vm.prank(makeAddr("not admin"));
         vm.expectRevert();
@@ -611,7 +742,7 @@ contract PegKeeperV3LpYieldTest is Test {
         factory.increaseDebtCeiling(address(keeper), 10_000e18);
 
         factory.setKeeperProfitShareBps(1_250);
-        (, uint256 grossProfit, uint256 keeperReward,) = keeper.preview_expansion(10_000e18);
+        (, uint256 grossProfit, uint256 keeperReward,) = keeper.preview_expansion();
 
         assertGt(grossProfit, 0);
         assertEq(keeperReward, grossProfit * 1_250 / 10_000);
@@ -627,10 +758,10 @@ contract PegKeeperV3LpYieldTest is Test {
         factory.increaseDebtCeiling(address(keeper), 10_000e18);
 
         vm.prank(governance);
-        keeper.set_policy(500, 100, 10_000e18, MAX_DEPLOYED);
+        keeper.set_policy(500, 100, MAX_DEPLOYED);
 
         (uint256 deployed, uint256 grossProfit, uint256 keeperReward, uint256 lpOut) =
-            keeper.preview_expansion(10_000e18);
+            keeper.preview_expansion();
 
         assertEq(deployed, 10_000e18);
         assertEq(lpOut, 10_005e18);
@@ -644,12 +775,11 @@ contract PegKeeperV3LpYieldTest is Test {
         factory.increaseDebtCeiling(address(keeper), 10_000e18);
 
         vm.prank(governance);
-        keeper.set_policy(500, 100, 10_000e18, MAX_DEPLOYED);
+        keeper.set_policy(500, 100, MAX_DEPLOYED);
 
         address caller = makeAddr("five-bps entry caller");
         vm.prank(caller);
-        (uint256 deployed, uint256 lpReceived, uint256 keeperReward) =
-            keeper.expand_supply(10_000e18);
+        (uint256 deployed, uint256 lpReceived, uint256 keeperReward) = keeper.expand_supply();
 
         assertEq(deployed, 10_000e18);
         assertEq(lpReceived, 10_005e18);
@@ -682,13 +812,13 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 20_000e18);
 
         yieldOracle.setPrice(0.999e18);
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
 
         yieldOracle.setPrice(0.999e18 - 1);
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
     }
 
     function test_lpVirtualPriceIsSoleBackingRateForErc4626YieldToken() public {
@@ -722,7 +852,7 @@ contract PegKeeperV3LpYieldTest is Test {
         vault.mint(address(vaultAmm), 50_000e18);
         crvUsd.mint(address(keeper), 100_000e18);
 
-        assertEq(keeper.available_expansion(), 60_000e18 * 3_333 / 10_000);
+        assertEq(keeper.available_expansion(), 60_000e18 * 2_000 / 10_000);
     }
 
     function test_neutralDonationSettlementDoesNotConsumeInterventionShareOrTimer() public {
@@ -736,11 +866,11 @@ contract PegKeeperV3LpYieldTest is Test {
 
         keeper.sweep_donated_paired_token(10_000e18);
 
-        uint256 localLimit = 60_000e18 * 3_333 / 10_000;
+        uint256 localLimit = 60_000e18 * 2_000 / 10_000;
         assertEq(keeper.last_intervention_at(), 0);
         assertEq(keeper.available_expansion(), localLimit);
-        keeper.preview_expansion(localLimit);
-        keeper.expand_supply(localLimit);
+        keeper.preview_expansion();
+        keeper.expand_supply();
     }
 
     function test_expandDepositsCrvUsdDirectlyWhenTargetAndYieldAmmAreSame() public {
@@ -750,7 +880,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         address caller = makeAddr("directKeeper");
         vm.prank(caller);
-        (uint256 deposited, uint256 lpReceived, uint256 reward) = keeper.expand_supply(10_000e18);
+        (uint256 deposited, uint256 lpReceived, uint256 reward) = keeper.expand_supply();
 
         assertEq(deposited, 10_000e18);
         assertEq(lpReceived, 10_001e18);
@@ -776,14 +906,14 @@ contract PegKeeperV3LpYieldTest is Test {
             uint256 expectedProfit,
             uint256 expectedReward,
             uint256 expectedLp
-        ) = keeper.preview_expansion(10_000e18);
+        ) = keeper.preview_expansion();
         assertEq(expectedDeposited, 12_000e18);
         assertEq(expectedProfit, 1.4e18);
         assertEq(expectedReward, 0.42e18);
         assertEq(expectedLp, 14_001.4e18);
 
         vm.prank(makeAddr("keeper"));
-        (uint256 deposited, uint256 lpReceived, uint256 reward) = keeper.expand_supply(10_000e18);
+        (uint256 deposited, uint256 lpReceived, uint256 reward) = keeper.expand_supply();
 
         assertEq(deposited, 12_000e18);
         assertEq(lpReceived, 14_001.4e18);
@@ -878,16 +1008,16 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.expansion_pressure(), 0);
     }
 
-    function test_sweepDonationBelowMinimumDoesNotChangeAccounting() public {
+    function test_sweepDonationAcceptsSmallPositiveAmount() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
         crvUsd.mint(address(keeper), 9_999e18);
         yieldToken.mint(address(keeper), 9_999e18);
 
-        vm.expectRevert();
         keeper.sweep_donated_paired_token(type(uint256).max);
 
-        assertEq(keeper.deployed_crvusd(), 0);
-        assertEq(keeper.expansion_pressure(), 0);
+        assertEq(keeper.deployed_crvusd(), 9_999e18);
+        assertEq(keeper.expansion_pressure(), 9_999e18);
+        assertEq(yieldToken.balanceOf(address(keeper)), 0);
     }
 
     function test_sweepDonationIsBlockedByExpansionPause() public {
@@ -922,18 +1052,17 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         vm.prank(makeAddr("expansionKeeper"));
-        keeper.expand_supply(10_000e18);
-        yieldAmm.setBalances(100_000_000e18, 0);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_050e18, 0);
 
-        (uint256 quoted, uint256 grossProfit, uint256 quotedReward) =
-            keeper.preview_contraction(1_000e18);
+        (uint256 quoted, uint256 grossProfit, uint256 quotedReward) = keeper.preview_contraction();
         assertEq(quoted, 1_010e18);
         assertEq(grossProfit, 10e18);
         assertEq(quotedReward, 3e18);
 
         address caller = makeAddr("contractionKeeper");
         vm.prank(caller);
-        (uint256 burned, uint256 received, uint256 reward) = keeper.contract_supply(1_000e18);
+        (uint256 burned, uint256 received, uint256 reward) = keeper.contract_supply();
 
         assertEq(burned, 1_000e18);
         assertEq(received, 1_010e18);
@@ -947,11 +1076,140 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.trusted_backing_value(), 9_000.7e18);
     }
 
+    function test_contractionUsesCanonicalCrvUsdAmountAndDynamicExactOutput() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_000e18, 0);
+
+        uint256 expectedCrvUsd = 1_000e18;
+        uint256 expectedBurn =
+            (expectedCrvUsd * 10_000 + yieldAmm.withdrawBps() - 1) / yieldAmm.withdrawBps();
+        (uint256 previewedCrvUsd,,) = keeper.preview_contraction();
+        assertEq(previewedCrvUsd, expectedCrvUsd);
+
+        (uint256 burned, uint256 received,) = keeper.contract_supply();
+        assertEq(burned, expectedBurn);
+        assertEq(received, expectedCrvUsd);
+        assertEq(yieldAmm.dynamicRemoveLiquidityCalls(), 1);
+        assertEq(yieldAmm.fixedRemoveLiquidityCalls(), 0);
+    }
+
+    function test_contractionUsesFixedExactOutputWithoutDynamicFallback() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeperWithMode(false);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_000e18, 0);
+
+        (, uint256 received,) = keeper.contract_supply();
+        assertEq(received, 1_000e18);
+        assertEq(yieldAmm.dynamicRemoveLiquidityCalls(), 0);
+        assertEq(yieldAmm.fixedRemoveLiquidityCalls(), 1);
+    }
+
+    function test_dynamicContractionDoesNotFallbackToFixedArrayLiquidity() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_000e18, 0);
+        yieldAmm.setRejectedLiquidityModes(true, false);
+
+        vm.expectRevert("dynamic liquidity rejected");
+        keeper.preview_contraction();
+    }
+
+    function test_fixedContractionDoesNotFallbackToDynamicArrayLiquidity() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeperWithMode(false);
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_000e18, 0);
+        yieldAmm.setRejectedLiquidityModes(false, true);
+
+        vm.expectRevert("fixed liquidity rejected");
+        keeper.preview_contraction();
+    }
+
+    function test_contractionRejectsInexactMeasuredCrvUsdReceipt() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(5_000e18, 0);
+
+        yieldAmm.setActualCrvUsdBps(9_999);
+        vm.expectRevert();
+        keeper.contract_supply();
+
+        yieldAmm.setActualCrvUsdBps(10_001);
+        vm.expectRevert();
+        keeper.contract_supply();
+
+        assertEq(yieldAmm.removeLiquidityCalls(), 0);
+    }
+
+    function test_legacyCallerSelectedContractionSelectorIsAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        (bool success,) =
+            address(keeper).call(abi.encodeWithSignature("contract_supply(uint256)", 10_000e18));
+        assertFalse(success);
+        (success,) = address(keeper)
+            .staticcall(abi.encodeWithSignature("preview_contraction(uint256)", 10_000e18));
+        assertFalse(success);
+    }
+
+    function test_legacyMinimumUpdateConfigurationSelectorsAreAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        (bool getterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("min_expansion_amount()"));
+        assertFalse(getterExists);
+
+        (bool oldSetterExists,) = address(keeper)
+            .call(
+                abi.encodeWithSignature(
+                    "set_policy(uint256,uint256,uint256,uint256)", 10, 150, 10_000e18, MAX_DEPLOYED
+                )
+            );
+        assertFalse(oldSetterExists);
+    }
+
+    function test_updateAndEstimateCallerProfitUseMaximumContraction() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 20_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(10_000e18, 0);
+
+        uint256 estimatedRewardValue = keeper.estimate_caller_profit();
+        assertGt(estimatedRewardValue, 0);
+        uint256 rewardValue = keeper.update();
+
+        assertEq(rewardValue, estimatedRewardValue);
+        assertGt(yieldAmm.dynamicRemoveLiquidityCalls(), 0);
+    }
+
+    function test_contractionUsesTwentyPercentOfCurrentImbalance() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 20_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(10_000e18, 0);
+
+        assertEq(keeper.available_contraction(), 2_000e18);
+        (uint256 expectedCrvUsd,,) = keeper.preview_contraction();
+        assertEq(expectedCrvUsd, 2_000e18);
+        (, uint256 received,) = keeper.contract_supply();
+        assertEq(received, 2_000e18);
+    }
+
     function test_zeroExitProfitFloorRejectsBreakEvenPreview() public {
         ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(10_000);
 
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
     }
 
     function test_zeroExitProfitFloorRejectsBreakEvenExecution() public {
@@ -961,7 +1219,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(makeAddr("break-even contraction caller"));
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         assertEq(yieldAmm.balanceOf(address(keeper)), lpBefore);
         assertEq(keeper.deployed_crvusd(), debtBefore);
@@ -972,7 +1230,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredContractionWithZeroExitFloor(9_999);
 
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
     }
 
     function test_zeroExitProfitFloorRejectsLossMakingExecutionDespiteSurplus() public {
@@ -982,7 +1240,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(makeAddr("loss-making contraction caller"));
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         assertEq(yieldAmm.balanceOf(address(keeper)), lpBefore);
         assertEq(keeper.deployed_crvusd(), debtBefore);
@@ -992,11 +1250,11 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_preview_expansionIncludesDonationMatchAndLpReward() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
         yieldAmm.setLpMintBps(10_001);
-        crvUsd.mint(address(keeper), 24_000e18);
+        crvUsd.mint(address(keeper), 12_000e18);
         yieldToken.mint(address(keeper), 2_000e18);
 
         (uint256 matched, uint256 grossProfit, uint256 reward, uint256 lpOut) =
-            keeper.preview_expansion(10_000e18);
+            keeper.preview_expansion();
 
         assertEq(matched, 12_000e18);
         assertEq(grossProfit, 1.4e18);
@@ -1012,7 +1270,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(makeAddr("keeper"));
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         assertEq(crvUsd.balanceOf(address(keeper)), 24_000e18);
         assertEq(yieldToken.balanceOf(address(keeper)), 2_000e18);
@@ -1028,25 +1286,25 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(makeAddr("keeper"));
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         assertEq(crvUsd.balanceOf(address(keeper)), 22_099e18);
         assertEq(yieldToken.balanceOf(address(keeper)), 2_000e18);
         assertEq(keeper.deployed_crvusd(), 0);
     }
 
-    function test_contractionEnforcesExecutableOneCoinQuote() public {
+    function test_contractionEnforcesQuotedMaximumLpBurn() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         vm.prank(makeAddr("expansionKeeper"));
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         yieldAmm.setBalances(100_000_000e18, 0);
         yieldAmm.setActualWithdrawBps(10_000);
         vm.prank(makeAddr("contractionKeeper"));
         vm.expectRevert(bytes("withdraw slippage"));
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         assertEq(yieldAmm.balanceOf(address(keeper)), 10_000.7e18);
         assertEq(keeper.deployed_crvusd(), 10_000e18);
@@ -1058,14 +1316,13 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         factory.setDebtCeiling(address(keeper), 1e18);
         yieldAmm.setBalances(100_000_000e18, 0);
 
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         assertLt(keeper.deployed_crvusd(), 10_000e18);
-        assertGt(keeper.deployed_crvusd(), factory.debt_ceiling(address(keeper)));
         assertGe(keeper.trusted_backing_value(), keeper.deployed_crvusd());
     }
 
@@ -1073,7 +1330,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         yieldAmm.setBalances(100_000_000e18, 0);
 
         crvUsd.mint(address(keeper), 100e18);
@@ -1081,14 +1338,11 @@ contract PegKeeperV3LpYieldTest is Test {
         factory.setFeeReceiver(newFeeReceiver);
 
         uint256 idleBefore = crvUsd.balanceOf(address(keeper));
-        uint256 lpAmount = keeper.accounted_lp_tokens();
-        uint256 quoted = yieldAmm.calc_withdraw_one_coin(lpAmount, 0);
-        uint256 grossProfit = quoted - lpAmount;
-        uint256 keeperReward = grossProfit * 3_000 / 10_000;
-        uint256 currentCallNet = quoted - keeperReward;
+        (uint256 expectedCrvUsd,, uint256 keeperReward) = keeper.preview_contraction();
+        uint256 currentCallNet = expectedCrvUsd - keeperReward;
         uint256 expectedTerminalProfit = currentCallNet - keeper.deployed_crvusd();
 
-        keeper.contract_supply(lpAmount);
+        keeper.contract_supply();
 
         assertEq(keeper.deployed_crvusd(), 0);
         assertEq(keeper.accounted_lp_tokens(), 0);
@@ -1105,62 +1359,25 @@ contract PegKeeperV3LpYieldTest is Test {
 
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
-        yieldAmm.setBalances(100_000_000e18, 0);
+        yieldAmm.setBalances(5_002.5e18, 0);
         yieldAmm.setWithdrawBps(10_005);
         uint256 deployedBefore = keeper.deployed_crvusd();
         (uint256 expectedCrvUsd, uint256 grossProfit, uint256 expectedReward) =
-            keeper.preview_contraction(1_000e18);
+            keeper.preview_contraction();
         assertEq(expectedCrvUsd, 1_000e18 + 5e17);
         assertEq(grossProfit, 5e17);
         assertEq(expectedReward, 15e16);
 
         uint256 keeperBalanceBefore = crvUsd.balanceOf(address(this));
-        (uint256 lpBurned, uint256 crvUsdReceived, uint256 keeperReward) =
-            keeper.contract_supply(1_000e18);
+        (uint256 lpBurned, uint256 crvUsdReceived, uint256 keeperReward) = keeper.contract_supply();
 
         assertEq(lpBurned, 1_000e18);
         assertEq(crvUsdReceived, expectedCrvUsd);
         assertEq(keeperReward, expectedReward);
         assertEq(crvUsd.balanceOf(address(this)) - keeperBalanceBefore, 15e16);
         assertEq(deployedBefore - keeper.deployed_crvusd(), 1_000e18 + 35e16);
-    }
-
-    function test_contractionRejectsQuoteAboveLocalImbalanceShare() public {
-        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        vm.prank(governance);
-        keeper.set_intervention_policy(3_333, 0);
-        yieldAmm.setBalances(0, 100_000e18);
-        yieldAmm.setLpMintBps(10_001);
-        crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
-
-        yieldAmm.setBalances(130_000e18, 100_000e18);
-        yieldAmm.setWithdrawBps(10_005);
-        vm.expectRevert();
-        keeper.preview_contraction(10_000e18);
-        vm.expectRevert();
-        keeper.contract_supply(10_000e18);
-    }
-
-    function test_contractionRejectsMeasuredReceiptAboveLocalImbalanceShare() public {
-        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        vm.prank(governance);
-        keeper.set_intervention_policy(5_000, 0);
-        yieldAmm.setBalances(0, 100_000e18);
-        yieldAmm.setLpMintBps(10_001);
-        crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
-
-        // 50% of the 20,010 crvUSD excess is 10,005. Preview is exactly at the cap,
-        // but execution returns one basis point more and must revert instead of overshooting.
-        yieldAmm.setBalances(120_010e18, 100_000e18);
-        yieldAmm.setWithdrawBps(10_005);
-        yieldAmm.setActualWithdrawBps(10_006);
-        keeper.preview_contraction(10_000e18);
-        vm.expectRevert();
-        keeper.contract_supply(10_000e18);
     }
 
     function test_contractionAcceptsQuoteAndReceiptExactlyAtLocalImbalanceShare() public {
@@ -1170,14 +1387,14 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setBalances(0, 100_000e18);
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         yieldAmm.setBalances(120_010e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
-        (uint256 expectedCrvUsd,,) = keeper.preview_contraction(10_000e18);
+        (uint256 expectedCrvUsd,,) = keeper.preview_contraction();
         assertEq(expectedCrvUsd, 10_005e18);
 
-        (, uint256 actualCrvUsd,) = keeper.contract_supply(10_000e18);
+        (, uint256 actualCrvUsd,) = keeper.contract_supply();
         assertEq(actualCrvUsd, 10_005e18);
     }
 
@@ -1189,28 +1406,28 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 30_000e18);
         uint256 firstInterventionAt = block.timestamp;
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         assertEq(keeper.last_intervention_at(), firstInterventionAt);
 
         yieldAmm.setBalances(120_000e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         vm.warp(firstInterventionAt + 11);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
 
         vm.warp(firstInterventionAt + 12);
-        keeper.preview_contraction(1_000e18);
-        keeper.contract_supply(1_000e18);
+        keeper.preview_contraction();
+        keeper.contract_supply();
         assertEq(keeper.last_intervention_at(), firstInterventionAt + 12);
 
         yieldAmm.setBalances(0, 100_000e18);
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
     }
 
     function test_zeroInterventionDelayAllowsSameTimestampContraction() public {
@@ -1222,11 +1439,11 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 10_000e18);
 
         uint256 interventionAt = block.timestamp;
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         yieldAmm.setBalances(120_000e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
-        keeper.preview_contraction(1_000e18);
-        keeper.contract_supply(1_000e18);
+        keeper.preview_contraction();
+        keeper.contract_supply();
 
         assertEq(keeper.last_intervention_at(), interventionAt);
     }
@@ -1235,44 +1452,44 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         yieldAmm.setWithdrawBps(10_000);
         yieldAmm.setWithdrawBonus(5e17 - 1);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
     }
 
     function test_preview_contractionRejectsFinalInsolvency() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         yieldAmm.setVirtualPrice(0.9e18);
         yieldAmm.setWithdrawBps(10_000);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
     }
 
     function test_deficitRecoveryDoesNotCountTowardGrossExitMargin() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         // Burning 1,000 LP removes 900 of trusted value. The 1,899.37 principal-recovery
         // basis includes the existing deficit, leaving only 0.43 gross profit: below 5 bp.
         yieldAmm.setVirtualPrice(0.9e18);
         yieldAmm.setWithdrawBps(18_998);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
     }
 
     function test_previewAndExecutionRejectOversizedYieldOracleReturn() public {
@@ -1284,9 +1501,9 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd.mint(address(keeper), 10_000e18);
 
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
     }
 
     function test_factoryPolicyGatesExpansionWithoutChangingLocalViability() public {
@@ -1299,13 +1516,13 @@ contract PegKeeperV3LpYieldTest is Test {
         assertTrue(keeper.can_expand_without_policy());
         assertEq(keeper.available_expansion(), 0);
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         factory.setPolicyExpansionAllowed(true);
         assertGt(keeper.available_expansion(), 0);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
     }
 
     function test_adminCanBorrowCrvUsdWhenPolicyAllowsAndDebtIsTracked() public {
@@ -1351,6 +1568,10 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.borrow_crvusd(1, address(0));
 
+        vm.prank(governance);
+        vm.expectRevert();
+        keeper.borrow_crvusd(0, makeAddr("zero-amount receiver"));
+
         factory.setDebtCeiling(address(keeper), 5_000e18);
         vm.prank(governance);
         vm.expectRevert();
@@ -1373,9 +1594,6 @@ contract PegKeeperV3LpYieldTest is Test {
 
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         crvUsd.mint(address(keeper), 100_000e18);
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(10_000e18 - 1, receiver);
 
         yieldAmm.setBalances(0, 30_000e18);
         vm.prank(governance);
@@ -1428,20 +1646,20 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.set_intervention_policy(3_333, 0);
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         aggregateCrvUsdOracle.setPrice(1e18 - 1);
         yieldAmm.setBalances(120_000e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
         factory.setPolicyContractionAllowed(false);
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         factory.setPolicyContractionAllowed(true);
-        keeper.preview_contraction(1_000e18);
-        keeper.contract_supply(1_000e18);
+        keeper.preview_contraction();
+        keeper.contract_supply();
     }
 
     function test_policyDenialPreventsDonationFromIncreasingDebt() public {
@@ -1467,13 +1685,13 @@ contract PegKeeperV3LpYieldTest is Test {
 
         assertEq(keeper.available_expansion(), 0);
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         aggregateCrvUsdOracle.setPrice(1e18);
         assertGt(keeper.available_expansion(), 0);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
     }
 
     function test_unpausedKeeperCannotUseDonatedCrvUsdAtZeroFactoryCeiling() public {
@@ -1488,7 +1706,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.available_expansion(), 0);
         assertFalse(keeper.can_expand_without_policy());
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         assertEq(keeper.deployed_crvusd(), 0);
     }
 
@@ -1502,9 +1720,9 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setWithdrawBps(10_000);
 
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
     }
 
     function test_contractionRegimeSmallDonationIsEntirelyOneSided() public {
@@ -1541,18 +1759,18 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         yieldAmm.setBalances(100_000_000e18, 0);
         aggregateCrvUsdOracle.setPrice(1e18 + 1);
 
         vm.expectRevert();
-        keeper.preview_contraction(1_000e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(1_000e18);
+        keeper.contract_supply();
 
         aggregateCrvUsdOracle.setPrice(1e18);
-        keeper.preview_contraction(1_000e18);
-        keeper.contract_supply(1_000e18);
+        keeper.preview_contraction();
+        keeper.contract_supply();
     }
 
     function test_malformedAggregateOracleFailsPreviewAndExecutionClosed() public {
@@ -1563,13 +1781,13 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.mint(address(keeper), 1_000e18);
 
         vm.expectRevert();
-        keeper.preview_expansion(10_000e18);
+        keeper.preview_expansion();
         vm.expectRevert();
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
         vm.expectRevert();
-        keeper.preview_contraction(100e18);
+        keeper.preview_contraction();
         vm.expectRevert();
-        keeper.contract_supply(100e18);
+        keeper.contract_supply();
     }
 
     function test_contractionRegimeDonationSweepMatchesOnlyOvershoot() public {
@@ -1693,7 +1911,7 @@ contract PegKeeperV3LpYieldTest is Test {
         );
         vm.startPrank(governance);
         keeper.set_amm_execution_buffer(0);
-        keeper.set_intervention_policy(3_333, 0);
+        keeper.set_intervention_policy(2_000, 0);
         keeper.set_direction_paused(2, false);
         keeper.set_direction_paused(0, false);
         keeper.set_direction_paused(1, false);
@@ -1709,10 +1927,10 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         factory.increaseDebtCeiling(address(keeper), 10_000e18);
         vm.prank(makeAddr("break-even expansion caller"));
-        keeper.expand_supply(10_000e18);
+        keeper.expand_supply();
 
         vm.prank(governance);
-        keeper.set_policy(500, 0, 10_000e18, MAX_DEPLOYED);
+        keeper.set_policy(500, 0, MAX_DEPLOYED);
         yieldAmm.setBalances(100_000_000e18, 0);
         yieldAmm.setWithdrawBps(withdrawBps);
     }

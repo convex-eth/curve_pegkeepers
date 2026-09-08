@@ -45,10 +45,9 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
     uint256 internal constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 internal constant ALLOCATION = 2_000_000e18;
-    uint256 internal constant EXPANSION_AMOUNT = 40_000e18;
     uint256 internal constant DONATION_SWEEP_AMOUNT = 10_000e18;
     uint256 internal constant EXPANSION_MARKET_TRADE = 2_000_000e18;
-    uint256 internal constant CONTRACTION_MARKET_TRADE = 6_000_000e18;
+    uint256 internal constant CONTRACTION_MARKET_TRADE = 8_000_000e18;
 
     function run() external {
         require(block.chainid == 1, "mainnet fork required");
@@ -75,13 +74,13 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(0, 1, EXPANSION_MARKET_TRADE, 0);
         vm.stopPrank();
 
-        (uint256 expectedDebt,,, uint256 expectedLp) = pegKeeper.preview_expansion(EXPANSION_AMOUNT);
-        require(expectedDebt == EXPANSION_AMOUNT, "unexpected preview debt");
+        (uint256 expectedDebt,,, uint256 expectedLp) = pegKeeper.preview_expansion();
+        require(expectedDebt == pegKeeper.available_expansion(), "unexpected preview debt");
         require(expectedLp > 0, "LP preview returned zero");
 
         vm.prank(CANARY_KEEPER);
-        (uint256 crvUsdDeployed, uint256 lpReceived,) = pegKeeper.expand_supply(EXPANSION_AMOUNT);
-        require(crvUsdDeployed == EXPANSION_AMOUNT, "unexpected crvUSD deployment");
+        (uint256 crvUsdDeployed, uint256 lpReceived,) = pegKeeper.expand_supply();
+        require(crvUsdDeployed == expectedDebt, "unexpected crvUSD deployment");
         require(lpReceived > 0, "no LP received");
         // forge-lint: disable-next-line(block-timestamp)
         require(pegKeeper.last_intervention_at() == block.timestamp, "expansion timestamp");
@@ -99,6 +98,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             "AMM frxUSD allowance"
         );
 
+        vm.warp(block.timestamp + pegKeeper.expansion_refill_period());
         uint256 sweepLp = _sweepDonationAsKeeper(pegKeeper);
 
         aggregateOracle.setPrice(0.999e18);
@@ -120,15 +120,11 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
         // Exercise the production primary profit profile at the pinned fork state.
 
-        (
-            uint256 contractionLp,
-            uint256 expectedCrvUsd,
-            uint256 expectedGross,
-            uint256 expectedReward
-        ) = _findExecutableContraction(pegKeeper);
-        require(expectedCrvUsd > 0, "one-coin quote returned zero crvUSD");
-        (uint256 crvUsdReceived, uint256 burnableCrvUsd) =
-            _contractAndRugReturnedCrvUsd(pegKeeper, contractionLp);
+        (uint256 expectedCrvUsd, uint256 expectedGross, uint256 expectedReward) =
+            pegKeeper.preview_contraction();
+        require(expectedCrvUsd > 0, "exact withdrawal returned zero crvUSD");
+        (uint256 contractionLp, uint256 crvUsdReceived, uint256 burnableCrvUsd) =
+            _contractAndRugReturnedCrvUsd(pegKeeper);
 
         console2.log("mainnet block", block.number);
         console2.log("simulated PegKeeperV3", address(pegKeeper));
@@ -136,7 +132,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         console2.log("LP received", lpReceived);
         console2.log("donation LP received", sweepLp);
         console2.log("contraction LP", contractionLp);
-        console2.log("contraction quote crvUSD", expectedCrvUsd);
+        console2.log("canonical contraction crvUSD", expectedCrvUsd);
         console2.log("contraction gross", expectedGross);
         console2.log("contraction reward", expectedReward);
         console2.log("contraction received crvUSD", crvUsdReceived);
@@ -190,12 +186,13 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         vm.prank(CANARY_FACTORY_OWNER);
         policy.set_tier(address(pegKeeper), 1);
         vm.prank(CANARY_ADMIN);
-        pegKeeper.set_policy(10, 150, 10_000e18, ALLOCATION);
+        pegKeeper.set_policy(10, 150, ALLOCATION);
         require(address(pegKeeper) == expectedKeeper, "unexpected canary keeper");
     }
 
     function _sweepDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 lpReceived) {
         uint256 debtBefore = pegKeeper.deployed_crvusd();
+        uint256 interventionBefore = pegKeeper.last_intervention_at();
         deal(FRXUSD, CANARY_TRADER, DONATION_SWEEP_AMOUNT);
         vm.prank(CANARY_TRADER);
         require(
@@ -209,6 +206,9 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(matched == DONATION_SWEEP_AMOUNT, "donation match amount");
         require(sweepLp > 0, "donation sweep LP");
         require(pegKeeper.deployed_crvusd() == debtBefore + matched, "donation debt");
+        require(
+            pegKeeper.last_intervention_at() == interventionBefore, "donation intervention time"
+        );
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "donation residue");
         return sweepLp;
     }
@@ -231,29 +231,28 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "claim donation residue");
     }
 
-    function _contractAsKeeper(IPegKeeperV3 pegKeeper, uint256 lpAmount)
+    function _contractAsKeeper(IPegKeeperV3 pegKeeper)
         internal
-        returns (uint256 crvUsdReceived)
+        returns (uint256 lpBurned, uint256 crvUsdReceived)
     {
         vm.prank(CANARY_KEEPER);
-        (uint256 lpBurned, uint256 received, uint256 keeperReward) =
-            pegKeeper.contract_supply(lpAmount);
-        require(lpBurned == lpAmount, "unexpected LP burn");
-        require(received > 0, "one-coin withdrawal returned no crvUSD");
+        uint256 keeperReward;
+        (lpBurned, crvUsdReceived, keeperReward) = pegKeeper.contract_supply();
+        require(lpBurned > 0, "no LP burned");
+        require(crvUsdReceived > 0, "exact withdrawal returned no crvUSD");
         require(keeperReward > 0, "contraction keeper reward missing");
-        return received;
     }
 
-    function _contractAndRugReturnedCrvUsd(IPegKeeperV3 pegKeeper, uint256 lpAmount)
+    function _contractAndRugReturnedCrvUsd(IPegKeeperV3 pegKeeper)
         internal
-        returns (uint256 crvUsdReceived, uint256 burnedCrvUsd)
+        returns (uint256 lpBurned, uint256 crvUsdReceived, uint256 burnedCrvUsd)
     {
         uint256 debtBefore = pegKeeper.deployed_crvusd();
         uint256 residualBefore =
             IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper));
         require(residualBefore == debtBefore, "pre-contraction residual");
 
-        crvUsdReceived = _contractAsKeeper(pegKeeper, lpAmount);
+        (lpBurned, crvUsdReceived) = _contractAsKeeper(pegKeeper);
         burnedCrvUsd = IERC20(CRVUSD).balanceOf(address(pegKeeper));
         require(burnedCrvUsd > 0, "no returned crvUSD to burn");
         require(
@@ -279,23 +278,6 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             IERC20(CRVUSD).allowance(address(pegKeeper), FACTORY) == type(uint256).max,
             "rugged ControllerFactory allowance"
         );
-    }
-
-    function _findExecutableContraction(IPegKeeperV3 pegKeeper)
-        internal
-        view
-        returns (uint256 lpAmount, uint256 crvUsdOut, uint256 grossProfit, uint256 reward)
-    {
-        uint256 held = pegKeeper.accounted_lp_tokens();
-        for (uint256 i = 1; i <= 100; ++i) {
-            uint256 candidate = held * i / 100;
-            (bool success, bytes memory result) = address(pegKeeper)
-                .staticcall(abi.encodeCall(IPegKeeperV3.preview_contraction, (candidate)));
-            if (!success || result.length != 96) continue;
-            (crvUsdOut, grossProfit, reward) = abi.decode(result, (uint256, uint256, uint256));
-            return (candidate, crvUsdOut, grossProfit, reward);
-        }
-        revert("no executable contraction");
     }
 
     function _computeCreateAddress(address creator, uint256 nonce) internal pure returns (address) {

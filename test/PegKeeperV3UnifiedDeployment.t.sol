@@ -167,8 +167,8 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.priorityUtilizationBps, 8_000);
         assertEq(config.keeperProfitShareBps, 3_000);
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
-        assertEq(config.maxExpansionBurstBps, 500);
-        assertEq(config.expansionRefillPeriod, 5 minutes);
+        assertEq(config.maxExpansionBurstBps, 1_000);
+        assertEq(config.expansionRefillPeriod, 36 seconds);
         assertEq(config.ammExecutionBufferBps, 3);
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.usdeProxy, deployer.USDE_USD_PROXY());

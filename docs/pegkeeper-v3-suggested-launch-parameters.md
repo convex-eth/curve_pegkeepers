@@ -83,20 +83,19 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 |---|---:|---:|---:|
 | `entryMinProfitPpm` | `10` (`0.1 bp`) | `10` (`0.1 bp`) | `400` (`4 bp`) |
 | `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `110` (`1.1 bp`) | `80` (`0.8 bp`) |
-| `minExpansionAmount` | `10_000e18` | `10_000e18` | `10_000e18` |
-| `maxInterventionShareBps` | `3_333` | `3_333` | `3_333` |
+| `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) | `2_000` (`20%`) |
 | `minInterventionDelay` | `12` seconds | `12` seconds | `12` seconds |
-| `maxExpansionBurstBps` | `500` (`5%` of local max) | `500` (`5%` of local max) | `500` (`5%` of local max) |
-| `expansionRefillPeriod` | `300` seconds | `300` seconds | `300` seconds |
+| `maxExpansionBurstBps` | `1_000` (`10%` of local max) | `1_000` (`10%` of local max) | `1_000` (`10%` of local max) |
+| `expansionRefillPeriod` | `36` seconds | `36` seconds | `36` seconds |
 | retained-backing floor | `0.999e18` | `0.999e18` | `0.999e18` |
 
 Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp`, `1.1 bp`, and `0.8 bp` exit floors pay the caller `0.45 bp`, `0.33 bp`, and `0.24 bp`, respectively, at their exact boundaries.
 
 Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction in reverse priority order: tertiary at `0.8 bp`, secondary at `1.1 bp`, then primary at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `4 bp` entry edge, making tertiary exposure materially harder to create than preferred exposure.
 
-`maxInterventionShareBps` limits direct expansion to one third of the normalized paired-token surplus over crvUSD and limits contraction quote/receipt to one third of normalized crvUSD excess.
+`maxInterventionShareBps` is configurable and launches at V2's `20%` share. It defines the sole ordinary action amount rather than only an upper bound: expansion uses exactly the current normalized paired-token surplus share, subject to balance/capacity/velocity; contraction requests exactly the current normalized crvUSD excess share, subject to available LP backing. Callers cannot choose smaller dust clips. `update()` automatically selects the local direction, while amountless `expand_supply()` and `contract_supply()` expose the same canonical actions explicitly.
 
-The velocity bucket counts every actual crvUSD debt increase, including donation matching, surplus claims, and policy-gated external draws.
+The velocity bucket counts every actual crvUSD debt increase, including donation matching, surplus claims, and policy-gated external draws. The `10%` burst and `36 second` refill are intended to buy roughly three blocks for independent backing oracles to react, not to mechanically slow expansion when the separate local-imbalance cap already binds.
 
 The Factory admin may tune each keeper through `set_velocity_policy`. A zero burst disables new velocity capacity; the refill period must be nonzero. Velocity and local-cap updates checkpoint pressure under the old settings before applying the new values.
 
@@ -116,7 +115,7 @@ For sUSDe, loose shares use `convertToAssets()` for normalized balance calculati
 Every keeper deposits directly into its own AMM:
 
 ```text
-requested X crvUSD
+canonical X crvUSD
 + D crvUSD matching selected paired-token donation
 + donated paired token
 -> keeper AMM LP
@@ -181,7 +180,7 @@ The aggregate crvUSD oracle is a separate pool-source registry, not a PegKeeper 
 Before authorization:
 
 1. Reconfirm implementation, policy, Factory, keeper, and oracle-adapter identities.
-2. Reconfirm all pool coin orders, selected fixed/dynamic liquidity ABI modes, rate behavior, virtual prices, fee parameters, balances, and one-coin quote behavior.
+2. Reconfirm all pool coin orders, selected fixed/dynamic liquidity ABI modes, rate behavior, virtual prices, fee parameters, balances, exact-output imbalance withdrawal behavior, and the one-LP-wei quote/burn difference.
 3. Reassess every local max and ControllerFactory debt ceiling against current pool depth.
 4. Confirm the deployment sender still owns Factory and policy, Curve is pending owner of both, Curve is already the dynamic keeper admin, all four keepers are unpaused and debt-free, and every ControllerFactory ceiling is zero.
 5. Keep sUSDe at zero until governance deliberately funds it.
