@@ -32,7 +32,7 @@ contraction:
 
 The Factory derives the paired token from the AMM. For ERC-4626 paired tokens, it derives the retained backing asset through `asset()` and values loose shares with `convertToAssets()`. Held LP is valued only with `get_virtual_price()`; applying the ERC-4626 rate again would double-count it.
 
-Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency.
+Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn remains execution-only, where actual profit and solvency are rechecked.
 
 Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing, capacity, and expansion velocity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; like V2, it returns zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
 
@@ -132,8 +132,8 @@ Entry and normal-contraction profit floors are independent:
 
 Both floors apply to gross realized profit before keeper compensation. At the initial global
 `3_000 bps` keeper share, the `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller
-and `0.07 bp` retained by the protocol; the `4 bp` tertiary entry floor splits into `1.2 bp` and
-`2.8 bp`, respectively.
+and `0.07 bp` retained by the protocol; the `3 bp` tertiary entry floor splits into `0.9 bp` and
+`2.1 bp`, respectively.
 
 Every contraction requires strictly positive gross realized profit before keeper compensation,
 including when governance configures the normal-contraction floor to zero. Break-even and
@@ -143,7 +143,7 @@ loss-making withdrawals are never permitted by configuration.
 |---|---:|---:|
 | frxUSD primary | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
 | sUSDe secondary | `10` (`0.1 bp`) | `110` (`1.1 bp`) |
-| USDC / USDT tertiary | `400` (`4 bp`) | `80` (`0.8 bp`) |
+| USDC / USDT tertiary | `300` (`3 bp`) | `80` (`0.8 bp`) |
 
 The tier profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. This is a soft economic bias rather than enforced cross-pool contraction ordering. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
@@ -184,8 +184,8 @@ The current proposal accepts the two ownership handoffs, registers four preconfi
 |---|---|---|---|---|---:|---:|---:|---:|
 | Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 1.5 bp |
 | Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 1.1 bp |
-| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 4 bp | 0.8 bp |
-| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 4 bp | 0.8 bp |
+| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 3 bp | 0.8 bp |
+| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 3 bp | 0.8 bp |
 
 The proposal contains 13 actions: two ownership acceptances, eight registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD. sUSDe remains inert at a zero ceiling pending a separate liquidity decision.
 
@@ -195,11 +195,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,012 bytes
-implementation runtime:  19,895 bytes
-EIP-170 headroom:          4,681 bytes
+implementation initcode: 20,056 bytes
+implementation runtime:  19,939 bytes
+EIP-170 headroom:          4,637 bytes
 implementation hash:
-0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5
+0x77afe0eacbc9d7e6c05135c03461ff7ffce729877717e7ee7458ddce71e533c8
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

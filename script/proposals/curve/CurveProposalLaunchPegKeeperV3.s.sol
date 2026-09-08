@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_895;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_939;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5;
+        0x77afe0eacbc9d7e6c05135c03461ff7ffce729877717e7ee7458ddce71e533c8;
     uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
@@ -39,7 +39,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
     uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
-    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
+    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;

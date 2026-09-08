@@ -81,7 +81,7 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 
 | Parameter | frxUSD primary | sUSDe secondary | USDC / USDT tertiary |
 |---|---:|---:|---:|
-| `entryMinProfitPpm` | `10` (`0.1 bp`) | `10` (`0.1 bp`) | `400` (`4 bp`) |
+| `entryMinProfitPpm` | `10` (`0.1 bp`) | `10` (`0.1 bp`) | `300` (`3 bp`) |
 | `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `110` (`1.1 bp`) | `80` (`0.8 bp`) |
 | `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) | `2_000` (`20%`) |
 | `minInterventionDelay` | `12` seconds | `12` seconds | `12` seconds |
@@ -91,7 +91,7 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 
 Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp`, `1.1 bp`, and `0.8 bp` exit floors pay the caller `0.45 bp`, `0.33 bp`, and `0.24 bp`, respectively, at their exact boundaries.
 
-Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction in reverse priority order: tertiary at `0.8 bp`, secondary at `1.1 bp`, then primary at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `4 bp` entry edge, making tertiary exposure materially harder to create than preferred exposure.
+Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction in reverse priority order: tertiary at `0.8 bp`, secondary at `1.1 bp`, then primary at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `3 bp` entry edge, making tertiary exposure materially harder to create than preferred exposure.
 
 `maxInterventionShareBps` is configurable and launches at V2's `20%` share. It defines the sole ordinary action amount rather than only an upper bound: expansion uses exactly the current normalized paired-token surplus share, subject to balance/capacity/velocity; contraction requests exactly the current normalized crvUSD excess share, subject to available LP backing. Callers cannot choose smaller dust clips. `update()` automatically selects the local direction, while amountless `expand_supply()` and `contract_supply()` expose the same canonical actions explicitly.
 

@@ -322,9 +322,9 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(IPegKeeperV3(expectedSUsdeKeeper).entry_min_profit_ppm(), 10);
         assertEq(IPegKeeperV3(expectedSUsdeKeeper).normal_exit_min_profit_ppm(), 110);
 
-        assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(expectedUsdcKeeper).normal_exit_min_profit_ppm(), 80);
-        assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(expectedUsdtKeeper).normal_exit_min_profit_ppm(), 80);
     }
 

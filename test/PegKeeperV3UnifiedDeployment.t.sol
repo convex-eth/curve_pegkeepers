@@ -100,9 +100,9 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(IPegKeeperV3(deployment.frxUsdPegKeeper).normal_exit_min_profit_ppm(), 150);
         assertEq(IPegKeeperV3(deployment.sUsdePegKeeper).entry_min_profit_ppm(), 10);
         assertEq(IPegKeeperV3(deployment.sUsdePegKeeper).normal_exit_min_profit_ppm(), 110);
-        assertEq(IPegKeeperV3(deployment.usdcPegKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(deployment.usdcPegKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(deployment.usdcPegKeeper).normal_exit_min_profit_ppm(), 80);
-        assertEq(IPegKeeperV3(deployment.usdtPegKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(deployment.usdtPegKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(deployment.usdtPegKeeper).normal_exit_min_profit_ppm(), 80);
         assertFalse(IPegKeeperV3(deployment.frxUsdPegKeeper).expansion_paused());
         assertFalse(IPegKeeperV3(deployment.frxUsdPegKeeper).contraction_paused());

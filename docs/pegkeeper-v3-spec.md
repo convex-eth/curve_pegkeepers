@@ -231,7 +231,7 @@ principal           = crvUSD deposited
 realized gross       = max(LP value after - baseline - principal, 0)
 ```
 
-The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `4 bp` tertiary entry floor splits into `1.2 bp` and `2.8 bp`, respectively.
+The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `3 bp` tertiary entry floor splits into `0.9 bp` and `2.1 bp`, respectively.
 
 Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)` is restricted to the Factory's dynamic admin, allows a zero burst to disable new capacity, requires burst at most `10_000 bps`, and requires a nonzero refill period. The launch rule is `1_000 bps` (`10%`) of local maximum exposure with a `36 second` full linear refill. This buys roughly three blocks for independent backing oracles to react while the separately configurable `20%` local-imbalance action limits each intervention. Velocity parameters and local-cap updates first checkpoint pressure under the old rule, preventing retroactive decay at a newly selected rate.
 
@@ -270,6 +270,8 @@ It requires:
 - strictly positive gross exit profit before reward, even when the configured floor is zero;
 - configured gross exit profit before reward;
 - final retained LP backing at least remaining debt.
+
+The advisory preview uses the expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, to calculate gross profit, caller reward, and expected post-action backing. The larger buffered maximum LP burn is only the execution slippage bound. Execution measures the actual burn and independently rechecks strict-positive profit, the configured floor, debt reduction, and final solvency; tolerated LP-burn slippage cannot turn an unprofitable action into a successful transaction.
 
 Contraction reduces debt by crvUSD retained after reward. Any amount above remaining debt is terminal surplus transferred to the fee receiver.
 
@@ -352,8 +354,8 @@ Historical deployment membership is private. The public policy-facing registry c
 |---|---|---|---|---|---:|---:|---:|---:|
 | Primary | frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
 | Secondary | crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 110 ppm / 1.1 bp |
-| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 400 ppm / 4 bp | 80 ppm / 0.8 bp |
-| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 400 ppm / 4 bp | 80 ppm / 0.8 bp |
+| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
+| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
 
 The deployment sender initially owns the Factory and policy, binds them, creates and configures all four keepers, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, registers every keeper in both aggregate monetary policies, and assigns 20 million crvUSD ceilings to frxUSD, USDC, and USDT. Those three become active immediately; sUSDe stays at zero allocation.
 
@@ -363,11 +365,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,012 bytes
-implementation runtime:  19,895 bytes
+implementation initcode: 20,056 bytes
+implementation runtime:  19,939 bytes
 implementation hash:
-0x7331063b8ef6d9286eb141c8fc6a66e7b84ae1ab030ee920637530754860b0e5
-EIP-170 headroom:          4,681 bytes
+0x77afe0eacbc9d7e6c05135c03461ff7ffce729877717e7ee7458ddce71e533c8
+EIP-170 headroom:          4,637 bytes
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

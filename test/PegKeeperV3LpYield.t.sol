@@ -1151,6 +1151,57 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldAmm.removeLiquidityCalls(), 0);
     }
 
+    function test_contractionPreviewUsesExpectedBurnInsteadOfMaximumSlippage() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        vm.startPrank(governance);
+        keeper.set_amm_execution_buffer(3);
+        keeper.set_policy(10, 100, MAX_DEPLOYED);
+        vm.stopPrank();
+        yieldAmm.setBalances(5_000e18, 0);
+        yieldAmm.setWithdrawBps(10_002);
+
+        uint256 canonicalCrvUsd = 1_000e18;
+        uint256 expectedBurn =
+            (canonicalCrvUsd * 10_000 + yieldAmm.withdrawBps() - 1) / yieldAmm.withdrawBps();
+        uint256 expectedGross = canonicalCrvUsd - expectedBurn;
+        (uint256 previewedCrvUsd, uint256 grossProfit, uint256 expectedReward) =
+            keeper.preview_contraction();
+
+        assertEq(previewedCrvUsd, canonicalCrvUsd);
+        assertEq(grossProfit, expectedGross);
+        assertEq(expectedReward, expectedGross * 3_000 / 10_000);
+        assertEq(keeper.estimate_caller_profit(), expectedReward);
+        assertEq(keeper.update(), expectedReward);
+    }
+
+    function test_contractionExecutionRechecksProfitAtActualBurn() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        vm.startPrank(governance);
+        keeper.set_amm_execution_buffer(3);
+        keeper.set_policy(10, 100, MAX_DEPLOYED);
+        vm.stopPrank();
+        yieldAmm.setBalances(5_000e18, 0);
+        yieldAmm.setWithdrawBps(10_002);
+
+        keeper.preview_contraction();
+        uint256 lpBefore = keeper.accounted_lp_tokens();
+        uint256 debtBefore = keeper.deployed_crvusd();
+        yieldAmm.setActualWithdrawBps(10_000);
+
+        vm.expectRevert();
+        keeper.contract_supply();
+
+        assertEq(keeper.accounted_lp_tokens(), lpBefore);
+        assertEq(keeper.deployed_crvusd(), debtBefore);
+        assertEq(yieldAmm.removeLiquidityCalls(), 0);
+    }
+
     function test_legacyCallerSelectedContractionSelectorIsAbsent() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         (bool success,) =

@@ -916,11 +916,12 @@ def preview_contraction() -> (uint256, uint256, uint256):
 
     accounted: uint256 = self._lp_inventory()
     quoted_lp_burn: uint256 = self._calc_lp_burn(expected_crv_usd)
+    expected_lp_burn: uint256 = quoted_lp_burn + 1
     maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
-    assert maximum_lp_burn <= accounted
+    assert expected_lp_burn <= maximum_lp_burn and maximum_lp_burn <= accounted
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     trusted_before: uint256 = self._lp_value_at(accounted, virtual_price)
-    trusted_after: uint256 = self._lp_value_at(accounted - maximum_lp_burn, virtual_price)
+    trusted_after: uint256 = self._lp_value_at(accounted - expected_lp_burn, virtual_price)
     trusted_removed: uint256 = trusted_before - trusted_after
     gross_profit: uint256 = self._realized_contraction_profit(
         expected_crv_usd,

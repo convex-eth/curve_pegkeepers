@@ -43,7 +43,7 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
     uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
-    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
+    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
