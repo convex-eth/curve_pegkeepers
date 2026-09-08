@@ -171,6 +171,7 @@ interface IPegKeeperV3 {
         external
         returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
     function update() external returns (uint256 callerRewardValue);
+    function update(address beneficiary) external returns (uint256 callerRewardValue);
 
     function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);

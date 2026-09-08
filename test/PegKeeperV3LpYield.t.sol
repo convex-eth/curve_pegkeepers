@@ -42,6 +42,7 @@ interface ILpPegKeeperV3 {
     function estimate_caller_profit() external view returns (uint256);
     function calc_profit() external view returns (uint256);
     function update() external returns (uint256 callerRewardValue);
+    function update(address beneficiary) external returns (uint256 callerRewardValue);
     function can_expand_without_policy() external view returns (bool);
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function set_velocity_policy(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod)
@@ -615,10 +616,51 @@ contract PegKeeperV3LpYieldTest is Test {
 
         assertEq(keeper.calc_profit(), keeper.trusted_backing_value());
         assertEq(keeper.estimate_caller_profit(), 0);
+    }
 
-        (bool beneficiaryUpdateExists,) = address(keeper)
-            .call(abi.encodeWithSignature("update(address)", makeAddr("arbitrary beneficiary")));
-        assertFalse(beneficiaryUpdateExists);
+    function test_updateBeneficiaryReceivesExpansionLpReward() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 2_000_000e18);
+        address caller = makeAddr("expansion update caller");
+        address beneficiary = makeAddr("expansion reward beneficiary");
+
+        uint256 expectedRewardValue = keeper.estimate_caller_profit();
+        vm.prank(caller);
+        uint256 rewardValue = keeper.update(beneficiary);
+
+        uint256 rewardLp = yieldAmm.balanceOf(beneficiary);
+        assertGt(rewardLp, 0);
+        assertEq(yieldAmm.balanceOf(caller), 0);
+        assertEq(crvUsd.balanceOf(beneficiary), 0);
+        assertEq(rewardValue, expectedRewardValue);
+        assertEq(rewardValue, rewardLp * yieldAmm.virtualPrice() / 1e18);
+    }
+
+    function test_updateBeneficiaryReceivesContractionCrvUsdReward() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 20_000e18);
+        keeper.expand_supply();
+        yieldAmm.setBalances(10_000e18, 0);
+        address caller = makeAddr("contraction update caller");
+        address beneficiary = makeAddr("contraction reward beneficiary");
+
+        uint256 expectedRewardValue = keeper.estimate_caller_profit();
+        vm.prank(caller);
+        uint256 rewardValue = keeper.update(beneficiary);
+
+        assertGt(rewardValue, 0);
+        assertEq(crvUsd.balanceOf(beneficiary), rewardValue);
+        assertEq(crvUsd.balanceOf(caller), 0);
+        assertEq(yieldAmm.balanceOf(beneficiary), 0);
+        assertEq(rewardValue, expectedRewardValue);
+    }
+
+    function test_updateRejectsZeroBeneficiary() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        vm.expectRevert();
+        keeper.update(address(0));
     }
 
     function test_dynamicModeDoesNotFallbackToFixedArrayLiquidity() public {

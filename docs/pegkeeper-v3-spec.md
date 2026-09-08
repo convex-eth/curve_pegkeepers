@@ -275,7 +275,7 @@ The advisory preview uses the expected production-pool burn, `calc_token_amount(
 
 Contraction reduces debt by crvUSD retained after reward. Any amount above remaining debt is terminal surplus transferred to the fee receiver.
 
-`preview_contraction()` returns that exact canonical crvUSD output, gross profit, and caller reward. `available_contraction()` reports the same output cap. `update()` selects contraction when the normalized local pool balance has excess crvUSD and returns zero if the intervention delay was already consumed, matching V2's race behavior. `estimate_caller_profit()` tries the canonical preview and returns zero when neither direction is executable; expansion LP reward is normalized through virtual price so its return is in crvUSD-value terms. `calc_profit()` aliases current protocol surplus in crvUSD-value terms for V2 tooling compatibility. The arbitrary-beneficiary `update(address)` overload is intentionally absent.
+`preview_contraction()` returns that exact canonical crvUSD output, gross profit, and caller reward. `available_contraction()` reports the same output cap. `update()` selects contraction when the normalized local pool balance has excess crvUSD and returns zero if the intervention delay was already consumed, matching V2's race behavior. `update(address beneficiary)` executes the identical action while routing the physical expansion LP reward or contraction crvUSD reward to the selected nonzero beneficiary. `estimate_caller_profit()` tries the canonical preview and returns zero when neither direction is executable; expansion LP reward is normalized through virtual price so its return is in crvUSD-value terms. `calc_profit()` aliases current protocol surplus in crvUSD-value terms for V2 tooling compatibility.
 
 Entry and normal-contraction profit floors both apply to gross realized profit before caller compensation and remain independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so last-resort exposure is expensive to enter and cheaper to unwind.
 
@@ -365,11 +365,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,056 bytes
-implementation runtime:  19,939 bytes
+implementation initcode: 20,169 bytes
+implementation runtime:  20,052 bytes
 implementation hash:
-0x77afe0eacbc9d7e6c05135c03461ff7ffce729877717e7ee7458ddce71e533c8
-EIP-170 headroom:          4,637 bytes
+0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53
+EIP-170 headroom:          4,524 bytes
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

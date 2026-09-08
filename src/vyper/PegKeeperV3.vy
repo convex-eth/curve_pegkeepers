@@ -875,6 +875,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     _crv_usd_received: uint256,
     _trusted_value_removed: uint256,
     _trusted_backing_after: uint256,
+    _reward_recipient: address,
 ) -> (uint256, uint256):
     gross_profit: uint256 = self._realized_contraction_profit(
         _crv_usd_received,
@@ -885,7 +886,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
     keeper_reward: uint256 = self._keeper_reward(gross_profit)
-    self._transfer_exact_to(self._crv_usd, msg.sender, keeper_reward)
+    self._transfer_exact_to(self._crv_usd, _reward_recipient, keeper_reward)
 
     crv_usd_after_reward: uint256 = staticcall self._crv_usd.balanceOf(self)
     assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
@@ -1174,6 +1175,7 @@ def _settle_lp_expansion(
     _entry_donation_value: uint256,
     _principal: uint256,
     _lp_received: uint256,
+    _reward_recipient: address,
 ) -> (uint256, uint256):
     lp_after_deposit: uint256 = self._lp_inventory()
     assert lp_after_deposit - _lp_before == _lp_received
@@ -1192,7 +1194,7 @@ def _settle_lp_expansion(
     keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
     keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price_after
     assert keeper_reward <= _lp_received
-    self._transfer_exact_to(ERC20(self.pool.address), msg.sender, keeper_reward)
+    self._transfer_exact_to(ERC20(self.pool.address), _reward_recipient, keeper_reward)
 
     retained_value: uint256 = self._lp_value(self._lp_inventory())
     assert retained_value >= entry_baseline
@@ -1200,7 +1202,8 @@ def _settle_lp_expansion(
 
 
 @internal
-def _expand_supply() -> (uint256, uint256, uint256):
+def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
+    assert _reward_recipient != empty(address)
     self._require_expansion_policy()
     crv_usd_amount: uint256 = self._available_expansion_without_policy()
     assert crv_usd_amount > 0
@@ -1233,6 +1236,7 @@ def _expand_supply() -> (uint256, uint256, uint256):
         donated_paired_token_value,
         crv_usd_deployed,
         lp_received,
+        _reward_recipient,
     )
     self.deployed_crvusd += crv_usd_deployed
     assert self._trusted_backing_value() >= self.deployed_crvusd
@@ -1254,7 +1258,7 @@ def expand_supply() -> (uint256, uint256, uint256):
     """
     @notice Executes the canonical policy-approved crvUSD expansion.
     """
-    return self._expand_supply()
+    return self._expand_supply(msg.sender)
 
 
 @internal
@@ -1311,6 +1315,7 @@ def _settle_donated_paired_token(
         0,
         crv_usd_matched,
         lp_received,
+        msg.sender,
     )
 
     self.deployed_crvusd += crv_usd_matched
@@ -1419,7 +1424,8 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
 
 
 @internal
-def _contract_supply() -> (uint256, uint256, uint256):
+def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
+    assert _reward_recipient != empty(address)
     self._require_contraction_policy()
     crv_usd_amount: uint256 = self._available_contraction_without_policy()
     assert crv_usd_amount > 0
@@ -1459,6 +1465,7 @@ def _contract_supply() -> (uint256, uint256, uint256):
         crv_usd_received,
         trusted_value_removed,
         trusted_backing_after,
+        _reward_recipient,
     )
     assert self._trusted_backing_value() >= self.deployed_crvusd
     self.last_intervention_at = block.timestamp
@@ -1479,28 +1486,29 @@ def contract_supply() -> (uint256, uint256, uint256):
     """
     @notice Executes the canonical exact-crvUSD contraction.
     """
-    return self._contract_supply()
+    return self._contract_supply(msg.sender)
 
 
 @external
 @nonreentrant
-def update() -> uint256:
+def update(_beneficiary: address = msg.sender) -> uint256:
     """
     @notice Executes the sole canonical intervention and returns caller reward in crvUSD-value terms.
     """
+    assert _beneficiary != empty(address)
     if not self._intervention_delay_elapsed():
         return 0
     if self._local_expansion_limit() > 0:
         crv_usd_deployed: uint256 = 0
         lp_received: uint256 = 0
         keeper_reward_lp: uint256 = 0
-        crv_usd_deployed, lp_received, keeper_reward_lp = self._expand_supply()
+        crv_usd_deployed, lp_received, keeper_reward_lp = self._expand_supply(_beneficiary)
         return self._lp_value(keeper_reward_lp)
     if self._local_contraction_limit() > 0:
         lp_burned: uint256 = 0
         crv_usd_received: uint256 = 0
         keeper_reward: uint256 = 0
-        lp_burned, crv_usd_received, keeper_reward = self._contract_supply()
+        lp_burned, crv_usd_received, keeper_reward = self._contract_supply(_beneficiary)
         return keeper_reward
     raise
 

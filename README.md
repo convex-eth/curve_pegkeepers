@@ -34,7 +34,7 @@ The Factory derives the paired token from the AMM. For ERC-4626 paired tokens, i
 
 Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn remains execution-only, where actual profit and solvency are rechecked.
 
-Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing, capacity, and expansion velocity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; like V2, it returns zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
+Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing, capacity, and expansion velocity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; `update(address beneficiary)` routes the physical LP or crvUSD reward to the selected nonzero beneficiary. Like V2, both forms return zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
 
 ## PegKeeperPolicy
 
@@ -195,11 +195,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,056 bytes
-implementation runtime:  19,939 bytes
-EIP-170 headroom:          4,637 bytes
+implementation initcode: 20,169 bytes
+implementation runtime:  20,052 bytes
+EIP-170 headroom:          4,524 bytes
 implementation hash:
-0x77afe0eacbc9d7e6c05135c03461ff7ffce729877717e7ee7458ddce71e533c8
+0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:
