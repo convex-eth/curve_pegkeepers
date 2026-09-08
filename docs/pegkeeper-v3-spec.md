@@ -231,7 +231,7 @@ principal           = crvUSD deposited
 realized gross       = max(LP value after - baseline - principal, 0)
 ```
 
-The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, a `5 bp` entry floor splits the qualifying gross edge into `1.5 bp` for the caller and `3.5 bp` retained by the protocol.
+The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `4 bp` tertiary entry floor splits into `1.2 bp` and `2.8 bp`, respectively.
 
 Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)` is restricted to the Factory's dynamic admin, allows a zero burst to disable new capacity, requires burst at most `10_000 bps`, and requires a nonzero refill period. The launch rule is `500 bps` of local maximum exposure with a `300 second` full linear refill. Velocity parameters and local-cap updates first checkpoint pressure under the old rule, preventing retroactive decay at a newly selected rate.
 
@@ -346,10 +346,10 @@ Historical deployment membership is private. The public policy-facing registry c
 
 | Tier | AMM | Liquidity ABI | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
 |---|---|---|---|---|---:|---:|---:|---:|
-| Primary | frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
-| Secondary | crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 500 ppm / 5 bp |
-| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
-| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 500 ppm / 5 bp | 100 ppm / 1 bp |
+| Primary | frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
+| Secondary | crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 110 ppm / 1.1 bp |
+| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 400 ppm / 4 bp | 80 ppm / 0.8 bp |
+| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 400 ppm / 4 bp | 80 ppm / 0.8 bp |
 
 The deployment sender initially owns the Factory and policy, binds them, creates and configures all four keepers, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, registers every keeper in both aggregate monetary policies, and assigns 20 million crvUSD ceilings to frxUSD, USDC, and USDT. Those three become active immediately; sUSDe stays at zero allocation.
 
@@ -388,4 +388,4 @@ The existing `3.0.0` manifest and release checklist predate this source snapshot
 7. Generate a new release manifest; never relabel historical evidence.
 8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-The bundled pinned frxUSD structural canary lowers `normalExitMinProfitPpm` to zero on the fork only after proving that the historical state has no executable `500 ppm` exit. This tests the real one-coin withdrawal path without misrepresenting historical profitability. The canary funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, contracts deployed debt, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. The frxUSD production proposal remains `500 ppm`, whose exact boundary is covered by unit tests.
+The bundled pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit settings throughout. It tests a real profitable one-coin withdrawal without weakening the floor, funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, contracts deployed debt, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation.

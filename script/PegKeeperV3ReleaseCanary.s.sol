@@ -118,11 +118,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         vm.stopPrank();
         vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
 
-        // Fork-only structural canary: this pinned pool state has no executable 5 bp exit.
-        // Unit tests pin the production 500 ppm boundary; zero here permits a real one-coin
-        // withdrawal without pretending the historical market offered that edge.
-        vm.prank(CANARY_ADMIN);
-        pegKeeper.set_policy(10, 0, 10_000e18, ALLOCATION);
+        // Exercise the production primary profit profile at the pinned fork state.
 
         (
             uint256 contractionLp,
@@ -193,6 +189,8 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         );
         vm.prank(CANARY_FACTORY_OWNER);
         policy.set_tier(address(pegKeeper), 1);
+        vm.prank(CANARY_ADMIN);
+        pegKeeper.set_policy(10, 150, 10_000e18, ALLOCATION);
         require(address(pegKeeper) == expectedKeeper, "unexpected canary keeper");
     }
 

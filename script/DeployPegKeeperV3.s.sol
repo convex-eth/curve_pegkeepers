@@ -39,10 +39,12 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
     uint256 public constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
-    uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 500;
-    uint256 public constant LAST_RESORT_ENTRY_MIN_PROFIT_PPM = 500;
-    uint256 public constant LAST_RESORT_EXIT_MIN_PROFIT_PPM = 100;
+    uint256 public constant PRIMARY_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
+    uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
+    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
+    uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
@@ -255,8 +257,8 @@ contract DeployPegKeeperV3 is Script {
         _configureKeeper(
             deployment.frxUsdPegKeeper,
             deployment.frxUsdUsdOracle,
-            ENTRY_MIN_PROFIT_PPM,
-            NORMAL_EXIT_MIN_PROFIT_PPM,
+            PRIMARY_ENTRY_MIN_PROFIT_PPM,
+            PRIMARY_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -266,8 +268,8 @@ contract DeployPegKeeperV3 is Script {
         _configureKeeper(
             deployment.sUsdePegKeeper,
             deployment.usdeUsdOracle,
-            ENTRY_MIN_PROFIT_PPM,
-            NORMAL_EXIT_MIN_PROFIT_PPM,
+            SECONDARY_ENTRY_MIN_PROFIT_PPM,
+            SECONDARY_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -277,8 +279,8 @@ contract DeployPegKeeperV3 is Script {
         _configureKeeper(
             deployment.usdcPegKeeper,
             deployment.usdcUsdOracle,
-            LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
-            LAST_RESORT_EXIT_MIN_PROFIT_PPM,
+            TERTIARY_ENTRY_MIN_PROFIT_PPM,
+            TERTIARY_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -288,8 +290,8 @@ contract DeployPegKeeperV3 is Script {
         _configureKeeper(
             deployment.usdtPegKeeper,
             deployment.usdtUsdOracle,
-            LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
-            LAST_RESORT_EXIT_MIN_PROFIT_PPM,
+            TERTIARY_ENTRY_MIN_PROFIT_PPM,
+            TERTIARY_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -439,8 +441,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.frxUsdCrvUsdPool,
             deployment.frxUsdUsdOracle,
-            ENTRY_MIN_PROFIT_PPM,
-            NORMAL_EXIT_MIN_PROFIT_PPM,
+            PRIMARY_ENTRY_MIN_PROFIT_PPM,
+            PRIMARY_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -448,8 +450,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.sUsdeCrvUsdPool,
             deployment.usdeUsdOracle,
-            ENTRY_MIN_PROFIT_PPM,
-            NORMAL_EXIT_MIN_PROFIT_PPM,
+            SECONDARY_ENTRY_MIN_PROFIT_PPM,
+            SECONDARY_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -457,8 +459,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.usdcCrvUsdPool,
             deployment.usdcUsdOracle,
-            LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
-            LAST_RESORT_EXIT_MIN_PROFIT_PPM,
+            TERTIARY_ENTRY_MIN_PROFIT_PPM,
+            TERTIARY_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -466,8 +468,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.usdtCrvUsdPool,
             deployment.usdtUsdOracle,
-            LAST_RESORT_ENTRY_MIN_PROFIT_PPM,
-            LAST_RESORT_EXIT_MIN_PROFIT_PPM,
+            TERTIARY_ENTRY_MIN_PROFIT_PPM,
+            TERTIARY_EXIT_MIN_PROFIT_PPM,
             config
         );
     }

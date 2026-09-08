@@ -35,10 +35,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant TIER_SECONDARY = 2;
     uint256 public constant TIER_TERTIARY = 3;
 
-    uint256 public constant ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant NORMAL_EXIT_MIN_PROFIT_PPM = 500;
-    uint256 public constant LAST_RESORT_ENTRY_MIN_PROFIT_PPM = 500;
-    uint256 public constant LAST_RESORT_EXIT_MIN_PROFIT_PPM = 100;
+    uint256 public constant PRIMARY_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
+    uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
+    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 400;
+    uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MIN_EXPANSION_AMOUNT = 10_000e18;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 3_333;
@@ -286,19 +288,22 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             frxUsdKeeper, FRXUSD_CRVUSD_POOL, FRXUSD, FRXUSD, frxUsdOracle, false, true
         );
         _validateKeeperConfig(
-            frxUsdKeeper, ENTRY_MIN_PROFIT_PPM, NORMAL_EXIT_MIN_PROFIT_PPM, FRXUSD_CAP
+            frxUsdKeeper, PRIMARY_ENTRY_MIN_PROFIT_PPM, PRIMARY_EXIT_MIN_PROFIT_PPM, FRXUSD_CAP
         );
         _validateKeeperAssets(sUsdeKeeper, SUSDE_CRVUSD_POOL, SUSDE, USDE, usdeOracle, true, true);
         _validateKeeperConfig(
-            sUsdeKeeper, ENTRY_MIN_PROFIT_PPM, NORMAL_EXIT_MIN_PROFIT_PPM, SUSDE_LOCAL_CAP
+            sUsdeKeeper,
+            SECONDARY_ENTRY_MIN_PROFIT_PPM,
+            SECONDARY_EXIT_MIN_PROFIT_PPM,
+            SUSDE_LOCAL_CAP
         );
         _validateKeeperAssets(usdcKeeper, USDC_CRVUSD_POOL, USDC, USDC, usdcOracle, false, false);
         _validateKeeperConfig(
-            usdcKeeper, LAST_RESORT_ENTRY_MIN_PROFIT_PPM, LAST_RESORT_EXIT_MIN_PROFIT_PPM, USDC_CAP
+            usdcKeeper, TERTIARY_ENTRY_MIN_PROFIT_PPM, TERTIARY_EXIT_MIN_PROFIT_PPM, USDC_CAP
         );
         _validateKeeperAssets(usdtKeeper, USDT_CRVUSD_POOL, USDT, USDT, usdtOracle, false, false);
         _validateKeeperConfig(
-            usdtKeeper, LAST_RESORT_ENTRY_MIN_PROFIT_PPM, LAST_RESORT_EXIT_MIN_PROFIT_PPM, USDT_CAP
+            usdtKeeper, TERTIARY_ENTRY_MIN_PROFIT_PPM, TERTIARY_EXIT_MIN_PROFIT_PPM, USDT_CAP
         );
 
         _validateChainlinkOracle(frxUsdOracle, FRXUSD_USD_PROXY, FRXUSD_CHAINLINK_MAX_DELAY);

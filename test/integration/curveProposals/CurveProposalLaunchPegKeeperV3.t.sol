@@ -314,18 +314,18 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(controllerFactory.debt_ceiling_residual(expectedFrxUsdKeeper), 0);
     }
 
-    function test_tertiaryKeepersUseLastResortProfitFloors() public {
+    function test_eachTierUsesConfiguredProfitFloors() public {
         _executeActionsDirectly();
 
         assertEq(IPegKeeperV3(expectedFrxUsdKeeper).entry_min_profit_ppm(), 10);
-        assertEq(IPegKeeperV3(expectedFrxUsdKeeper).normal_exit_min_profit_ppm(), 500);
+        assertEq(IPegKeeperV3(expectedFrxUsdKeeper).normal_exit_min_profit_ppm(), 150);
         assertEq(IPegKeeperV3(expectedSUsdeKeeper).entry_min_profit_ppm(), 10);
-        assertEq(IPegKeeperV3(expectedSUsdeKeeper).normal_exit_min_profit_ppm(), 500);
+        assertEq(IPegKeeperV3(expectedSUsdeKeeper).normal_exit_min_profit_ppm(), 110);
 
-        assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 500);
-        assertEq(IPegKeeperV3(expectedUsdcKeeper).normal_exit_min_profit_ppm(), 100);
-        assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 500);
-        assertEq(IPegKeeperV3(expectedUsdtKeeper).normal_exit_min_profit_ppm(), 100);
+        assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(expectedUsdcKeeper).normal_exit_min_profit_ppm(), 80);
+        assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 400);
+        assertEq(IPegKeeperV3(expectedUsdtKeeper).normal_exit_min_profit_ppm(), 80);
     }
 
     function test_secondaryCanExpandWhenPausedPrimaryCannot() public {

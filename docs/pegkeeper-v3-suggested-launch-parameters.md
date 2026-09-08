@@ -79,20 +79,20 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 
 ## Keeper-local policy
 
-| Parameter | frxUSD / sUSDe | USDC / USDT |
-|---|---:|---:|
-| `entryMinProfitPpm` | `10` (`0.1 bp`) | `500` (`5 bp`) |
-| `normalExitMinProfitPpm` | `500` (`5 bp`) | `100` (`1 bp`) |
-| `minExpansionAmount` | `10_000e18` | `10_000e18` |
-| `maxInterventionShareBps` | `3_333` | `3_333` |
-| `minInterventionDelay` | `12` seconds | `12` seconds |
-| `maxExpansionBurstBps` | `500` (`5%` of local max) | `500` (`5%` of local max) |
-| `expansionRefillPeriod` | `300` seconds | `300` seconds |
-| retained-backing floor | `0.999e18` | `0.999e18` |
+| Parameter | frxUSD primary | sUSDe secondary | USDC / USDT tertiary |
+|---|---:|---:|---:|
+| `entryMinProfitPpm` | `10` (`0.1 bp`) | `10` (`0.1 bp`) | `400` (`4 bp`) |
+| `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `110` (`1.1 bp`) | `80` (`0.8 bp`) |
+| `minExpansionAmount` | `10_000e18` | `10_000e18` | `10_000e18` |
+| `maxInterventionShareBps` | `3_333` | `3_333` | `3_333` |
+| `minInterventionDelay` | `12` seconds | `12` seconds | `12` seconds |
+| `maxExpansionBurstBps` | `500` (`5%` of local max) | `500` (`5%` of local max) | `500` (`5%` of local max) |
+| `expansionRefillPeriod` | `300` seconds | `300` seconds | `300` seconds |
+| retained-backing floor | `0.999e18` | `0.999e18` | `0.999e18` |
 
-Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, a `5 bp` qualifying edge pays `1.5 bp` to the caller and leaves `3.5 bp` with the protocol.
+Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp`, `1.1 bp`, and `0.8 bp` exit floors pay the caller `0.45 bp`, `0.33 bp`, and `0.24 bp`, respectively, at their exact boundaries.
 
-Entry and normal-contraction floors are independent; no ordering constraint is intended. The last-resort USDC and USDT keepers require a 5 bp entry edge but only a 1 bp contraction edge. This makes their exposure more expensive to enter and independently executable at a lower positive contraction edge; it does not enforce contraction ordering between keepers.
+Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction in reverse priority order: tertiary at `0.8 bp`, secondary at `1.1 bp`, then primary at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `4 bp` entry edge, making tertiary exposure materially harder to create than preferred exposure.
 
 `maxInterventionShareBps` limits direct expansion to one third of the normalized paired-token surplus over crvUSD and limits contraction quote/receipt to one third of normalized crvUSD excess.
 

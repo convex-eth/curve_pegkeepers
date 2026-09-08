@@ -129,8 +129,9 @@ Loose paired-token donations can be swept into LP. Priority denial sets their cr
 Entry and normal-contraction profit floors are independent:
 
 Both floors apply to gross realized profit before keeper compensation. At the initial global
-`3_000 bps` keeper share, a qualifying `5 bp` gross edge pays `1.5 bp` to the caller and retains
-`3.5 bp` for the protocol.
+`3_000 bps` keeper share, the `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller
+and `0.07 bp` retained by the protocol; the `4 bp` tertiary entry floor splits into `1.2 bp` and
+`2.8 bp`, respectively.
 
 Every contraction requires strictly positive gross realized profit before keeper compensation,
 including when governance configures the normal-contraction floor to zero. Break-even and
@@ -138,10 +139,11 @@ loss-making withdrawals are never permitted by configuration.
 
 | Profile | `entryMinProfitPpm` | `normalExitMinProfitPpm` |
 |---|---:|---:|
-| frxUSD / sUSDe | `10` (`0.1 bp`) | `500` (`5 bp`) |
-| USDC / USDT last resort | `500` (`5 bp`) | `100` (`1 bp`) |
+| frxUSD primary | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
+| sUSDe secondary | `10` (`0.1 bp`) | `110` (`1.1 bp`) |
+| USDC / USDT tertiary | `400` (`4 bp`) | `80` (`0.8 bp`) |
 
-The last-resort profile makes USDC/USDT more expensive to enter and easier to unwind. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
+The tier profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. This is a soft economic bias rather than enforced cross-pool contraction ordering. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
 Each keeper's expansion velocity is independently admin-configurable through `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)`. Launch values are `500 bps` of the local cap with a `300 second` full linear refill. A zero burst disables new velocity capacity; the refill period must be nonzero. Configuration and local-cap changes checkpoint current pressure before applying the new rule, so elapsed time is never retroactively repriced.
 
@@ -178,10 +180,10 @@ The current proposal accepts the two ownership handoffs, registers four preconfi
 
 | Tier | Paired token | AMM | Liquidity ABI | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
 |---|---|---|---|---|---:|---:|---:|---:|
-| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 5 bp |
-| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 5 bp |
-| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 5 bp | 1 bp |
-| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 5 bp | 1 bp |
+| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 1.5 bp |
+| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 1.1 bp |
+| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 4 bp | 0.8 bp |
+| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 4 bp | 0.8 bp |
 
 The proposal contains 13 actions: two ownership acceptances, eight registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD. sUSDe remains inert at a zero ceiling pending a separate liquidity decision.
 
@@ -219,7 +221,7 @@ ETH_RPC_URL=https://an-archive-rpc.example make check
 
 Coverage includes fixed- and dynamic-array liquidity dispatch, direct expansion, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, contraction, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. Fixed-array USDC/USDT dispatch is covered against selector-counting pool fixtures; no mocked-pool test is presented as live-fork execution.
 
-The pinned frxUSD structural canary uses the frxUSD production `500 ppm` exit policy for all earlier checks, then sets the normal-exit floor to zero on the fork only because that historical pool state offers no executable `5 bp` exit. It still exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency. It also funds through the real ownership-agent/eDAO-proxy/ControllerFactory path, zeros idle allocation, contracts deployed debt, permissionlessly rugs the returned crvUSD, and checks equal total-supply and residual-allocation reductions while the keeper's unlimited ControllerFactory allowance remains intact. Unit tests separately pin the exact production exit-profit boundary.
+The pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It exercises the real one-coin withdrawal, policy direction, measured deltas, debt reduction, and final solvency without weakening the profit floor. It also funds through the real ownership-agent/eDAO-proxy/ControllerFactory path, zeros idle allocation, contracts deployed debt, permissionlessly rugs the returned crvUSD, and checks equal total-supply and residual-allocation reductions while the keeper's unlimited ControllerFactory allowance remains intact.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` predate the current `3.0.0` source candidate. They remain untouched in the source batch and must be regenerated from the final committed source snapshot before release.
 
