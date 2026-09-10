@@ -6,17 +6,19 @@ import {Test} from "forge-std/Test.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 
 contract PegKeeperV3RuntimeSizeTest is Test {
+    address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 20_169;
-    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 20_052;
+    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 20_295;
+    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 20_137;
     bytes32 internal constant RELEASE_IMPLEMENTATION_RUNTIME_HASH =
-        0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53;
+        0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647;
     uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
     uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
 
     function test_directImplementationAndMinimalProxyFitProtocolLimits() public {
-        bytes memory implementationInitCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory implementationInitCode =
+            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(CRVUSD));
         assertEq(
             implementationInitCode.length,
             RELEASE_IMPLEMENTATION_INITCODE_SIZE,

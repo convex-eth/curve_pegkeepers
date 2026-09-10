@@ -5,6 +5,10 @@ import {Vm} from "forge-std/Vm.sol";
 
 import {IPegKeeperV3} from "../../src/interfaces/IPegKeeperV3.sol";
 
+interface IStablecoinProvider {
+    function stablecoin() external view returns (address);
+}
+
 contract PegKeeperV3TestOracle {
     uint256 internal _price = 1e18;
     bool public shouldRevert;
@@ -54,7 +58,7 @@ library PegKeeperV3TestDeployer {
         uint256 keeperIndex,
         address yieldOracle
     ) internal returns (IPegKeeperV3 keeper) {
-        address implementation = _deployImplementation();
+        address implementation = _deployImplementation(IStablecoinProvider(factory).stablecoin());
         address proxy = _clone(implementation);
         vm.prank(factory);
         IPegKeeperV3(proxy)
@@ -64,8 +68,9 @@ library PegKeeperV3TestDeployer {
         return IPegKeeperV3(proxy);
     }
 
-    function _deployImplementation() private returns (address implementation) {
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+    function _deployImplementation(address stablecoin) private returns (address implementation) {
+        bytes memory creationCode =
+            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(stablecoin));
         assembly ("memory-safe") {
             implementation := create(0, add(creationCode, 0x20), mload(creationCode))
             if iszero(implementation) {

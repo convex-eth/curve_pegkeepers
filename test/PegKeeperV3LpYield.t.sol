@@ -2045,7 +2045,9 @@ contract PegKeeperV3LpYieldTest is Test {
         address yieldAmm_,
         bool poolUsesDynamicArrays_
     ) internal returns (ILpPegKeeperV3 keeper) {
-        bytes memory keeperCreationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory keeperCreationCode = bytes.concat(
+            vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(address(crvUsd))
+        );
         address implementation;
         assembly ("memory-safe") {
             implementation := create(0, add(keeperCreationCode, 0x20), mload(keeperCreationCode))

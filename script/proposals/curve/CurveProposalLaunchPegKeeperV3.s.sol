@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 20_052;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 20_137;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53;
+        0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647;
     uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
@@ -226,7 +226,13 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(factory.activePegKeeperAt(3) == usdtKeeper, "USDT keeper order");
 
         address implementation = factory.implementation();
-        require(IPegKeeperV3(implementation).initialized(), "implementation unlocked");
+        IPegKeeperV3 keeperImplementation = IPegKeeperV3(implementation);
+        require(keeperImplementation.initialized(), "implementation unlocked");
+        require(
+            keeperImplementation.crv_usd()
+                == IControllerFactory(factory.controllerFactory()).stablecoin(),
+            "implementation crvUSD"
+        );
         if (IMPLEMENTATION_RUNTIME_SIZE != 0) {
             require(
                 implementation.code.length == IMPLEMENTATION_RUNTIME_SIZE, "implementation size"
@@ -339,6 +345,10 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         uint256 expectedLocalCap
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
+        require(
+            keeper.crv_usd() == IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).stablecoin(),
+            "keeper crvUSD"
+        );
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");

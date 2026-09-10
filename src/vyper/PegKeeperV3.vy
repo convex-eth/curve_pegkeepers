@@ -156,9 +156,10 @@ DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
 DIRECTION_ALL: constant(uint256) = 2
 
+crv_usd: public(immutable(ERC20))
+
 _factory: PegKeeperFactory
 _controller_factory: ControllerFactory
-_crv_usd: ERC20
 _backing_asset: ERC20
 _paired_token: PairedToken
 pool: public(Pool)
@@ -192,10 +193,13 @@ all_execution_paused: public(bool)
 
 
 @deploy
-def __init__():
+def __init__(_crv_usd: ERC20):
     """
     @notice Prevents the base contract from being set up as a keeper.
     """
+    assert _crv_usd.address != empty(address)
+    crv_usd = _crv_usd
+
     # Lock the standalone implementation. Proxies have independent zeroed storage.
     self.initialized = True
     self.expansion_paused = True
@@ -239,16 +243,15 @@ def initialize(
 
     controller_factory: address = staticcall PegKeeperFactory(msg.sender).controllerFactory()
     assert controller_factory != empty(address)
-    crv_usd: address = staticcall ControllerFactory(controller_factory).stablecoin()
-    assert crv_usd != empty(address)
-    assert crv_usd != _paired_token.address
+    assert staticcall ControllerFactory(controller_factory).stablecoin() == crv_usd.address
+    assert crv_usd.address != _paired_token.address
     is_erc4626: bool = _paired_token.address != _backing_asset.address
     if is_erc4626:
         assert staticcall _paired_token.asset() == _backing_asset.address
         assert staticcall _paired_token.convertToAssets(0) == 0
         assert staticcall _paired_token.convertToShares(0) == 0
 
-    crv_decimals: uint256 = staticcall ERC20(crv_usd).decimals()
+    crv_decimals: uint256 = staticcall crv_usd.decimals()
     backing_decimals: uint256 = staticcall _backing_asset.decimals()
     assert crv_decimals == 18
     assert backing_decimals <= 18
@@ -256,10 +259,10 @@ def initialize(
 
     coin_0: address = staticcall _pool.coins(0)
     coin_1: address = staticcall _pool.coins(1)
-    if coin_0 == crv_usd and coin_1 == _paired_token.address:
+    if coin_0 == crv_usd.address and coin_1 == _paired_token.address:
         self.pool_crvusd_index = 0
         self.pool_paired_token_index = 1
-    elif coin_0 == _paired_token.address and coin_1 == crv_usd:
+    elif coin_0 == _paired_token.address and coin_1 == crv_usd.address:
         self.pool_crvusd_index = 1
         self.pool_paired_token_index = 0
     else:
@@ -268,8 +271,7 @@ def initialize(
 
     self._factory = PegKeeperFactory(msg.sender)
     self._controller_factory = ControllerFactory(controller_factory)
-    self._crv_usd = ERC20(crv_usd)
-    extcall ERC20(crv_usd).approve(controller_factory, max_value(uint256))
+    extcall crv_usd.approve(controller_factory, max_value(uint256))
     self._backing_asset = _backing_asset
     self._paired_token = _paired_token
     self.pool = _pool
@@ -344,22 +346,6 @@ def fee_receiver() -> address:
 @view
 def _is_admin(_account: address) -> bool:
     return _account == staticcall self._factory.admin()
-
-
-@internal
-@view
-def _is_admin_or_factory(_account: address) -> bool:
-    return _account == staticcall self._factory.admin() or _account == self._factory.address
-
-
-@external
-@view
-def crv_usd() -> address:
-    """
-    @notice Returns the crvUSD token address.
-    """
-    return self._crv_usd.address
-
 
 
 @external
@@ -452,7 +438,7 @@ def coins(_index: uint256) -> address:
     @notice Returns crvUSD for index 0 and the held pool LP token for index 1.
     """
     if _index == 0:
-        return self._crv_usd.address
+        return crv_usd.address
     assert _index == 1
     return self.pool.address
 
@@ -607,27 +593,14 @@ def _meets_entry_floor(_gross_profit: uint256, _principal: uint256) -> bool:
 
 @internal
 @view
-def _normalize_backing(_amount: uint256) -> uint256:
-    return _amount * self.backing_multiplier
-
-
-@internal
-@view
 def _trusted_backing_value() -> uint256:
     return self._lp_value(self._lp_inventory())
 
 
 @internal
 @view
-def _oracle_backing_value() -> uint256:
-    price: uint256 = self._backing_price()
-    return self._oracle_value(self._trusted_backing_value(), price)
-
-
-@internal
-@view
 def _trusted_paired_token_value(_paired_token_units: uint256) -> uint256:
-    return self._normalize_backing(self._paired_token_assets(_paired_token_units))
+    return self._paired_token_assets(_paired_token_units) * self.backing_multiplier
 
 
 @external
@@ -730,7 +703,7 @@ def _available_expansion_without_policy() -> uint256:
         return 0
 
     budget: uint256 = min(
-        staticcall self._crv_usd.balanceOf(self),
+        staticcall crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
     donated_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
@@ -886,9 +859,9 @@ def _settle_keeper_contraction_and_reduce_exposure(
     exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
     keeper_reward: uint256 = self._keeper_reward(gross_profit)
-    self._transfer_exact_to(self._crv_usd, _reward_recipient, keeper_reward)
+    self._transfer_exact_to(crv_usd, _reward_recipient, keeper_reward)
 
-    crv_usd_after_reward: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_after_reward: uint256 = staticcall crv_usd.balanceOf(self)
     assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
@@ -896,7 +869,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
     if net_crv_usd > deployed_crv_usd:
         self.deployed_crvusd = 0
         self._transfer_exact_to(
-            self._crv_usd,
+            crv_usd,
             staticcall self._factory.fee_receiver(),
             net_crv_usd - deployed_crv_usd,
         )
@@ -980,7 +953,10 @@ def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     """
     @notice Changes the allowed LP-mint shortfall or LP-burn excess against AMM quotes.
     """
-    assert self._is_admin_or_factory(msg.sender)
+    assert (
+        msg.sender == staticcall self._factory.admin()
+        or msg.sender == self._factory.address
+    )
     assert _execution_buffer_bps <= BPS
 
     self.amm_execution_buffer_bps = _execution_buffer_bps
@@ -1063,7 +1039,7 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
     donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
 
-    if crv_usd_deployed > staticcall self._crv_usd.balanceOf(self):
+    if crv_usd_deployed > staticcall crv_usd.balanceOf(self):
         return False
     if crv_usd_deployed > self._available_velocity():
         return False
@@ -1109,7 +1085,7 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
     accounting_baseline: uint256 = lp_value_before + donated_value
 
-    assert crv_usd_deployed <= staticcall self._crv_usd.balanceOf(self)
+    assert crv_usd_deployed <= staticcall crv_usd.balanceOf(self)
     assert crv_usd_deployed <= self._available_velocity()
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     assert deployed_after <= self.max_deployed_crvusd
@@ -1139,12 +1115,12 @@ def _deposit_to_pool(
     quoted_lp: uint256 = self._calc_token_amount(_crv_usd_amount, _paired_token_amount)
     min_lp: uint256 = quoted_lp * (BPS - self.amm_execution_buffer_bps) // BPS
 
-    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_before: uint256 = staticcall crv_usd.balanceOf(self)
     paired_token_before: uint256 = staticcall self._paired_token.balanceOf(self)
     lp_before: uint256 = self._lp_inventory()
 
-    extcall self._crv_usd.approve(self.pool.address, 0)
-    extcall self._crv_usd.approve(self.pool.address, _crv_usd_amount)
+    extcall crv_usd.approve(self.pool.address, 0)
+    extcall crv_usd.approve(self.pool.address, _crv_usd_amount)
     extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
     extcall ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
     if self.pool_uses_dynamic_arrays:
@@ -1157,10 +1133,10 @@ def _deposit_to_pool(
         fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
         fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
         extcall FixedLiquidityPool(self.pool.address).add_liquidity(fixed_amounts, min_lp)
-    extcall self._crv_usd.approve(self.pool.address, 0)
+    extcall crv_usd.approve(self.pool.address, 0)
     extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
 
-    assert crv_usd_before - staticcall self._crv_usd.balanceOf(self) == _crv_usd_amount
+    assert crv_usd_before - staticcall crv_usd.balanceOf(self) == _crv_usd_amount
     assert paired_token_before - staticcall self._paired_token.balanceOf(self) == _paired_token_amount
     lp_received: uint256 = self._lp_inventory() - lp_before
     assert lp_received >= min_lp
@@ -1209,7 +1185,7 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     assert crv_usd_amount > 0
     self._backing_price()
 
-    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_before: uint256 = staticcall crv_usd.balanceOf(self)
     paired_token_before: uint256 = self._paired_token_inventory()
     lp_before: uint256 = self._lp_inventory()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
@@ -1225,7 +1201,7 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         crv_usd_deployed,
         paired_token_before,
     )
-    assert crv_usd_before - staticcall self._crv_usd.balanceOf(self) == crv_usd_deployed
+    assert crv_usd_before - staticcall crv_usd.balanceOf(self) == crv_usd_deployed
 
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
@@ -1295,7 +1271,7 @@ def _settle_donated_paired_token(
         _matching_budget,
     )
     if crv_usd_matched > 0:
-        assert crv_usd_matched <= staticcall self._crv_usd.balanceOf(self)
+        assert crv_usd_matched <= staticcall crv_usd.balanceOf(self)
         assert crv_usd_matched <= self._remaining_exposure_capacity()
         self._consume_velocity(crv_usd_matched)
 
@@ -1343,7 +1319,7 @@ def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, u
     assert _max_paired_token_amount > 0
 
     matching_budget: uint256 = min(
-        staticcall self._crv_usd.balanceOf(self),
+        staticcall crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
     return self._settle_donated_paired_token(
@@ -1373,7 +1349,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     potential_surplus += self._oracle_value(donated_paired_token_value, backing_price)
 
     available_budget: uint256 = min(
-        staticcall self._crv_usd.balanceOf(self),
+        staticcall crv_usd.balanceOf(self),
         min(self._available_velocity(), self._remaining_exposure_capacity()),
     )
     withdrawal_reserve: uint256 = min(
@@ -1385,12 +1361,15 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         available_budget - withdrawal_reserve,
     )
 
-    trusted_backing: uint256 = self._oracle_backing_value()
+    trusted_backing: uint256 = self._oracle_value(
+        self._trusted_backing_value(),
+        self._backing_price(),
+    )
     surplus: uint256 = 0
     if trusted_backing > self.deployed_crvusd:
         surplus = trusted_backing - self.deployed_crvusd
 
-    crv_usd_balance_before: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_balance_before: uint256 = staticcall crv_usd.balanceOf(self)
     exposure_capacity: uint256 = self._remaining_exposure_capacity()
     crv_usd_transferred: uint256 = _max_crv_usd_amount
     if crv_usd_transferred > surplus:
@@ -1407,8 +1386,8 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     self.deployed_crvusd = deployed_crv_usd_after
 
     fee_receiver: address = staticcall self._factory.fee_receiver()
-    self._transfer_exact_to(self._crv_usd, fee_receiver, crv_usd_transferred)
-    crv_usd_balance_after: uint256 = staticcall self._crv_usd.balanceOf(self)
+    self._transfer_exact_to(crv_usd, fee_receiver, crv_usd_transferred)
+    crv_usd_balance_after: uint256 = staticcall crv_usd.balanceOf(self)
     assert crv_usd_balance_before >= crv_usd_balance_after
     assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
 
@@ -1436,7 +1415,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     quoted_lp_burn: uint256 = self._calc_lp_burn(crv_usd_amount)
     maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
     assert maximum_lp_burn <= lp_before
-    crv_usd_before: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_before: uint256 = staticcall crv_usd.balanceOf(self)
 
     reported_lp_burn: uint256 = self._remove_exact_crv_usd(
         crv_usd_amount,
@@ -1447,7 +1426,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     lp_burned: uint256 = lp_before - lp_after
     assert lp_burned > 0 and lp_burned <= maximum_lp_burn
     assert reported_lp_burn == lp_burned
-    crv_usd_after_withdrawal: uint256 = staticcall self._crv_usd.balanceOf(self)
+    crv_usd_after_withdrawal: uint256 = staticcall crv_usd.balanceOf(self)
     crv_usd_received: uint256 = crv_usd_after_withdrawal - crv_usd_before
     assert crv_usd_received == crv_usd_amount
 
@@ -1531,12 +1510,12 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
     deployed_after: uint256 = self.deployed_crvusd + _amount
     assert deployed_after <= self.max_deployed_crvusd
     assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
-    assert _amount <= staticcall self._crv_usd.balanceOf(self)
+    assert _amount <= staticcall crv_usd.balanceOf(self)
 
     self._consume_velocity(_amount)
     self.deployed_crvusd = deployed_after
     self.last_intervention_at = block.timestamp
-    self._transfer_exact_to(self._crv_usd, _receiver, _amount)
+    self._transfer_exact_to(crv_usd, _receiver, _amount)
     log CrvUsdBorrowed(
         caller=msg.sender,
         receiver=_receiver,

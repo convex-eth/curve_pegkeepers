@@ -33,7 +33,7 @@ contract PegKeeperV3LpFactoryTest is Test {
             address(crvUsd), admin, emergencyAdmin, feeReceiver, address(aggregateCrvUsdOracle)
         );
 
-        implementation = _create(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"));
+        implementation = _deployImplementation(address(crvUsd));
         policy = IPegKeeperPolicy(
             vm.deployCode(
                 "PegKeeperPolicy.vy",
@@ -50,6 +50,8 @@ contract PegKeeperV3LpFactoryTest is Test {
         IPegKeeperV3 keeper = IPegKeeperV3(deployed);
 
         assertEq(factory.policy(), address(policy));
+        assertEq(IPegKeeperV3(implementation).crv_usd(), address(crvUsd));
+        assertEq(keeper.crv_usd(), address(crvUsd));
         assertEq(factory.activePegKeeperCount(), 1);
         assertEq(factory.activePegKeeperAt(0), deployed);
         assertTrue(factory.is_active(deployed));
@@ -67,6 +69,24 @@ contract PegKeeperV3LpFactoryTest is Test {
         address deployed = _deployKeeper();
 
         assertEq(crvUsd.allowance(deployed, address(controllerFactory)), type(uint256).max);
+    }
+
+    function test_deployRejectsImplementationBoundToDifferentStablecoin() public {
+        LpYieldToken otherStablecoin = new LpYieldToken(18);
+        implementation = _deployImplementation(address(otherStablecoin));
+        IPegKeeperPolicy mismatchedPolicy = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy",
+                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+            )
+        );
+        IPegKeeperV3Factory mismatchedFactory = _newFactory(mismatchedPolicy);
+        vm.prank(owner);
+        mismatchedPolicy.set_factory(address(mismatchedFactory));
+
+        vm.prank(owner);
+        vm.expectRevert(IPegKeeperV3Factory.DeploymentFailed.selector);
+        mismatchedFactory.deployPegKeeper(address(yieldAmm), false, true, address(yieldOracle));
     }
 
     function test_deployPinsSelectedPoolLiquidityMode() public {
@@ -272,6 +292,12 @@ contract PegKeeperV3LpFactoryTest is Test {
     function _deployKeeper() internal returns (address) {
         vm.prank(owner);
         return factory.deployPegKeeper(address(yieldAmm), false, true, address(yieldOracle));
+    }
+
+    function _deployImplementation(address stablecoin) internal returns (address) {
+        return _create(
+            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(stablecoin))
+        );
     }
 
     function _create(bytes memory initCode) internal returns (address deployed) {

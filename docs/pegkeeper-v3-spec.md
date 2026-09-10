@@ -4,7 +4,7 @@ Status: unreleased `3.0.0` candidate on branch `main`. Not deployed. Nothing in 
 
 ## 1. Scope
 
-PegKeeperV3 owns and accounts for liquidity in exactly one Curve two-coin pool containing crvUSD and one paired token.
+PegKeeperV3 owns and accounts for liquidity in exactly one Curve two-coin pool containing crvUSD and one paired token. The shared implementation binds crvUSD once as a public immutable. Every minimal proxy reads that code-bound value, and initialization requires the creating Factory's ControllerFactory to report the same stablecoin.
 
 Each proxy fixes:
 
@@ -365,11 +365,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,169 bytes
-implementation runtime:  20,052 bytes
+implementation initcode: 20,295 bytes
+implementation runtime:  20,137 bytes
 implementation hash:
-0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53
-EIP-170 headroom:          4,524 bytes
+0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647
+EIP-170 headroom:          4,439 bytes
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

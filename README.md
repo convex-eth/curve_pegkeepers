@@ -16,7 +16,7 @@ PegKeepers are not a hard peg guarantee. Their effectiveness depends on pool dep
 
 ## Direct-only V3 architecture
 
-Each `PegKeeperV3` is fixed to one Curve pool containing crvUSD and one paired token. Initialization also fixes whether that pool uses dynamic `uint256[]` or fixed `uint256[2]` liquidity calls. It has no swap router, target AMM, path storage, route adapter, or detached preview module.
+Each `PegKeeperV3` is fixed to one Curve pool containing crvUSD and one paired token. The shared implementation binds crvUSD once as a public immutable; every minimal proxy reads that same code-bound token and initialization rejects a ControllerFactory that reports a different stablecoin. Initialization also fixes whether the pool uses dynamic `uint256[]` or fixed `uint256[2]` liquidity calls. It has no swap router, target AMM, path storage, route adapter, or detached preview module.
 
 ```text
 expansion:
@@ -166,7 +166,7 @@ Every deployed keeper is added to the active list and starts unpaused. Initializ
 
 The environment-free dependency deployer performs seven monotonic CREATEs:
 
-1. locked `PegKeeperV3` implementation;
+1. locked `PegKeeperV3` implementation bound to the ControllerFactory's crvUSD;
 2. `PegKeeperPolicy`;
 3. `PegKeeperV3Factory`;
 4. frxUSD/USD Chainlink adapter;
@@ -195,11 +195,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,169 bytes
-implementation runtime:  20,052 bytes
-EIP-170 headroom:          4,524 bytes
+implementation initcode: 20,295 bytes
+implementation runtime:  20,137 bytes
+EIP-170 headroom:          4,439 bytes
 implementation hash:
-0xa6b2ca6d6381868a262e494b3e3ec45089ad09243203fa9e0d0643c12784ba53
+0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

@@ -157,7 +157,10 @@ contract DeployPegKeeperV3 is Script {
     {
         deployment.initialOwner = config.owner;
         console2.log("Deploying PegKeeperV3 implementation");
-        deployment.implementation = _create(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"));
+        address crvUsd = IControllerFactory(config.controllerFactory).stablecoin();
+        deployment.implementation = _create(
+            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(crvUsd))
+        );
 
         console2.log("Deploying PegKeeperPolicy");
         deployment.policy = _deployPolicy(config);
@@ -354,6 +357,10 @@ contract DeployPegKeeperV3 is Script {
 
         IPegKeeperV3 implementation = IPegKeeperV3(deployment.implementation);
         require(implementation.initialized(), "implementation not locked");
+        require(
+            implementation.crv_usd() == IControllerFactory(config.controllerFactory).stablecoin(),
+            "implementation crvUSD mismatch"
+        );
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
         require(policy.owner() == config.owner, "policy owner mismatch");
@@ -482,6 +489,10 @@ contract DeployPegKeeperV3 is Script {
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
         require(keeper.factory() == expectedFactory, "keeper factory mismatch");
+        require(
+            keeper.crv_usd() == IControllerFactory(config.controllerFactory).stablecoin(),
+            "keeper crvUSD mismatch"
+        );
         require(keeper.pool() == expectedPool, "keeper pool mismatch");
         require(keeper.backing_oracle() == expectedOracle, "keeper oracle mismatch");
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
