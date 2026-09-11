@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 20_137;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 20_095;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647;
+        0x9af68c945716ce92b3e79066bd4e8b042ccbdefb50009dd9c162897a365275d9;
     uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;

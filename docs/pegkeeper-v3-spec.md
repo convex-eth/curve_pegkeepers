@@ -365,11 +365,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,295 bytes
-implementation runtime:  20,137 bytes
+implementation initcode: 20,253 bytes
+implementation runtime:  20,095 bytes
 implementation hash:
-0x4d89d48316e687ac73b19920031ff9c2ad3debd90f11b410d22a1f8770dab647
-EIP-170 headroom:          4,439 bytes
+0x9af68c945716ce92b3e79066bd4e8b042ccbdefb50009dd9c162897a365275d9
+EIP-170 headroom:          4,481 bytes
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

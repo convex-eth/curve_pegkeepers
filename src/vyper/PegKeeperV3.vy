@@ -374,14 +374,6 @@ def _paired_token_assets(_units: uint256) -> uint256:
     return _units
 
 
-@internal
-@view
-def _paired_token_units(_assets: uint256) -> uint256:
-    if self.paired_token_is_erc4626:
-        return staticcall self._paired_token.convertToShares(_assets)
-    return _assets
-
-
 @external
 @view
 def paired_token_assets(_units: uint256) -> uint256:
@@ -397,7 +389,9 @@ def paired_token_units(_assets: uint256) -> uint256:
     """
     @notice Returns the paired-token amount represented by a backing-asset amount.
     """
-    return self._paired_token_units(_assets)
+    if self.paired_token_is_erc4626:
+        return staticcall self._paired_token.convertToShares(_assets)
+    return _assets
 
 
 @internal
@@ -687,11 +681,10 @@ def _local_contraction_limit() -> uint256:
 @view
 def _intervention_delay_elapsed() -> bool:
     last_intervention_at: uint256 = self.last_intervention_at
-    if last_intervention_at == 0:
-        return True
-    if block.timestamp < last_intervention_at:
-        return False
-    return block.timestamp - last_intervention_at >= self.min_intervention_delay
+    return (
+        last_intervention_at == 0
+        or block.timestamp - last_intervention_at >= self.min_intervention_delay
+    )
 
 
 @internal
