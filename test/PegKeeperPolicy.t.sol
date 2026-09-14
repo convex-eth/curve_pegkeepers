@@ -33,22 +33,9 @@ contract OversizedPolicyPriceOracle {
     }
 }
 
-contract PolicyControllerFactoryMock {
-    mapping(address => uint256) public debt_ceiling;
-
-    function setDebtCeiling(address keeper, uint256 ceiling) external {
-        debt_ceiling[keeper] = ceiling;
-    }
-}
-
 contract PolicyFactoryMock {
-    address public owner;
     address public policy;
     mapping(address => bool) public is_active;
-
-    constructor(address initialOwner) {
-        owner = initialOwner;
-    }
 
     function setPolicy(address newPolicy) external {
         policy = newPolicy;
@@ -61,28 +48,11 @@ contract PolicyFactoryMock {
 
 contract PolicyKeeperMock {
     address public immutable factory;
-    address public immutable controller_factory;
-    address public immutable backing_oracle;
-    uint256 public min_backing_oracle_price = 0.999e18;
-    uint256 public max_deployed_crvusd = 100e18;
-    uint256 public debt;
     bool public locallyExpandable = true;
     bool public localProbeReverts;
-    bool public all_execution_paused;
-    bool public expansion_paused;
 
-    constructor(address keeperFactory, address controllerFactory, address backingOracle) {
+    constructor(address keeperFactory) {
         factory = keeperFactory;
-        controller_factory = controllerFactory;
-        backing_oracle = backingOracle;
-    }
-
-    function setMaxDeployedCrvUsd(uint256 maximum) external {
-        max_deployed_crvusd = maximum;
-    }
-
-    function setDebt(uint256 newDebt) external {
-        debt = newDebt;
     }
 
     function setLocallyExpandable(bool expandable) external {
@@ -93,75 +63,49 @@ contract PolicyKeeperMock {
         localProbeReverts = value;
     }
 
-    function setExpansionPaused(bool value) external {
-        expansion_paused = value;
-    }
-
-    function setAllExecutionPaused(bool value) external {
-        all_execution_paused = value;
-    }
-
     function can_expand_without_policy() external view returns (bool) {
         require(!localProbeReverts, "local probe failure");
-        return locallyExpandable && !all_execution_paused && !expansion_paused;
+        return locallyExpandable;
     }
 }
 
 contract PegKeeperPolicyTest is Test {
-    uint256 internal constant NONE = 0;
-    uint256 internal constant PRIMARY = 1;
-    uint256 internal constant SECONDARY = 2;
-    uint256 internal constant TERTIARY = 3;
-    uint256 internal constant EIGHTY_PERCENT = 8_000;
-
     PolicyPriceOracleMock internal oracle;
-    PolicyControllerFactoryMock internal controllerFactory;
     PolicyFactoryMock internal factory;
     IPegKeeperPolicy internal policy;
-    PolicyKeeperMock internal primary;
-    PolicyKeeperMock internal secondaryOne;
-    PolicyKeeperMock internal secondaryTwo;
-    PolicyKeeperMock internal tertiary;
+    PolicyKeeperMock internal preferredKeeper;
+    PolicyKeeperMock internal alternativeKeeper;
 
     function setUp() public {
         oracle = new PolicyPriceOracleMock();
-        controllerFactory = new PolicyControllerFactoryMock();
-        factory = new PolicyFactoryMock(address(this));
+        factory = new PolicyFactoryMock();
         policy = IPegKeeperPolicy(
-            vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(address(this), address(oracle), EIGHTY_PERCENT, 3_000)
-            )
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
         );
         factory.setPolicy(address(policy));
         policy.set_factory(address(factory));
 
-        primary = _newKeeper();
-        secondaryOne = _newKeeper();
-        secondaryTwo = _newKeeper();
-        tertiary = _newKeeper();
-
-        policy.set_tier(address(primary), PRIMARY);
-        policy.set_tier(address(secondaryOne), SECONDARY);
-        policy.set_tier(address(secondaryTwo), SECONDARY);
-        policy.set_tier(address(tertiary), TERTIARY);
+        preferredKeeper = _newKeeper();
+        alternativeKeeper = _newKeeper();
     }
 
-    function test_primaryCanExpandWheneverItsLocalProbePasses() public view {
-        assertTrue(policy.can_expand(address(primary)));
+    function test_activeKeepersHaveNoStructuralPriorityOrdering() public view {
+        assertTrue(policy.can_allocate(address(preferredKeeper)));
+        assertTrue(policy.can_allocate(address(alternativeKeeper)));
+        assertTrue(policy.can_expand(address(preferredKeeper)));
+        assertTrue(policy.can_expand(address(alternativeKeeper)));
     }
 
     function test_keeperProfitShareIsOneBoundedGlobalPolicyRule() public {
-        assertEq(policy.keeper_profit_share_bps(address(primary)), 3_000);
-        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 3_000);
+        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 3_000);
+        assertEq(policy.keeper_profit_share_bps(address(alternativeKeeper)), 3_000);
 
         policy.set_keeper_profit_share_bps(1_250);
-        assertEq(policy.keeper_profit_share_bps(address(primary)), 1_250);
-        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 1_250);
+        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 1_250);
+        assertEq(policy.keeper_profit_share_bps(address(alternativeKeeper)), 1_250);
 
         policy.set_keeper_profit_share_bps(0);
-        assertEq(policy.keeper_profit_share_bps(address(primary)), 0);
-        assertEq(policy.keeper_profit_share_bps(address(tertiary)), 0);
+        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 0);
 
         vm.prank(makeAddr("not owner"));
         vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
@@ -171,264 +115,82 @@ contract PegKeeperPolicyTest is Test {
         policy.set_keeper_profit_share_bps(10_001);
     }
 
-    function test_secondaryIsBlockedUntilPrimaryReachesExactEightyPercent() public {
-        primary.setDebt(80e18 - 1);
-        assertFalse(policy.can_expand(address(secondaryOne)));
+    function test_allocationRequiresMembershipButNotCandidateLocalExpansion() public {
+        alternativeKeeper.setLocallyExpandable(false);
+        assertTrue(policy.can_allocate(address(alternativeKeeper)));
+        assertFalse(policy.can_expand(address(alternativeKeeper)));
 
-        primary.setDebt(80e18);
-        assertTrue(policy.can_expand(address(secondaryOne)));
+        alternativeKeeper.setLocalProbeReverts(true);
+        assertTrue(policy.can_allocate(address(alternativeKeeper)));
+        assertFalse(policy.can_expand(address(alternativeKeeper)));
+
+        factory.setActive(address(alternativeKeeper), false);
+        assertFalse(policy.can_allocate(address(alternativeKeeper)));
+        assertFalse(policy.can_expand(address(alternativeKeeper)));
     }
 
-    function test_primaryTransientLocalFailureDoesNotReleaseSecondaryPriority() public {
-        primary.setDebt(0);
-        primary.setLocallyExpandable(false);
-
-        assertFalse(policy.can_allocate(address(secondaryOne)));
-        assertFalse(policy.can_expand(address(secondaryOne)));
-
-        primary.setLocalProbeReverts(true);
-        assertFalse(policy.can_allocate(address(secondaryOne)));
-        assertFalse(policy.can_expand(address(secondaryOne)));
+    function test_inactiveFactoryBoundKeeperCanContractForWindDown() public {
+        factory.setActive(address(alternativeKeeper), false);
+        assertFalse(policy.can_allocate(address(alternativeKeeper)));
+        assertFalse(policy.can_expand(address(alternativeKeeper)));
+        assertTrue(policy.can_contract(address(alternativeKeeper)));
     }
 
-    function test_everyFundedSecondaryMustReachThresholdBeforeTertiary() public {
-        primary.setDebt(80e18);
-        primary.setLocallyExpandable(false);
-        secondaryOne.setDebt(80e18);
-        secondaryOne.setLocallyExpandable(false);
-        secondaryTwo.setDebt(80e18 - 1);
-        secondaryTwo.setLocallyExpandable(false);
+    function test_keeperFromAnotherFactoryIsRejected() public {
+        PolicyFactoryMock otherFactory = new PolicyFactoryMock();
+        PolicyKeeperMock outsider = new PolicyKeeperMock(address(otherFactory));
+        factory.setActive(address(outsider), true);
 
-        assertFalse(policy.can_allocate(address(tertiary)));
-        assertFalse(policy.can_expand(address(tertiary)));
-
-        secondaryTwo.setDebt(80e18);
-        assertTrue(policy.can_allocate(address(tertiary)));
-        assertTrue(policy.can_expand(address(tertiary)));
+        assertFalse(policy.can_allocate(address(outsider)));
+        assertFalse(policy.can_expand(address(outsider)));
+        assertFalse(policy.can_contract(address(outsider)));
     }
 
-    function test_zeroCapacityPauseAndBadBackingOracleReleasePriority() public {
-        primary.setExpansionPaused(true);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-
-        primary.setExpansionPaused(false);
-        primary.setAllExecutionPaused(true);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-
-        primary.setAllExecutionPaused(false);
-        PolicyPriceOracleMock(primary.backing_oracle()).setShouldRevert(true);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-
-        PolicyPriceOracleMock(primary.backing_oracle()).setShouldRevert(false);
-        PolicyPriceOracleMock(primary.backing_oracle()).setPrice(0.999e18 - 1);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-
-        PolicyPriceOracleMock(primary.backing_oracle()).setPrice(1e18);
-        primary.setDebt(80e18);
-        secondaryOne.setDebt(80e18);
-        secondaryTwo.setExpansionPaused(true);
-        assertTrue(policy.can_expand(address(tertiary)));
-
-        secondaryTwo.setExpansionPaused(false);
-        controllerFactory.setDebtCeiling(address(secondaryTwo), 0);
-        assertTrue(policy.can_expand(address(tertiary)));
-    }
-
-    function test_secondaryUsesTighterLocalMaximumAsUtilizationDenominator() public {
-        primary.setMaxDeployedCrvUsd(50e18);
-        primary.setDebt(40e18 - 1);
-        assertFalse(policy.can_expand(address(secondaryOne)));
-
-        primary.setDebt(40e18);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-    }
-
-    function test_secondaryUsesTighterControllerCeilingAsUtilizationDenominator() public {
-        primary.setMaxDeployedCrvUsd(200e18);
-        controllerFactory.setDebtCeiling(address(primary), 50e18);
-        primary.setDebt(40e18 - 1);
-        assertFalse(policy.can_expand(address(secondaryOne)));
-
-        primary.setDebt(40e18);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-    }
-
-    function test_allocationDoesNotRequireCandidateLocalExpansion() public {
-        primary.setDebt(80e18);
-        secondaryOne.setLocallyExpandable(false);
-
-        assertTrue(policy.can_allocate(address(secondaryOne)));
-        assertFalse(policy.can_expand(address(secondaryOne)));
-    }
-
-    function test_allocationIgnoresPrimaryLocalProbeButEnforcesSaturationAndMembership() public {
-        primary.setDebt(80e18 - 1);
-        assertFalse(policy.can_allocate(address(secondaryOne)));
-
-        primary.setLocallyExpandable(false);
-        assertFalse(policy.can_allocate(address(secondaryOne)));
-
-        primary.setDebt(80e18);
-        assertTrue(policy.can_allocate(address(secondaryOne)));
-
-        factory.setActive(address(secondaryOne), false);
-        assertFalse(policy.can_allocate(address(secondaryOne)));
-    }
-
-    function test_secondaryCanExpandWhenPrimaryIsInactive() public {
-        primary.setDebt(0);
-        factory.setActive(address(primary), false);
-        assertTrue(policy.can_expand(address(secondaryOne)));
-    }
-
-    function test_secondaryCanExpandWhenPrimaryIsUnset() public {
-        policy.set_tier(address(primary), NONE);
-
-        assertEq(policy.primary(), address(0));
-        assertTrue(policy.can_allocate(address(secondaryOne)));
-        assertTrue(policy.can_expand(address(secondaryOne)));
-    }
-
-    function test_tertiaryRemainsBlockedByFundedUnsaturatedSecondaryWhenPrimaryIsUnset() public {
-        policy.set_tier(address(primary), NONE);
-
-        assertFalse(policy.can_allocate(address(tertiary)));
-        assertFalse(policy.can_expand(address(tertiary)));
-    }
-
-    function test_tertiaryCanExpandWhenPrimaryIsUnsetAndSecondariesAreSaturated() public {
-        policy.set_tier(address(primary), NONE);
-        secondaryOne.setDebt(80e18);
-        secondaryTwo.setDebt(80e18);
-
-        assertTrue(policy.can_allocate(address(tertiary)));
-        assertTrue(policy.can_expand(address(tertiary)));
-    }
-
-    function test_tertiaryRequiresPrimaryAndEveryActiveSecondaryToReachThreshold() public {
-        primary.setDebt(80e18);
-        assertFalse(policy.can_expand(address(tertiary)));
-
-        secondaryOne.setDebt(80e18);
-        assertFalse(policy.can_expand(address(tertiary)));
-
-        secondaryTwo.setDebt(80e18);
-        assertTrue(policy.can_expand(address(tertiary)));
-    }
-
-    function test_inactiveSecondaryDoesNotBlockTertiary() public {
-        primary.setDebt(80e18);
-        secondaryOne.setDebt(80e18);
-        factory.setActive(address(secondaryTwo), false);
-        assertTrue(policy.can_expand(address(tertiary)));
-    }
-
-    function test_inactiveCandidateCannotExpandButCanContractForWindDown() public {
-        factory.setActive(address(secondaryOne), false);
-        assertFalse(policy.can_expand(address(secondaryOne)));
-        assertTrue(policy.can_contract(address(secondaryOne)));
-    }
-
-    function test_aggregateDirectionGateAppliesToEveryTierAndContraction() public {
+    function test_aggregateDirectionGateAppliesToEveryKeeperAndContraction() public {
         oracle.setPrice(1e18 - 1);
-        assertFalse(policy.can_expand(address(primary)));
-        assertFalse(policy.can_expand(address(secondaryOne)));
-        assertFalse(policy.can_expand(address(tertiary)));
-        assertTrue(policy.can_contract(address(primary)));
+        assertFalse(policy.can_expand(address(preferredKeeper)));
+        assertFalse(policy.can_expand(address(alternativeKeeper)));
+        assertTrue(policy.can_contract(address(preferredKeeper)));
 
         oracle.setPrice(1e18 + 1);
-        assertFalse(policy.can_contract(address(primary)));
+        assertTrue(policy.can_expand(address(preferredKeeper)));
+        assertTrue(policy.can_expand(address(alternativeKeeper)));
+        assertFalse(policy.can_contract(address(preferredKeeper)));
     }
 
     function test_invalidAggregateOracleFailsClosed() public {
         oracle.setShouldRevert(true);
         vm.expectRevert();
-        policy.can_expand(address(primary));
+        policy.can_expand(address(preferredKeeper));
         vm.expectRevert();
-        policy.can_contract(address(primary));
+        policy.can_contract(address(preferredKeeper));
+        vm.expectRevert();
+        policy.expansion_regime();
     }
 
     function test_zeroAndOversizedAggregateOracleResponsesFailClosed() public {
         oracle.setPrice(0);
         vm.expectRevert();
-        policy.can_expand(address(primary));
+        policy.can_expand(address(preferredKeeper));
         vm.expectRevert();
-        policy.can_contract(address(primary));
+        policy.can_contract(address(preferredKeeper));
         vm.expectRevert();
         policy.expansion_regime();
 
         OversizedPolicyPriceOracle oversized = new OversizedPolicyPriceOracle();
         policy.set_aggregate_crvusd_oracle(address(oversized));
         vm.expectRevert();
-        policy.can_expand(address(primary));
+        policy.can_expand(address(preferredKeeper));
         vm.expectRevert();
-        policy.can_contract(address(primary));
-    }
-
-    function test_secondaryCountCannotExceedTertiaryIterationBound() public {
-        policy.set_tier(address(secondaryOne), NONE);
-        policy.set_tier(address(secondaryTwo), NONE);
-
-        for (uint256 i; i < 256; ++i) {
-            // Safe: 0x1000 + i is at most 0x10ff.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            address keeper = address(uint160(0x1000 + i));
-            vm.etch(keeper, hex"00");
-            vm.mockCall(keeper, abi.encodeWithSignature("factory()"), abi.encode(address(factory)));
-            factory.setActive(keeper, true);
-            policy.set_tier(keeper, SECONDARY);
-        }
-        assertEq(policy.secondaryCount(), 256);
-
-        address overflowKeeper = address(0x2000);
-        vm.etch(overflowKeeper, hex"00");
-        vm.mockCall(
-            overflowKeeper, abi.encodeWithSignature("factory()"), abi.encode(address(factory))
-        );
-        factory.setActive(overflowKeeper, true);
-        vm.expectRevert(bytes4(keccak256("TooManySecondaries()")));
-        policy.set_tier(overflowKeeper, SECONDARY);
-    }
-
-    function test_tierListsUsePopAndSwapWithoutLeavingStaleMembership() public {
-        assertEq(policy.secondaryCount(), 2);
-        policy.set_tier(address(secondaryOne), TERTIARY);
-
-        assertEq(policy.tier(address(secondaryOne)), TERTIARY);
-        assertEq(policy.secondaryCount(), 1);
-        assertEq(policy.secondaryAt(0), address(secondaryTwo));
-        assertEq(policy.tertiaryCount(), 2);
-        assertTrue(
-            policy.tertiaryAt(0) == address(tertiary) || policy.tertiaryAt(1) == address(tertiary)
-        );
-        assertTrue(
-            policy.tertiaryAt(0) == address(secondaryOne)
-                || policy.tertiaryAt(1) == address(secondaryOne)
-        );
-
-        policy.set_tier(address(secondaryOne), NONE);
-        assertEq(policy.tier(address(secondaryOne)), NONE);
-        assertEq(policy.tertiaryCount(), 1);
-        assertEq(policy.tertiaryAt(0), address(tertiary));
-    }
-
-    function test_replacingPrimaryClearsOldPrimaryTier() public {
-        policy.set_tier(address(secondaryOne), PRIMARY);
-
-        assertEq(policy.primary(), address(secondaryOne));
-        assertEq(policy.tier(address(secondaryOne)), PRIMARY);
-        assertEq(policy.tier(address(primary)), NONE);
-        assertEq(policy.secondaryCount(), 1);
-        assertEq(policy.secondaryAt(0), address(secondaryTwo));
+        policy.can_contract(address(preferredKeeper));
+        vm.expectRevert();
+        policy.expansion_regime();
     }
 
     function test_policyCanBindBeforeFactoryInstallsIt() public {
-        PolicyFactoryMock otherFactory = new PolicyFactoryMock(address(this));
+        PolicyFactoryMock otherFactory = new PolicyFactoryMock();
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
-            vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(address(this), address(oracle), EIGHTY_PERCENT, 3_000)
-            )
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
         );
 
         replacement.set_factory(address(otherFactory));
@@ -436,14 +198,22 @@ contract PegKeeperPolicyTest is Test {
         assertEq(otherFactory.policy(), address(0));
     }
 
+    function test_unboundPolicyRejectsAdmission() public {
+        IPegKeeperPolicy unbound = IPegKeeperPolicy(
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
+        );
+
+        assertFalse(unbound.can_allocate(address(preferredKeeper)));
+        assertFalse(unbound.can_expand(address(preferredKeeper)));
+        assertFalse(unbound.can_contract(address(preferredKeeper)));
+    }
+
     function test_onlyOwnerCanConfigurePolicy() public {
         vm.startPrank(makeAddr("not owner"));
-        vm.expectRevert();
-        policy.set_tier(address(primary), NONE);
-        vm.expectRevert();
-        policy.set_priority_utilization_bps(7_500);
-        vm.expectRevert();
+        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
         policy.set_aggregate_crvusd_oracle(address(oracle));
+        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
+        policy.set_keeper_profit_share_bps(2_000);
         vm.stopPrank();
     }
 
@@ -454,7 +224,7 @@ contract PegKeeperPolicyTest is Test {
         assertEq(policy.ownershipTransferNonce(), 1);
 
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_priority_utilization_bps(7_500);
+        policy.set_aggregate_crvusd_oracle(address(oracle));
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_keeper_profit_share_bps(2_000);
         policy.transferOwnership(correctedOwner);
@@ -472,16 +242,36 @@ contract PegKeeperPolicyTest is Test {
         assertEq(policy.pendingOwner(), address(0));
 
         vm.prank(correctedOwner);
-        policy.set_priority_utilization_bps(7_500);
-        assertEq(policy.priorityUtilizationBps(), 7_500);
+        policy.set_keeper_profit_share_bps(2_000);
+        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 2_000);
+    }
+
+    function test_priorityConfigurationAndObservabilitySelectorsAreAbsent() public {
+        _assertStaticCallFails(abi.encodeWithSignature("priorityUtilizationBps()"));
+        _assertStaticCallFails(abi.encodeWithSignature("primary()"));
+        _assertStaticCallFails(abi.encodeWithSignature("tier(address)", address(preferredKeeper)));
+        _assertStaticCallFails(abi.encodeWithSignature("secondaryCount()"));
+        _assertStaticCallFails(abi.encodeWithSignature("secondaryAt(uint256)", 0));
+        _assertStaticCallFails(abi.encodeWithSignature("tertiaryCount()"));
+        _assertStaticCallFails(abi.encodeWithSignature("tertiaryAt(uint256)", 0));
+        _assertCallFails(abi.encodeWithSignature("set_priority_utilization_bps(uint256)", 8_000));
+        _assertCallFails(
+            abi.encodeWithSignature("set_tier(address,uint256)", address(preferredKeeper), 1)
+        );
     }
 
     function _newKeeper() internal returns (PolicyKeeperMock keeper) {
-        PolicyPriceOracleMock backingOracle = new PolicyPriceOracleMock();
-        keeper = new PolicyKeeperMock(
-            address(factory), address(controllerFactory), address(backingOracle)
-        );
+        keeper = new PolicyKeeperMock(address(factory));
         factory.setActive(address(keeper), true);
-        controllerFactory.setDebtCeiling(address(keeper), 100e18);
+    }
+
+    function _assertStaticCallFails(bytes memory data) internal view {
+        (bool success,) = address(policy).staticcall(data);
+        assertFalse(success);
+    }
+
+    function _assertCallFails(bytes memory data) internal {
+        (bool success,) = address(policy).call(data);
+        assertFalse(success);
     }
 }

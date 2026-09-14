@@ -13,7 +13,7 @@ Each proxy fixes:
 - `pool_uses_dynamic_arrays`: whether liquidity quotes/deposits use `uint256[]` or `uint256[2]`;
 - `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
 - `backing_oracle`: an independent USD oracle for retained backing;
-- local capacity, intervention, profit, role, and pause state.
+- local capacity, intervention, profit, and pause state.
 
 The core contains no target AMM, swap operation, route struct, path storage, route loss bound, DAI/USDS adapter, ERC-4626 route operation, Frax minter operation, or detached preview module.
 
@@ -56,14 +56,10 @@ Deployment is blocked until `policy.factory() == address(factory)`. Factory poli
 
 ### 2.2 PegKeeperPolicy
 
-`PegKeeperPolicy` owns configurable cross-keeper admission rules:
+`PegKeeperPolicy` owns configurable admission rules:
 
 - aggregate crvUSD oracle;
-- shared priority-utilization threshold;
 - one global keeper profit share;
-- one primary;
-- multiple indexed secondaries;
-- multiple indexed tertiaries;
 - `can_allocate`, `can_expand`, `can_contract`, and `expansion_regime` decisions.
 
 It binds to one Factory once. Its owner and the Factory owner are independently transferable through two-step ownership.
@@ -85,83 +81,23 @@ A keeper exposes `can_expand_without_policy()`. This is a non-recursive local pr
 - retained-backing oracle floor;
 - direct AMM quote, entry-profit floor, reward, and final solvency preview.
 
-Expected economic failure returns `false`. A malformed or reverting external dependency may revert; policy calls the candidate probe with a low-level static call and treats failure as candidate non-executability. That result never releases a higher tier's priority.
+Expected economic failure returns `false`. A malformed or reverting external dependency may revert; policy calls the candidate probe with a low-level static call and treats failure as candidate non-executability.
 
 `policy.can_expand(keeper)` requires:
 
 1. a valid aggregate crvUSD price at least `1e18`;
 2. Factory active membership;
-3. a configured tier and satisfied priority rule;
-4. a successful local keeper probe.
+3. a successful local keeper probe.
 
-### 3.1 Priority rules
+### 3.1 Independent admission
 
-Tier values are:
+The current policy has no cross-keeper ordering. Every active, Factory-bound keeper is evaluated independently. One keeper's debt, capacity, pause state, retained-backing oracle, pool imbalance, intervention delay, AMM quote, or entry economics cannot deny another keeper.
 
-```text
-0 none
-1 primary
-2 secondary
-3 tertiary
-```
-
-Primary:
-
-```text
-candidate must be active and locally expandable
-```
-
-Secondary:
-
-```text
-candidate must be active and locally expandable
-AND
-primary does not retain priority
-```
-
-Tertiary:
-
-```text
-candidate must be active and locally expandable
-AND primary does not retain priority
-AND every configured secondary does not retain priority
-```
-
-A higher-tier keeper retains priority exactly when it is active and bound to this Factory,
-neither globally nor expansion-paused, has a valid retained-backing oracle price at or above
-its configured floor, has nonzero effective capacity, and remains below the shared priority
-utilization threshold. Policy checks those facts directly.
-
-Temporary local non-executability does not release priority. In particular, pool imbalance,
-intervention delay, loose crvUSD, AMM quote, and entry-profit viability are
-candidate execution checks rather than predecessor-priority checks. This prevents one
-same-block transaction from expanding a primary, consuming its immediate local capacity, and
-then cascading through secondary and tertiary keepers.
-
-An unset primary counts as unavailable, not as a global expansion stop. A configured secondary
-may therefore expand without a primary; a tertiary still waits until every funded, healthy,
-unpaused secondary reaches the same utilization threshold or otherwise stops retaining priority.
-
-The shared `80%` priority-utilization check uses independently for each higher-tier keeper:
-
-```text
-used = keeper.debt()
-cap  = min(
-    keeper.max_deployed_crvusd(),
-    ControllerFactory.debt_ceiling(keeper)
-)
-require used >= ceil(cap * 8_000 / 10_000)
-```
-
-Raw crvUSD token balance is excluded. Reconstructing capacity as `balance + debt` would allow direct token donations to raise the denominator and delay lower tiers.
-
-The policy permits at most 256 configured secondaries. Tertiary admission loops over exactly that bounded set, so no configured secondary can sit beyond the checked iteration range.
-
-No priority logic is hard-coded in the Factory or keeper.
+Keeper-local AMM fees and gross-profit floors provide the launch's soft economic preference. frxUSD and sUSDe use lower entry floors than USDC and USDT, so the latter require more gross edge before expansion. The policy does not promise an execution order. A future Factory-bound policy may add hard ordering without changing or redeploying keepers.
 
 ### 3.2 Allocation admission
 
-`can_allocate(keeper)` applies active membership and tier ordering without requiring the candidate's direct AMM probe. This is used for debt-increasing donation matches. A lower-priority keeper may always settle a donation one-sided, but it may increase crvUSD debt only when allocation priority allows.
+`can_allocate(keeper)` requires active membership and correct Factory binding without calling the candidate's direct AMM probe. This is used for debt-increasing donation matches. The keeper separately enforces selected amount, backing, capacity, aggregate direction, and final solvency.
 
 ## 4. Aggregate direction
 
@@ -230,7 +166,7 @@ principal           = crvUSD deposited
 realized gross       = max(LP value after - baseline - principal, 0)
 ```
 
-The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `3 bp` tertiary entry floor splits into `0.9 bp` and `2.1 bp`, respectively.
+The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `3 bp` USDC/USDT entry floor splits into `0.9 bp` and `2.1 bp`, respectively.
 
 The intervention share controls per-action magnitude. The shared intervention delay controls action frequency and can be increased without adding an independent amount limit. Local and ControllerFactory ceilings independently bound aggregate exposure.
 
@@ -276,7 +212,7 @@ Contraction reduces debt by crvUSD retained after reward. Any amount above remai
 
 `preview_contraction()` returns that exact canonical crvUSD output, gross profit, and caller reward. `available_contraction()` reports the same output cap. `update()` selects contraction when the normalized local pool balance has excess crvUSD and returns zero if the intervention delay was already consumed, matching V2's race behavior. `update(address beneficiary)` executes the identical action while routing the physical expansion LP reward or contraction crvUSD reward to the selected nonzero beneficiary. `estimate_caller_profit()` tries the canonical preview and returns zero when neither direction is executable; expansion LP reward is normalized through virtual price so its return is in crvUSD-value terms. `calc_profit()` aliases current protocol surplus in crvUSD-value terms for V2 tooling compatibility.
 
-Entry and normal-contraction profit floors both apply to gross realized profit before caller compensation and remain independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so last-resort exposure is expensive to enter and cheaper to unwind.
+Entry and normal-contraction profit floors both apply to gross realized profit before caller compensation and remain independent; `normalExitMinProfitPpm` may be below `entryMinProfitPpm`. The candidate USDC/USDT keepers deliberately use that ordering so their exposure is more expensive to enter and cheaper to unwind.
 
 ## 9. Policy-gated external draw
 
@@ -348,12 +284,12 @@ Historical deployment membership is private. The public policy-facing registry c
 
 ## 13. Candidate launch
 
-| Tier | AMM | Liquidity ABI | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
-|---|---|---|---|---|---:|---:|---:|---:|
-| Primary | frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
-| Secondary | crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 110 ppm / 1.1 bp |
-| Tertiary | USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
-| Tertiary | USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
+| AMM | Liquidity ABI | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
+|---|---|---|---|---:|---:|---:|---:|
+| frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
+| crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 110 ppm / 1.1 bp |
+| USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
+| USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
 
 The deployment sender initially owns the Factory and policy, binds them, creates and configures all four keepers, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, registers every keeper in both aggregate monetary policies, and assigns 20 million crvUSD ceilings to frxUSD, USDC, and USDT. Those three become active immediately; sUSDe stays at zero allocation.
 
@@ -369,9 +305,9 @@ implementation hash:
 0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3
 EIP-170 headroom:          5,550 bytes
 
-PegKeeperPolicy runtime:   5,490 bytes
+PegKeeperPolicy runtime:   2,273 bytes
 policy hash:
-0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e
+0x2c0765aba14cbfac8deb3278644ebd91b356ae37e2c21b89162ba35a70985702
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes
@@ -392,4 +328,4 @@ The existing `3.0.0` manifest and release checklist predate this source snapshot
 7. Generate a new release manifest; never relabel historical evidence.
 8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-The bundled pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit settings throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening either floor, funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. A separate pinned test executes both exact-output selector modes against all four candidate production pools.
+The bundled pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit settings throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening either floor, funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. A separate pinned test executes both exact-output selector modes against all four candidate production pools.

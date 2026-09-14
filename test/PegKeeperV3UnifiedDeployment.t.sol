@@ -58,7 +58,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(deployment.policyOwnershipNonce, 1);
         assertEq(policy.factory(), deployment.factory);
         assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
-        assertEq(policy.priorityUtilizationBps(), config.priorityUtilizationBps);
         assertEq(
             policy.keeper_profit_share_bps(deployment.frxUsdPegKeeper), config.keeperProfitShareBps
         );
@@ -92,10 +91,10 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(factory.activePegKeeperAt(1), deployment.sUsdePegKeeper);
         assertEq(factory.activePegKeeperAt(2), deployment.usdcPegKeeper);
         assertEq(factory.activePegKeeperAt(3), deployment.usdtPegKeeper);
-        assertEq(policy.primary(), deployment.frxUsdPegKeeper);
-        assertEq(policy.tier(deployment.sUsdePegKeeper), 2);
-        assertEq(policy.tier(deployment.usdcPegKeeper), 3);
-        assertEq(policy.tier(deployment.usdtPegKeeper), 3);
+        assertTrue(policy.can_allocate(deployment.frxUsdPegKeeper));
+        assertTrue(policy.can_allocate(deployment.sUsdePegKeeper));
+        assertTrue(policy.can_allocate(deployment.usdcPegKeeper));
+        assertTrue(policy.can_allocate(deployment.usdtPegKeeper));
         assertEq(IPegKeeperV3(deployment.frxUsdPegKeeper).entry_min_profit_ppm(), 10);
         assertEq(IPegKeeperV3(deployment.frxUsdPegKeeper).normal_exit_min_profit_ppm(), 150);
         assertEq(IPegKeeperV3(deployment.sUsdePegKeeper).entry_min_profit_ppm(), 10);
@@ -111,9 +110,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         vm.prank(config.owner);
         vm.expectRevert(IPegKeeperV3Factory.OwnershipHandoffPending.selector);
         factory.setDefaults(defaults_);
-        vm.prank(config.owner);
-        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_priority_utilization_bps(config.priorityUtilizationBps);
         vm.prank(config.owner);
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_keeper_profit_share_bps(config.keeperProfitShareBps);
@@ -156,7 +152,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.admin, deployer.CURVE_OWNERSHIP_AGENT());
         assertEq(config.emergencyAdmin, deployer.EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
-        assertEq(config.priorityUtilizationBps, 8_000);
         assertEq(config.keeperProfitShareBps, 3_000);
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
         assertEq(config.ammExecutionBufferBps, 3);
@@ -197,7 +192,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         config.admin = finalOwner;
         config.emergencyAdmin = makeAddr("emergencyAdmin");
         config.feeReceiver = makeAddr("feeReceiver");
-        config.priorityUtilizationBps = 8_000;
         config.keeperProfitShareBps = 3_000;
         config.maxDeployedCrvUsd = 2_500_000e18;
         config.ammExecutionBufferBps = 7;

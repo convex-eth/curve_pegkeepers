@@ -2,7 +2,7 @@
 """
 @title PegKeeperPolicy
 @license MIT
-@notice Applies aggregate direction and three-tier expansion priority to one PegKeeperV3 factory.
+@notice Applies aggregate direction and active-keeper admission to one PegKeeperV3 factory.
 """
 
 
@@ -11,23 +11,11 @@ interface PriceOracle:
 
 
 interface PegKeeperFactory:
-    def owner() -> address: view
     def is_active(_keeper: address) -> bool: view
 
 
 interface PegKeeper:
     def factory() -> address: view
-    def controller_factory() -> address: view
-    def backing_oracle() -> address: view
-    def min_backing_oracle_price() -> uint256: view
-    def all_execution_paused() -> bool: view
-    def expansion_paused() -> bool: view
-    def max_deployed_crvusd() -> uint256: view
-    def debt() -> uint256: view
-
-
-interface ControllerFactory:
-    def debt_ceiling(_keeper: address) -> uint256: view
 
 
 event FactorySet:
@@ -39,20 +27,9 @@ event AggregateCrvUsdOracleUpdated:
     newOracle: indexed(address)
 
 
-event PriorityUtilizationUpdated:
-    oldUtilizationBps: uint256
-    newUtilizationBps: uint256
-
-
 event KeeperProfitShareUpdated:
     oldKeeperProfitShareBps: uint256
     newKeeperProfitShareBps: uint256
-
-
-event TierUpdated:
-    pegKeeper: indexed(address)
-    oldTier: uint256
-    newTier: uint256
 
 
 event OwnershipTransferStarted:
@@ -67,11 +44,6 @@ event OwnershipTransferred:
 
 BPS: constant(uint256) = 10_000
 PRECISION: constant(uint256) = 10 ** 18
-TIER_NONE: constant(uint256) = 0
-TIER_PRIMARY: constant(uint256) = 1
-TIER_SECONDARY: constant(uint256) = 2
-TIER_TERTIARY: constant(uint256) = 3
-MAX_SECONDARIES: constant(uint256) = 256
 LOCAL_EXPANDABLE_SELECTOR: constant(Bytes[4]) = method_id("can_expand_without_policy()")
 
 owner: public(address)
@@ -79,44 +51,28 @@ pendingOwner: public(address)
 ownershipTransferNonce: public(uint256)
 factory: public(address)
 aggregateCrvUsdOracle: public(address)
-priorityUtilizationBps: public(uint256)
 _keeperProfitShareBps: uint256
-primary: public(address)
-tier: public(HashMap[address, uint256])
-secondaryCount: public(uint256)
-secondaryAt: public(HashMap[uint256, address])
-_secondaryIndexPlusOne: HashMap[address, uint256]
-tertiaryCount: public(uint256)
-tertiaryAt: public(HashMap[uint256, address])
-_tertiaryIndexPlusOne: HashMap[address, uint256]
 
 
 @deploy
 def __init__(
     _initial_owner: address,
     _aggregate_crvusd_oracle: address,
-    _priority_utilization_bps: uint256,
     _keeper_profit_share_bps: uint256,
 ):
     if _initial_owner == empty(address):
         raw_revert(method_id("InvalidOwner()"))
     if _aggregate_crvusd_oracle == empty(address) or _aggregate_crvusd_oracle.codesize == 0:
         raw_revert(method_id("InvalidOracle()"))
-    if _priority_utilization_bps == 0 or _priority_utilization_bps > BPS:
-        raw_revert(method_id("InvalidThreshold()"))
     if _keeper_profit_share_bps > BPS:
         raw_revert(method_id("InvalidThreshold()"))
 
     self.owner = _initial_owner
     self.aggregateCrvUsdOracle = _aggregate_crvusd_oracle
-    self.priorityUtilizationBps = _priority_utilization_bps
     self._keeperProfitShareBps = _keeper_profit_share_bps
     log OwnershipTransferred(oldOwner=empty(address), newOwner=_initial_owner)
     log AggregateCrvUsdOracleUpdated(
         oldOracle=empty(address), newOracle=_aggregate_crvusd_oracle
-    )
-    log PriorityUtilizationUpdated(
-        oldUtilizationBps=0, newUtilizationBps=_priority_utilization_bps
     )
     log KeeperProfitShareUpdated(
         oldKeeperProfitShareBps=0,
@@ -146,20 +102,6 @@ def set_aggregate_crvusd_oracle(_new_oracle: address):
 
 
 @external
-def set_priority_utilization_bps(_new_utilization_bps: uint256):
-    self._check_owner()
-    if _new_utilization_bps == 0 or _new_utilization_bps > BPS:
-        raw_revert(method_id("InvalidThreshold()"))
-
-    old_utilization_bps: uint256 = self.priorityUtilizationBps
-    self.priorityUtilizationBps = _new_utilization_bps
-    log PriorityUtilizationUpdated(
-        oldUtilizationBps=old_utilization_bps,
-        newUtilizationBps=_new_utilization_bps,
-    )
-
-
-@external
 def set_keeper_profit_share_bps(_new_keeper_profit_share_bps: uint256):
     self._check_owner()
     if _new_keeper_profit_share_bps > BPS:
@@ -180,53 +122,6 @@ def keeper_profit_share_bps(_keeper: address) -> uint256:
 
 
 @external
-def set_tier(_keeper: address, _new_tier: uint256):
-    self._check_owner()
-    if _new_tier > TIER_TERTIARY:
-        raw_revert(method_id("InvalidTier()"))
-    if _keeper == empty(address) or _keeper.codesize == 0:
-        raw_revert(method_id("InvalidKeeper()"))
-    if _new_tier != TIER_NONE:
-        factory: address = self.factory
-        if factory == empty(address):
-            raw_revert(method_id("InvalidFactory()"))
-        if staticcall PegKeeper(_keeper).factory() != factory or not staticcall PegKeeperFactory(factory).is_active(_keeper):
-            raw_revert(method_id("InvalidKeeper()"))
-
-    old_tier: uint256 = self.tier[_keeper]
-    if old_tier == _new_tier:
-        return
-
-    self._remove_from_tier(_keeper, old_tier)
-    if _new_tier == TIER_PRIMARY:
-        old_primary: address = self.primary
-        if old_primary != empty(address):
-            self.primary = empty(address)
-            self.tier[old_primary] = TIER_NONE
-            log TierUpdated(
-                pegKeeper=old_primary,
-                oldTier=TIER_PRIMARY,
-                newTier=TIER_NONE,
-            )
-        self.primary = _keeper
-    elif _new_tier == TIER_SECONDARY:
-        if self.secondaryCount >= MAX_SECONDARIES:
-            raw_revert(method_id("TooManySecondaries()"))
-        secondary_index: uint256 = self.secondaryCount
-        self.secondaryAt[secondary_index] = _keeper
-        self._secondaryIndexPlusOne[_keeper] = secondary_index + 1
-        self.secondaryCount = secondary_index + 1
-    elif _new_tier == TIER_TERTIARY:
-        tertiary_index: uint256 = self.tertiaryCount
-        self.tertiaryAt[tertiary_index] = _keeper
-        self._tertiaryIndexPlusOne[_keeper] = tertiary_index + 1
-        self.tertiaryCount = tertiary_index + 1
-
-    self.tier[_keeper] = _new_tier
-    log TierUpdated(pegKeeper=_keeper, oldTier=old_tier, newTier=_new_tier)
-
-
-@external
 @view
 def expansion_regime() -> bool:
     return self._aggregate_crvusd_price() >= PRECISION
@@ -235,18 +130,15 @@ def expansion_regime() -> bool:
 @external
 @view
 def can_allocate(_keeper: address) -> bool:
-    return self._can_allocate(_keeper)
+    return self._is_active_keeper(_keeper)
 
 
 @external
 @view
 def can_expand(_keeper: address) -> bool:
-    factory: address = self.factory
-    if factory == empty(address):
+    if self.factory == empty(address):
         return False
     if self._aggregate_crvusd_price() < PRECISION:
-        return False
-    if not self._can_allocate(_keeper):
         return False
     return self._is_locally_expandable(_keeper)
 
@@ -315,7 +207,9 @@ def _aggregate_crvusd_price() -> uint256:
 @view
 def _is_active_keeper(_keeper: address) -> bool:
     factory: address = self.factory
-    if _keeper == empty(address) or not staticcall PegKeeperFactory(factory).is_active(_keeper):
+    if factory == empty(address) or _keeper == empty(address):
+        return False
+    if not staticcall PegKeeperFactory(factory).is_active(_keeper):
         return False
     return staticcall PegKeeper(_keeper).factory() == factory
 
@@ -338,109 +232,3 @@ def _is_locally_expandable(_keeper: address) -> bool:
     if not success or len(response) != 32:
         return False
     return convert(response, uint256) == 1
-
-
-@internal
-@view
-def _can_allocate(_keeper: address) -> bool:
-    if not self._is_active_keeper(_keeper):
-        return False
-
-    keeper_tier: uint256 = self.tier[_keeper]
-    if keeper_tier == TIER_PRIMARY:
-        return _keeper == self.primary
-    if keeper_tier == TIER_SECONDARY:
-        primary: address = self.primary
-        return primary == empty(address) or not self._retains_priority(primary)
-    if keeper_tier == TIER_TERTIARY:
-        primary: address = self.primary
-        if primary != empty(address) and self._retains_priority(primary):
-            return False
-        for index: uint256 in range(256):
-            if index >= self.secondaryCount:
-                break
-            if self._retains_priority(self.secondaryAt[index]):
-                return False
-        return True
-    return False
-
-
-@internal
-@view
-def _retains_priority(_keeper: address) -> bool:
-    if not self._is_active_keeper(_keeper):
-        return False
-    if staticcall PegKeeper(_keeper).all_execution_paused():
-        return False
-    if staticcall PegKeeper(_keeper).expansion_paused():
-        return False
-
-    backing_oracle: address = staticcall PegKeeper(_keeper).backing_oracle()
-    if backing_oracle == empty(address) or backing_oracle.codesize == 0:
-        return False
-    ok: bool = False
-    response: Bytes[64] = empty(Bytes[64])
-    ok, response = raw_call(
-        backing_oracle,
-        method_id("price()"),
-        max_outsize=64,
-        is_static_call=True,
-        revert_on_failure=False,
-    )
-    if not ok or len(response) != 32:
-        return False
-    if convert(slice(response, 0, 32), uint256) < staticcall PegKeeper(_keeper).min_backing_oracle_price():
-        return False
-
-    return not self._is_saturated(_keeper)
-
-
-@internal
-@view
-def _is_saturated(_keeper: address) -> bool:
-    local_maximum: uint256 = staticcall PegKeeper(_keeper).max_deployed_crvusd()
-    controller_factory: address = staticcall PegKeeper(_keeper).controller_factory()
-    controller_ceiling: uint256 = staticcall ControllerFactory(controller_factory).debt_ceiling(_keeper)
-    effective_ceiling: uint256 = min(local_maximum, controller_ceiling)
-    if effective_ceiling == 0:
-        return True
-
-    quotient: uint256 = effective_ceiling // BPS
-    remainder: uint256 = effective_ceiling % BPS
-    scaled_remainder: uint256 = remainder * self.priorityUtilizationBps
-    required_debt: uint256 = (
-        quotient * self.priorityUtilizationBps
-        + (scaled_remainder + BPS - 1) // BPS
-    )
-    return staticcall PegKeeper(_keeper).debt() >= required_debt
-
-
-@internal
-def _remove_from_tier(_keeper: address, _old_tier: uint256):
-    if _old_tier == TIER_PRIMARY:
-        if self.primary == _keeper:
-            self.primary = empty(address)
-    elif _old_tier == TIER_SECONDARY:
-        index_plus_one: uint256 = self._secondaryIndexPlusOne[_keeper]
-        if index_plus_one != 0:
-            index: uint256 = index_plus_one - 1
-            last_index: uint256 = self.secondaryCount - 1
-            if index != last_index:
-                moved: address = self.secondaryAt[last_index]
-                self.secondaryAt[index] = moved
-                self._secondaryIndexPlusOne[moved] = index + 1
-            self.secondaryAt[last_index] = empty(address)
-            self._secondaryIndexPlusOne[_keeper] = 0
-            self.secondaryCount = last_index
-    elif _old_tier == TIER_TERTIARY:
-        index_plus_one: uint256 = self._tertiaryIndexPlusOne[_keeper]
-        if index_plus_one != 0:
-            index: uint256 = index_plus_one - 1
-            last_index: uint256 = self.tertiaryCount - 1
-            if index != last_index:
-                moved: address = self.tertiaryAt[last_index]
-                self.tertiaryAt[index] = moved
-                self._tertiaryIndexPlusOne[moved] = index + 1
-            self.tertiaryAt[last_index] = empty(address)
-            self._tertiaryIndexPlusOne[_keeper] = 0
-            self.tertiaryCount = last_index

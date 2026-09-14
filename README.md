@@ -49,10 +49,8 @@ factory.policy().can_expand(address(this))
 The policy owns:
 
 - the aggregate crvUSD oracle and exact direction gate;
-- a three-tier keeper classification;
-- the primary-utilization threshold;
 - the global keeper profit share;
-- priority filtering over the Factory's active keeper set.
+- admission against the Factory's active keeper set.
 
 Every reward path reads `factory.policy().keeper_profit_share_bps(address(this))` at execution time. The current policy ignores the address and returns one owner-managed value bounded to `10_000 bps`. Replacing or updating policy therefore changes the reward rule for every existing keeper without a keeper migration.
 
@@ -67,28 +65,13 @@ is_active(keeper)
 
 Factory ownership can replace a policy only after the replacement is bound to that Factory. Deactivation blocks new expansion but does not block contraction, so an inactive keeper can wind down.
 
-### Three-layer expansion priority
+### Independent admission and soft priorities
 
-The shared priority threshold is `8_000 bps` (`80%`).
+The current policy has no cross-keeper ordering. Every Factory-active keeper is independently eligible when the aggregate direction allows expansion and that keeper's `can_expand_without_policy()` probe passes. One keeper's debt, capacity, pause state, oracle, pool imbalance, intervention delay, or profitability cannot block another keeper.
 
-1. **Primary — frxUSD:** may expand whenever its own local execution checks pass.
-2. **Secondary — sUSDe:** may expand when locally executable after the primary stops retaining priority.
-3. **Tertiary — USDC and USDT:** may expand when locally executable only after the primary and every funded secondary stop retaining priority.
+`can_expand_without_policy()` is the non-recursive candidate probe. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, canonical-action economics, and final solvency. `can_allocate(keeper)` checks only active Factory membership because donation matching has its own keeper-local amount, backing, capacity, and solvency guards.
 
-A higher-tier keeper retains priority while it is active and Factory-bound, unpaused, backed by a healthy retained-backing oracle, funded with a nonzero effective cap, and below 80% utilization. Policy checks those states directly. Temporary local non-executability from pool imbalance, intervention delay, loose balance, AMM quote, or minimum-profit economics does not release priority.
-
-Priority utilization for each higher-tier keeper is:
-
-```text
-keeper.debt()
------------------------------------------------
-min(keeper.max_deployed_crvusd(),
-    ControllerFactory.debt_ceiling(keeper))
-```
-
-The policy deliberately does not reconstruct allocation as `crvUSD.balanceOf(keeper) + debt()`: a direct token donation could otherwise inflate the denominator and grief lower-tier admission. An unset, inactive, paused, oracle-unhealthy, or zero-capacity higher tier does not block the next tier.
-
-`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, and canonical-action preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
+Keeper-local AMM fees and gross-profit floors provide soft economic preference. Lower entry floors make frxUSD and sUSDe economical sooner; higher USDC/USDT entry floors make those pools more expensive to enter. This is not hard sequencing. Governance can install a new Factory-bound policy later if structural ordering becomes desirable without redeploying keepers.
 
 The aggregate direction boundary remains exact:
 
@@ -124,7 +107,7 @@ The draw cannot prove LP return because funds leave for an external module. A pr
 
 ## Donations, profit, and surplus
 
-Loose paired-token donations can be swept into LP. Priority denial sets their crvUSD match to zero rather than allowing debt growth through a side path. Donation value is excluded from caller-profit attribution.
+Loose paired-token donations can be swept into LP. Inactive-keeper admission denial sets their crvUSD match to zero rather than allowing debt growth through a side path. Donation value is excluded from caller-profit attribution.
 
 `withdraw_profit()` first settles loose paired-token donations, then transfers all claimable idle crvUSD to the Factory's live fee receiver. `withdraw_profit(maxCrvUsdAmount)` performs the same accounting with a caller-supplied transfer bound. Both remain callable during contraction regimes so accrued value is not trapped.
 
@@ -132,7 +115,7 @@ Entry and normal-contraction profit floors are independent:
 
 Both floors apply to gross realized profit before keeper compensation. At the initial global
 `3_000 bps` keeper share, the `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller
-and `0.07 bp` retained by the protocol; the `3 bp` tertiary entry floor splits into `0.9 bp` and
+and `0.07 bp` retained by the protocol; the `3 bp` USDC/USDT entry floor splits into `0.9 bp` and
 `2.1 bp`, respectively.
 
 Every contraction requires strictly positive gross realized profit before keeper compensation,
@@ -141,11 +124,11 @@ loss-making withdrawals are never permitted by configuration.
 
 | Profile | `entryMinProfitPpm` | `normalExitMinProfitPpm` |
 |---|---:|---:|
-| frxUSD primary | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
-| sUSDe secondary | `10` (`0.1 bp`) | `110` (`1.1 bp`) |
-| USDC / USDT tertiary | `300` (`3 bp`) | `80` (`0.8 bp`) |
+| frxUSD | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
+| sUSDe | `10` (`0.1 bp`) | `110` (`1.1 bp`) |
+| USDC / USDT | `300` (`3 bp`) | `80` (`0.8 bp`) |
 
-The tier profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. This is a soft economic bias rather than enforced cross-pool contraction ordering. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
+These profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. They are soft economic biases, not enforced cross-pool ordering in either direction. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
 The intervention share controls per-action magnitude. The shared intervention delay controls `expand_supply`, `contract_supply`, `update`, and `borrow_crvusd` frequency and can be increased without adding a second amount limit. Donation and profit settlement remain timer-independent and capacity-bounded so a donated dust amount cannot monopolize the monetary-intervention timer. Local and ControllerFactory ceilings independently bound aggregate exposure.
 
@@ -180,12 +163,12 @@ The deployment sender initially owns the Factory and policy. The deployer binds 
 
 The current proposal accepts the two ownership handoffs, registers four preconfigured direct keepers, and funds three:
 
-| Tier | Paired token | AMM | Liquidity ABI | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
-|---|---|---|---|---|---:|---:|---:|---:|
-| Primary | frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 1.5 bp |
-| Secondary | sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 1.1 bp |
-| Tertiary | USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 3 bp | 0.8 bp |
-| Tertiary | USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 3 bp | 0.8 bp |
+| Paired token | AMM | Liquidity ABI | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
+|---|---|---|---|---:|---:|---:|---:|
+| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 1.5 bp |
+| sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 1.1 bp |
+| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 3 bp | 0.8 bp |
+| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 3 bp | 0.8 bp |
 
 The proposal contains 13 actions: two ownership acceptances, eight registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD. sUSDe remains inert at a zero ceiling pending a separate liquidity decision.
 
@@ -201,9 +184,9 @@ EIP-170 headroom:          5,550 bytes
 implementation hash:
 0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3
 
-PegKeeperPolicy runtime:   5,490 bytes
+PegKeeperPolicy runtime:   2,273 bytes
 policy hash:
-0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e
+0x2c0765aba14cbfac8deb3278644ebd91b356ae37e2c21b89162ba35a70985702
 
 Factory semantic runtime:  3,963 bytes
 Factory deployed runtime:  4,027 bytes
@@ -221,9 +204,9 @@ make setup
 ETH_RPC_URL=https://an-archive-rpc.example make check
 ```
 
-Coverage includes fixed- and dynamic-array liquidity dispatch, canonical amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, policy priority, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. A pinned fork test executes exact-crvUSD `remove_liquidity_imbalance` against all four production pools and verifies exact receipt plus the observed one-LP-wei quote/burn difference.
+Coverage includes fixed- and dynamic-array liquidity dispatch, canonical amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, independent policy admission, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. A pinned fork test executes exact-crvUSD `remove_liquidity_imbalance` against all four production pools and verifies exact receipt plus the observed one-LP-wei quote/burn difference.
 
-The pinned frxUSD structural canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening the profit floor. It also verifies policy direction, measured deltas, debt reduction, final solvency, real ownership-agent/eDAO-proxy/ControllerFactory funding, idle-allocation burning, permissionless residual rugging, and the keeper's persistent ControllerFactory allowance.
+The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening the profit floor. It also verifies policy direction, measured deltas, debt reduction, final solvency, real ownership-agent/eDAO-proxy/ControllerFactory funding, idle-allocation burning, permissionless residual rugging, and the keeper's persistent ControllerFactory allowance.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json` and `docs/pegkeeper-v3-release-checklist.md` predate the current `3.0.0` source candidate. They remain untouched in the source batch and must be regenerated from the final committed source snapshot before release.
 

@@ -118,7 +118,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         vm.stopPrank();
         vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
 
-        // Exercise the production primary profit profile at the pinned fork state.
+        // Exercise the production frxUSD profit profile at the pinned fork state.
 
         (uint256 expectedCrvUsd, uint256 expectedGross, uint256 expectedReward) =
             pegKeeper.preview_contraction();
@@ -183,8 +183,6 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
                 FRXUSD_CRVUSD_POOL, false, true, deployment.frxUsdUsdOracle
             )
         );
-        vm.prank(CANARY_FACTORY_OWNER);
-        policy.set_tier(address(pegKeeper), 1);
         vm.prank(CANARY_ADMIN);
         pegKeeper.set_policy(10, 150, ALLOCATION);
         require(address(pegKeeper) == expectedKeeper, "unexpected canary keeper");

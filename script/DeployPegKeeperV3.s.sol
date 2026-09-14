@@ -35,23 +35,18 @@ contract DeployPegKeeperV3 is Script {
 
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant RECOMMENDED_USDE_CHAINLINK_MAX_DELAY = 25 hours;
-    uint256 public constant PRIORITY_UTILIZATION_BPS = 8_000;
     uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
     uint256 public constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
-    uint256 public constant PRIMARY_ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
-    uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
-    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 300;
-    uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
+    uint256 public constant FRXUSD_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant FRXUSD_EXIT_MIN_PROFIT_PPM = 150;
+    uint256 public constant SUSDE_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant SUSDE_EXIT_MIN_PROFIT_PPM = 110;
+    uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
+    uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
-
-    uint256 public constant TIER_PRIMARY = 1;
-    uint256 public constant TIER_SECONDARY = 2;
-    uint256 public constant TIER_TERTIARY = 3;
 
     struct Config {
         address owner;
@@ -61,7 +56,6 @@ contract DeployPegKeeperV3 is Script {
         address admin;
         address emergencyAdmin;
         address feeReceiver;
-        uint256 priorityUtilizationBps;
         uint256 keeperProfitShareBps;
         uint256 maxDeployedCrvUsd;
         uint256 ammExecutionBufferBps;
@@ -120,7 +114,6 @@ contract DeployPegKeeperV3 is Script {
         config.admin = CURVE_OWNERSHIP_AGENT;
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
-        config.priorityUtilizationBps = PRIORITY_UTILIZATION_BPS;
         config.keeperProfitShareBps = KEEPER_PROFIT_SHARE_BPS;
         config.maxDeployedCrvUsd = INITIAL_MAX_DEPLOYED_CRVUSD;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
@@ -204,12 +197,7 @@ contract DeployPegKeeperV3 is Script {
         return _create(
             bytes.concat(
                 creationCode,
-                abi.encode(
-                    config.owner,
-                    config.aggregateCrvUsdOracle,
-                    config.priorityUtilizationBps,
-                    config.keeperProfitShareBps
-                )
+                abi.encode(config.owner, config.aggregateCrvUsdOracle, config.keeperProfitShareBps)
             )
         );
     }
@@ -249,45 +237,41 @@ contract DeployPegKeeperV3 is Script {
         deployment.frxUsdPegKeeper = factory.deployPegKeeper(
             config.frxUsdCrvUsdPool, false, true, deployment.frxUsdUsdOracle
         );
-        policy.set_tier(deployment.frxUsdPegKeeper, TIER_PRIMARY);
         _configureKeeper(
             deployment.frxUsdPegKeeper,
             deployment.frxUsdUsdOracle,
-            PRIMARY_ENTRY_MIN_PROFIT_PPM,
-            PRIMARY_EXIT_MIN_PROFIT_PPM,
+            FRXUSD_ENTRY_MIN_PROFIT_PPM,
+            FRXUSD_EXIT_MIN_PROFIT_PPM,
             config
         );
 
         deployment.sUsdePegKeeper =
             factory.deployPegKeeper(config.sUsdeCrvUsdPool, true, true, deployment.usdeUsdOracle);
-        policy.set_tier(deployment.sUsdePegKeeper, TIER_SECONDARY);
         _configureKeeper(
             deployment.sUsdePegKeeper,
             deployment.usdeUsdOracle,
-            SECONDARY_ENTRY_MIN_PROFIT_PPM,
-            SECONDARY_EXIT_MIN_PROFIT_PPM,
+            SUSDE_ENTRY_MIN_PROFIT_PPM,
+            SUSDE_EXIT_MIN_PROFIT_PPM,
             config
         );
 
         deployment.usdcPegKeeper =
             factory.deployPegKeeper(config.usdcCrvUsdPool, false, false, deployment.usdcUsdOracle);
-        policy.set_tier(deployment.usdcPegKeeper, TIER_TERTIARY);
         _configureKeeper(
             deployment.usdcPegKeeper,
             deployment.usdcUsdOracle,
-            TERTIARY_ENTRY_MIN_PROFIT_PPM,
-            TERTIARY_EXIT_MIN_PROFIT_PPM,
+            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+            STABLECOIN_EXIT_MIN_PROFIT_PPM,
             config
         );
 
         deployment.usdtPegKeeper =
             factory.deployPegKeeper(config.usdtCrvUsdPool, false, false, deployment.usdtUsdOracle);
-        policy.set_tier(deployment.usdtPegKeeper, TIER_TERTIARY);
         _configureKeeper(
             deployment.usdtPegKeeper,
             deployment.usdtUsdOracle,
-            TERTIARY_ENTRY_MIN_PROFIT_PPM,
-            TERTIARY_EXIT_MIN_PROFIT_PPM,
+            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+            STABLECOIN_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -364,10 +348,6 @@ contract DeployPegKeeperV3 is Script {
             "aggregate oracle mismatch"
         );
         require(
-            policy.priorityUtilizationBps() == config.priorityUtilizationBps,
-            "priority threshold mismatch"
-        );
-        require(
             policy.keeper_profit_share_bps(address(0)) == config.keeperProfitShareBps,
             "keeper profit share mismatch"
         );
@@ -412,11 +392,6 @@ contract DeployPegKeeperV3 is Script {
             "policy handoff nonce"
         );
         require(policy.factory() == deployment.factory, "policy factory mismatch");
-        require(policy.primary() == deployment.frxUsdPegKeeper, "primary mismatch");
-        require(policy.tier(deployment.frxUsdPegKeeper) == TIER_PRIMARY, "frxUSD tier mismatch");
-        require(policy.tier(deployment.sUsdePegKeeper) == TIER_SECONDARY, "sUSDe tier mismatch");
-        require(policy.tier(deployment.usdcPegKeeper) == TIER_TERTIARY, "USDC tier mismatch");
-        require(policy.tier(deployment.usdtPegKeeper) == TIER_TERTIARY, "USDT tier mismatch");
 
         IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
         require(factory.owner() == config.owner, "factory owner mismatch");
@@ -438,8 +413,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.frxUsdCrvUsdPool,
             deployment.frxUsdUsdOracle,
-            PRIMARY_ENTRY_MIN_PROFIT_PPM,
-            PRIMARY_EXIT_MIN_PROFIT_PPM,
+            FRXUSD_ENTRY_MIN_PROFIT_PPM,
+            FRXUSD_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -447,8 +422,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.sUsdeCrvUsdPool,
             deployment.usdeUsdOracle,
-            SECONDARY_ENTRY_MIN_PROFIT_PPM,
-            SECONDARY_EXIT_MIN_PROFIT_PPM,
+            SUSDE_ENTRY_MIN_PROFIT_PPM,
+            SUSDE_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -456,8 +431,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.usdcCrvUsdPool,
             deployment.usdcUsdOracle,
-            TERTIARY_ENTRY_MIN_PROFIT_PPM,
-            TERTIARY_EXIT_MIN_PROFIT_PPM,
+            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+            STABLECOIN_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -465,8 +440,8 @@ contract DeployPegKeeperV3 is Script {
             deployment.factory,
             config.usdtCrvUsdPool,
             deployment.usdtUsdOracle,
-            TERTIARY_ENTRY_MIN_PROFIT_PPM,
-            TERTIARY_EXIT_MIN_PROFIT_PPM,
+            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+            STABLECOIN_EXIT_MIN_PROFIT_PPM,
             config
         );
     }
@@ -531,7 +506,6 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Factory admin", config.admin);
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);
-        console2.log("Priority utilization (bps)", config.priorityUtilizationBps);
         console2.log("Keeper profit share (bps)", config.keeperProfitShareBps);
         console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
         console2.log("AMM execution buffer (bps)", config.ammExecutionBufferBps);

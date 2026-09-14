@@ -36,8 +36,7 @@ contract PegKeeperV3LpFactoryTest is Test {
         implementation = _deployImplementation(address(crvUsd));
         policy = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 3_000)
             )
         );
         factory = _newFactory(policy);
@@ -76,8 +75,7 @@ contract PegKeeperV3LpFactoryTest is Test {
         implementation = _deployImplementation(address(otherStablecoin));
         IPegKeeperPolicy mismatchedPolicy = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 3_000)
             )
         );
         IPegKeeperV3Factory mismatchedFactory = _newFactory(mismatchedPolicy);
@@ -130,8 +128,7 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_deployRequiresPolicyBoundToThisFactory() public {
         IPegKeeperPolicy unbound = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 3_000)
             )
         );
         IPegKeeperV3Factory unboundFactory = _newFactory(unbound);
@@ -163,8 +160,7 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_ownerCanInstallBoundReplacementPolicy() public {
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 3_000)
             )
         );
         vm.prank(owner);
@@ -192,17 +188,15 @@ contract PegKeeperV3LpFactoryTest is Test {
         keeper.set_direction_paused(0, false);
         vm.stopPrank();
         vm.prank(owner);
-        policy.set_tier(deployed, 1);
         assertGt(keeper.available_expansion(), 0);
 
         LpYieldOracle belowPeg = new LpYieldOracle();
         belowPeg.setPrice(1e18 - 1);
         IPegKeeperPolicy replacement = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(owner, address(belowPeg), 8_000, 3_000))
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(owner, address(belowPeg), 3_000))
         );
         vm.startPrank(owner);
         replacement.set_factory(address(factory));
-        replacement.set_tier(deployed, 1);
         factory.setPolicy(address(replacement));
         vm.stopPrank();
 
@@ -214,8 +208,7 @@ contract PegKeeperV3LpFactoryTest is Test {
     function test_policyUpdateRejectsUnboundAndInvalidContracts() public {
         IPegKeeperPolicy unbound = IPegKeeperPolicy(
             vm.deployCode(
-                "PegKeeperPolicy.vy",
-                abi.encode(owner, address(aggregateCrvUsdOracle), 8_000, 3_000)
+                "PegKeeperPolicy.vy", abi.encode(owner, address(aggregateCrvUsdOracle), 3_000)
             )
         );
         vm.startPrank(owner);

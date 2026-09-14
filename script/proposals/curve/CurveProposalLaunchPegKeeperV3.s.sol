@@ -19,9 +19,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_026;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
         0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3;
-    uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
+    uint256 public constant POLICY_RUNTIME_SIZE = 2_273;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
+        0x2c0765aba14cbfac8deb3278644ebd91b356ae37e2c21b89162ba35a70985702;
     uint256 public constant FACTORY_CORE_SIZE = 3_963;
     uint256 public constant FACTORY_RUNTIME_SIZE = 4_027;
     bytes32 public constant EXPECTED_FACTORY_CORE_HASH =
@@ -31,16 +31,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
         0xf2ae2f566e1a5cb82fd67cdf92523dfbb47e6a21347d35a57342cab36791287a;
 
-    uint256 public constant TIER_PRIMARY = 1;
-    uint256 public constant TIER_SECONDARY = 2;
-    uint256 public constant TIER_TERTIARY = 3;
-
-    uint256 public constant PRIMARY_ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant PRIMARY_EXIT_MIN_PROFIT_PPM = 150;
-    uint256 public constant SECONDARY_ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant SECONDARY_EXIT_MIN_PROFIT_PPM = 110;
-    uint256 public constant TERTIARY_ENTRY_MIN_PROFIT_PPM = 300;
-    uint256 public constant TERTIARY_EXIT_MIN_PROFIT_PPM = 80;
+    uint256 public constant FRXUSD_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant FRXUSD_EXIT_MIN_PROFIT_PPM = 150;
+    uint256 public constant SUSDE_ENTRY_MIN_PROFIT_PPM = 10;
+    uint256 public constant SUSDE_EXIT_MIN_PROFIT_PPM = 110;
+    uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
+    uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
@@ -97,7 +93,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         vm.startBroadcast();
         proposalId = proposeOwnershipVote(
             buildProposalScript(),
-            "Accept and activate four direct PegKeeperV3 keepers with three-tier priority"
+            "Accept and activate four direct PegKeeperV3 keepers with fee-based soft priorities"
         );
         vm.stopBroadcast();
     }
@@ -247,7 +243,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(policy.ownershipTransferNonce() == policyOwnershipNonce, "policy handoff nonce");
         require(policy.factory() == deploymentFactory, "policy factory");
         require(policy.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
-        require(policy.priorityUtilizationBps() == 8_000, "priority threshold");
         require(
             policy.keeper_profit_share_bps(frxUsdKeeper) == KEEPER_PROFIT_SHARE_BPS,
             "frxUSD profit share"
@@ -264,16 +259,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             policy.keeper_profit_share_bps(usdtKeeper) == KEEPER_PROFIT_SHARE_BPS,
             "USDT profit share"
         );
-        require(policy.primary() == frxUsdKeeper, "primary keeper");
-        require(policy.tier(frxUsdKeeper) == TIER_PRIMARY, "frxUSD tier");
-        require(policy.tier(sUsdeKeeper) == TIER_SECONDARY, "sUSDe tier");
-        require(policy.tier(usdcKeeper) == TIER_TERTIARY, "USDC tier");
-        require(policy.tier(usdtKeeper) == TIER_TERTIARY, "USDT tier");
-        require(policy.secondaryCount() == 1, "secondary count");
-        require(policy.secondaryAt(0) == sUsdeKeeper, "secondary keeper");
-        require(policy.tertiaryCount() == 2, "tertiary count");
-        require(policy.tertiaryAt(0) == usdcKeeper, "USDC tertiary order");
-        require(policy.tertiaryAt(1) == usdtKeeper, "USDT tertiary order");
         if (POLICY_RUNTIME_SIZE != 0) {
             require(pegKeeperPolicy.code.length == POLICY_RUNTIME_SIZE, "policy size");
             require(pegKeeperPolicy.codehash == EXPECTED_POLICY_RUNTIME_HASH, "policy hash");
@@ -291,22 +276,19 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             frxUsdKeeper, FRXUSD_CRVUSD_POOL, FRXUSD, FRXUSD, frxUsdOracle, false, true
         );
         _validateKeeperConfig(
-            frxUsdKeeper, PRIMARY_ENTRY_MIN_PROFIT_PPM, PRIMARY_EXIT_MIN_PROFIT_PPM, FRXUSD_CAP
+            frxUsdKeeper, FRXUSD_ENTRY_MIN_PROFIT_PPM, FRXUSD_EXIT_MIN_PROFIT_PPM, FRXUSD_CAP
         );
         _validateKeeperAssets(sUsdeKeeper, SUSDE_CRVUSD_POOL, SUSDE, USDE, usdeOracle, true, true);
         _validateKeeperConfig(
-            sUsdeKeeper,
-            SECONDARY_ENTRY_MIN_PROFIT_PPM,
-            SECONDARY_EXIT_MIN_PROFIT_PPM,
-            SUSDE_LOCAL_CAP
+            sUsdeKeeper, SUSDE_ENTRY_MIN_PROFIT_PPM, SUSDE_EXIT_MIN_PROFIT_PPM, SUSDE_LOCAL_CAP
         );
         _validateKeeperAssets(usdcKeeper, USDC_CRVUSD_POOL, USDC, USDC, usdcOracle, false, false);
         _validateKeeperConfig(
-            usdcKeeper, TERTIARY_ENTRY_MIN_PROFIT_PPM, TERTIARY_EXIT_MIN_PROFIT_PPM, USDC_CAP
+            usdcKeeper, STABLECOIN_ENTRY_MIN_PROFIT_PPM, STABLECOIN_EXIT_MIN_PROFIT_PPM, USDC_CAP
         );
         _validateKeeperAssets(usdtKeeper, USDT_CRVUSD_POOL, USDT, USDT, usdtOracle, false, false);
         _validateKeeperConfig(
-            usdtKeeper, TERTIARY_ENTRY_MIN_PROFIT_PPM, TERTIARY_EXIT_MIN_PROFIT_PPM, USDT_CAP
+            usdtKeeper, STABLECOIN_ENTRY_MIN_PROFIT_PPM, STABLECOIN_EXIT_MIN_PROFIT_PPM, USDT_CAP
         );
 
         _validateChainlinkOracle(frxUsdOracle, FRXUSD_USD_PROXY, FRXUSD_CHAINLINK_MAX_DELAY);
