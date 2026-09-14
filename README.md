@@ -34,7 +34,7 @@ The Factory derives the paired token from the AMM. For ERC-4626 paired tokens, i
 
 Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn remains execution-only, where actual profit and solvency are rechecked.
 
-Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing, capacity, and expansion velocity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; `update(address beneficiary)` routes the physical LP or crvUSD reward to the selected nonzero beneficiary. Like V2, both forms return zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
+Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, further bounded by available balance/backing and capacity. `update()` selects the local direction and executes the same canonical action for V2 keeper compatibility; `update(address beneficiary)` routes the physical LP or crvUSD reward to the selected nonzero beneficiary. Like V2, both forms return zero rather than reverting when another caller already consumed the intervention delay. `preview_expansion()` and `preview_contraction()` apply the complete economics and solvency checks; `available_expansion()` and `available_contraction()` expose current caps; `estimate_caller_profit()` returns zero unless a canonical preview succeeds. Caller-selected dust cannot consume the shared intervention timer while a larger canonical action is available.
 
 ## PegKeeperPolicy
 
@@ -75,7 +75,7 @@ The shared priority threshold is `8_000 bps` (`80%`).
 2. **Secondary — sUSDe:** may expand when locally executable after the primary stops retaining priority.
 3. **Tertiary — USDC and USDT:** may expand when locally executable only after the primary and every funded secondary stop retaining priority.
 
-A higher-tier keeper retains priority while it is active and Factory-bound, unpaused, backed by a healthy retained-backing oracle, funded with a nonzero effective cap, and below 80% utilization. Policy checks those states directly. Temporary local non-executability from pool imbalance, intervention delay, velocity, loose balance, AMM quote, or minimum-profit economics does not release priority.
+A higher-tier keeper retains priority while it is active and Factory-bound, unpaused, backed by a healthy retained-backing oracle, funded with a nonzero effective cap, and below 80% utilization. Policy checks those states directly. Temporary local non-executability from pool imbalance, intervention delay, loose balance, AMM quote, or minimum-profit economics does not release priority.
 
 Priority utilization for each higher-tier keeper is:
 
@@ -88,7 +88,7 @@ min(keeper.max_deployed_crvusd(),
 
 The policy deliberately does not reconstruct allocation as `crvUSD.balanceOf(keeper) + debt()`: a direct token donation could otherwise inflate the denominator and grief lower-tier admission. An unset, inactive, paused, oracle-unhealthy, or zero-capacity higher tier does not block the next tier.
 
-`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, velocity, and canonical-action preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
+`can_expand_without_policy()` remains the non-recursive execution probe for the candidate keeper. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, and canonical-action preview economics. Policy no longer uses that transient result to decide whether a higher tier retains priority.
 
 The aggregate direction boundary remains exact:
 
@@ -115,7 +115,7 @@ borrow_crvusd(uint256 amount, address receiver)
 - independently enforces expansion/global pauses, delay, retained-oracle health, and the requested amount's local imbalance bound;
 - enforces the keeper cap and ControllerFactory debt ceiling;
 - requires sufficient idle crvUSD;
-- consumes expansion velocity and updates the intervention timestamp;
+- updates the shared intervention timestamp;
 - increases `deployed_crvusd` and transfers exactly the requested amount.
 
 The draw cannot prove LP return because funds leave for an external module. A production integration must perform the draw, swaps, LP delivery, and any required postcondition atomically in its own governance/module transaction. A half-completed multi-transaction sequence would leave recorded debt without returned LP backing.
@@ -147,7 +147,7 @@ loss-making withdrawals are never permitted by configuration.
 
 The tier profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. This is a soft economic bias rather than enforced cross-pool contraction ordering. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
-Each keeper's expansion velocity is independently admin-configurable through `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)`. Launch values are `1_000 bps` (`10%`) of the local cap with a `36 second` full linear refill. The bucket buys roughly three blocks for independent backing oracles to react; the separate `20%` local-imbalance action remains binding when tighter. A zero burst disables new velocity capacity; the refill period must be nonzero. Configuration and local-cap changes checkpoint current pressure before applying the new rule, so elapsed time is never retroactively repriced.
+The intervention share controls per-action magnitude. The shared intervention delay controls `expand_supply`, `contract_supply`, `update`, and `borrow_crvusd` frequency and can be increased without adding a second amount limit. Donation and profit settlement remain timer-independent and capacity-bounded so a donated dust amount cannot monopolize the monetary-intervention timer. Local and ControllerFactory ceilings independently bound aggregate exposure.
 
 ## Factory and deployment
 
@@ -195,11 +195,11 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,253 bytes
-implementation runtime:  20,095 bytes
-EIP-170 headroom:          4,481 bytes
+implementation initcode: 19,180 bytes
+implementation runtime:  19,026 bytes
+EIP-170 headroom:          5,550 bytes
 implementation hash:
-0x9af68c945716ce92b3e79066bd4e8b042ccbdefb50009dd9c162897a365275d9
+0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:

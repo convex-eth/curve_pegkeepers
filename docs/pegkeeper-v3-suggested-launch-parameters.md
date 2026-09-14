@@ -47,7 +47,7 @@ The aggregate crvUSD oracle is owned by `PegKeeperPolicy`, not the Factory:
 
 ### Primary
 
-frxUSD can expand whenever its own local execution checks pass. While active, unpaused, backed by a healthy oracle, funded, and below 80% of its effective cap, it retains priority even when pool imbalance, delay, velocity, or entry economics temporarily prevent another expansion.
+frxUSD can expand whenever its own local execution checks pass. While active, unpaused, backed by a healthy oracle, funded, and below 80% of its effective cap, it retains priority even when pool imbalance, delay, or entry economics temporarily prevent another expansion.
 
 ### Secondary
 
@@ -63,7 +63,7 @@ USDC or USDT can expand only when:
 - frxUSD no longer retains priority; and
 - every funded, healthy, unpaused secondary has independently reached 80% utilization or otherwise stopped retaining priority.
 
-Temporary local non-executability never releases a higher tier. A primary expansion that consumes its same-block delay or velocity therefore cannot unlock a secondary, and a secondary expansion cannot unlock the tertiary tier.
+Temporary local non-executability never releases a higher tier. A primary expansion that consumes its same-block delay therefore cannot unlock a secondary, and a secondary expansion cannot unlock the tertiary tier.
 
 This intentionally makes plain non-yielding pools last-resort liquidity.
 
@@ -85,19 +85,15 @@ Deactivated keepers cannot expand. They can still contract and wind down.
 | `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `110` (`1.1 bp`) | `80` (`0.8 bp`) |
 | `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) | `2_000` (`20%`) |
 | `minInterventionDelay` | `12` seconds | `12` seconds | `12` seconds |
-| `maxExpansionBurstBps` | `1_000` (`10%` of local max) | `1_000` (`10%` of local max) | `1_000` (`10%` of local max) |
-| `expansionRefillPeriod` | `36` seconds | `36` seconds | `36` seconds |
 | retained-backing floor | `0.999e18` | `0.999e18` | `0.999e18` |
 
 Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp`, `1.1 bp`, and `0.8 bp` exit floors pay the caller `0.45 bp`, `0.33 bp`, and `0.24 bp`, respectively, at their exact boundaries.
 
 Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction in reverse priority order: tertiary at `0.8 bp`, secondary at `1.1 bp`, then primary at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `3 bp` entry edge, making tertiary exposure materially harder to create than preferred exposure.
 
-`maxInterventionShareBps` is configurable and launches at V2's `20%` share. It defines the sole ordinary action amount rather than only an upper bound: expansion uses exactly the current normalized paired-token surplus share, subject to balance/capacity/velocity; contraction requests exactly the current normalized crvUSD excess share, subject to available LP backing. Callers cannot choose smaller dust clips. `update()` automatically selects the local direction, `update(address beneficiary)` routes the action reward to a selected nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions explicitly.
+`maxInterventionShareBps` is configurable and launches at V2's `20%` share. It defines the sole ordinary action amount rather than only an upper bound: expansion uses exactly the current normalized paired-token surplus share, subject to balance and capacity; contraction requests exactly the current normalized crvUSD excess share, subject to available LP backing. Callers cannot choose smaller dust clips. `update()` automatically selects the local direction, `update(address beneficiary)` routes the action reward to a selected nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions explicitly.
 
-The velocity bucket counts every actual crvUSD debt increase, including donation matching, surplus claims, and policy-gated external draws. The `10%` burst and `36 second` refill are intended to buy roughly three blocks for independent backing oracles to react, not to mechanically slow expansion when the separate local-imbalance cap already binds.
-
-The Factory admin may tune each keeper through `set_velocity_policy`. A zero burst disables new velocity capacity; the refill period must be nonzero. Velocity and local-cap updates checkpoint pressure under the old settings before applying the new values.
+`minInterventionDelay` controls `expand_supply`, `contract_supply`, `update`, and `borrow_crvusd` frequency independently of the canonical amount. Governance can increase it to slow monetary interventions without maintaining a second overlapping amount limit. Donation and profit settlement remain timer-independent and may use the remaining capacity in one call. Local and ControllerFactory ceilings still bound aggregate exposure.
 
 ## Retained-backing oracles
 
@@ -131,7 +127,7 @@ If governance later wants routed arbitrage, it belongs in a separate module. The
 borrow_crvusd(uint256 amount, address receiver)
 ```
 
-The draw is Factory-admin-only, policy-gated, cap/ceiling/balance/velocity bounded, and recorded as debt before transfer. Any module using it must return backing and verify final state atomically. Do not split a draw and backing return across transactions.
+The draw is Factory-admin-only, policy-gated, cap/ceiling/balance bounded, and recorded as debt before transfer. Any module using it must return backing and verify final state atomically. Do not split a draw and backing return across transactions.
 
 ## Deployment/proposal sequence
 

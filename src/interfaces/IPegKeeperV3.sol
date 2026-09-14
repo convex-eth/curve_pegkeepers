@@ -52,7 +52,6 @@ interface IPegKeeperV3 {
         uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDeployedCrvUsd
     );
     event InterventionPolicyUpdated(uint256 maxInterventionShareBps, uint256 minInterventionDelay);
-    event VelocityPolicyUpdated(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod);
     event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
 
     function version() external view returns (uint256 major, uint256 minor, uint256 patch);
@@ -72,8 +71,6 @@ interface IPegKeeperV3 {
     function paired_token_units(uint256 assets) external view returns (uint256);
     function backing_oracle() external view returns (address);
     function min_backing_oracle_price() external view returns (uint256);
-    function max_expansion_burst_bps() external view returns (uint256);
-    function expansion_refill_period() external view returns (uint256);
     function fee_receiver() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
@@ -98,9 +95,6 @@ interface IPegKeeperV3 {
 
     function debt() external view returns (uint256);
     function deployed_crvusd() external view returns (uint256);
-    function expansion_pressure() external view returns (uint256);
-    function last_expansion_pressure_update() external view returns (uint256);
-    function available_expansion_velocity() external view returns (uint256);
 
     function initialize(
         address backingAsset,
@@ -124,8 +118,6 @@ interface IPegKeeperV3 {
         uint256 maxDeployedCrvUsd
     ) external;
     function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
-        external;
-    function set_velocity_policy(uint256 maxExpansionBurstBps, uint256 expansionRefillPeriod)
         external;
 
     /// @notice Local viability probe used by PegKeeperPolicy; does not call policy itself.

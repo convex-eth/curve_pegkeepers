@@ -132,10 +132,6 @@ event InterventionPolicyUpdated:
     max_intervention_share_bps: uint256
     min_intervention_delay: uint256
 
-event VelocityPolicyUpdated:
-    max_expansion_burst_bps: uint256
-    expansion_refill_period: uint256
-
 event BackingOraclePolicyUpdated:
     backing_oracle: indexed(address)
     min_backing_price: uint256
@@ -149,8 +145,6 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
-DEFAULT_MAX_EXPANSION_BURST_BPS: constant(uint256) = 1_000
-DEFAULT_EXPANSION_REFILL_PERIOD: constant(uint256) = 36
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
@@ -178,14 +172,10 @@ normal_exit_min_profit_ppm: public(uint256)
 max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
 min_intervention_delay: public(uint256)
-max_expansion_burst_bps: public(uint256)
-expansion_refill_period: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
 
 deployed_crvusd: public(uint256)
-_expansion_pressure: uint256
-last_expansion_pressure_update: public(uint256)
 
 expansion_paused: public(bool)
 contraction_paused: public(bool)
@@ -288,9 +278,6 @@ def initialize(
     self.max_deployed_crvusd = _max_deployed_crvusd
     self.max_intervention_share_bps = 2_000
     self.min_intervention_delay = 12
-    self.max_expansion_burst_bps = DEFAULT_MAX_EXPANSION_BURST_BPS
-    self.expansion_refill_period = DEFAULT_EXPANSION_REFILL_PERIOD
-    self.last_expansion_pressure_update = block.timestamp
 
     self.expansion_paused = False
     self.contraction_paused = False
@@ -514,72 +501,6 @@ def _allocation_allowed() -> bool:
 
 @internal
 @view
-def _max_burst() -> uint256:
-    cap: uint256 = self.max_deployed_crvusd
-    return cap // BPS * self.max_expansion_burst_bps + cap % BPS * self.max_expansion_burst_bps // BPS
-
-
-@internal
-@view
-def _current_pressure() -> uint256:
-    pressure: uint256 = self._expansion_pressure
-    if pressure == 0:
-        return 0
-    elapsed: uint256 = block.timestamp - self.last_expansion_pressure_update
-    if elapsed >= self.expansion_refill_period:
-        return 0
-    burst: uint256 = self._max_burst()
-    refill: uint256 = burst // self.expansion_refill_period * elapsed + burst % self.expansion_refill_period * elapsed // self.expansion_refill_period
-    if refill >= pressure:
-        return 0
-    return pressure - refill
-
-
-@internal
-def _checkpoint_velocity():
-    self._expansion_pressure = self._current_pressure()
-    self.last_expansion_pressure_update = block.timestamp
-
-
-@internal
-@view
-def _available_velocity() -> uint256:
-    burst: uint256 = self._max_burst()
-    pressure: uint256 = self._current_pressure()
-    if pressure >= burst:
-        return 0
-    return burst - pressure
-
-
-@internal
-def _consume_velocity(_amount: uint256):
-    pressure: uint256 = self._current_pressure()
-    burst: uint256 = self._max_burst()
-    assert pressure < burst and _amount <= burst - pressure
-    self._expansion_pressure = pressure + _amount
-    self.last_expansion_pressure_update = block.timestamp
-
-
-@external
-@view
-def expansion_pressure() -> uint256:
-    """
-    @notice Returns how much of the recent expansion allowance is still in use.
-    """
-    return self._current_pressure()
-
-
-@external
-@view
-def available_expansion_velocity() -> uint256:
-    """
-    @notice Returns how much can be expanded now under the short-term rate limit.
-    """
-    return self._available_velocity()
-
-
-@internal
-@view
 def _meets_entry_floor(_gross_profit: uint256, _principal: uint256) -> bool:
     required_profit: uint256 = _principal * self.entry_min_profit_ppm // PPM
     return _gross_profit >= required_profit
@@ -697,7 +618,7 @@ def _available_expansion_without_policy() -> uint256:
 
     budget: uint256 = min(
         staticcall crv_usd.balanceOf(self),
-        min(self._available_velocity(), self._remaining_exposure_capacity()),
+        self._remaining_exposure_capacity(),
     )
     donated_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
     if budget <= donated_value:
@@ -1034,8 +955,6 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
 
     if crv_usd_deployed > staticcall crv_usd.balanceOf(self):
         return False
-    if crv_usd_deployed > self._available_velocity():
-        return False
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     if deployed_after > self.max_deployed_crvusd:
         return False
@@ -1079,7 +998,6 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     accounting_baseline: uint256 = lp_value_before + donated_value
 
     assert crv_usd_deployed <= staticcall crv_usd.balanceOf(self)
-    assert crv_usd_deployed <= self._available_velocity()
     deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
     assert deployed_after <= self.max_deployed_crvusd
     assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
@@ -1188,7 +1106,6 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     crv_usd_deployed: uint256 = crv_usd_amount + donated_paired_token_value
     assert crv_usd_deployed <= crv_usd_before
     assert crv_usd_deployed <= self._remaining_exposure_capacity()
-    self._consume_velocity(crv_usd_deployed)
 
     lp_received: uint256 = self._deposit_to_pool(
         crv_usd_deployed,
@@ -1266,7 +1183,6 @@ def _settle_donated_paired_token(
     if crv_usd_matched > 0:
         assert crv_usd_matched <= staticcall crv_usd.balanceOf(self)
         assert crv_usd_matched <= self._remaining_exposure_capacity()
-        self._consume_velocity(crv_usd_matched)
 
     lp_before: uint256 = self._lp_inventory()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
@@ -1313,7 +1229,7 @@ def sweep_donated_paired_token(_max_paired_token_amount: uint256) -> (uint256, u
 
     matching_budget: uint256 = min(
         staticcall crv_usd.balanceOf(self),
-        min(self._available_velocity(), self._remaining_exposure_capacity()),
+        self._remaining_exposure_capacity(),
     )
     return self._settle_donated_paired_token(
         _max_paired_token_amount,
@@ -1343,7 +1259,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
 
     available_budget: uint256 = min(
         staticcall crv_usd.balanceOf(self),
-        min(self._available_velocity(), self._remaining_exposure_capacity()),
+        self._remaining_exposure_capacity(),
     )
     withdrawal_reserve: uint256 = min(
         _max_crv_usd_amount,
@@ -1371,9 +1287,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         crv_usd_transferred = crv_usd_balance_before
     if crv_usd_transferred > exposure_capacity:
         crv_usd_transferred = exposure_capacity
-    crv_usd_transferred = min(crv_usd_transferred, self._available_velocity())
     assert crv_usd_transferred > 0
-    self._consume_velocity(crv_usd_transferred)
 
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
@@ -1505,7 +1419,6 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
     assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
     assert _amount <= staticcall crv_usd.balanceOf(self)
 
-    self._consume_velocity(_amount)
     self.deployed_crvusd = deployed_after
     self.last_intervention_at = block.timestamp
     self._transfer_exact_to(crv_usd, _receiver, _amount)
@@ -1583,27 +1496,6 @@ def set_intervention_policy(
 
 
 @external
-def set_velocity_policy(
-    _max_expansion_burst_bps: uint256,
-    _expansion_refill_period: uint256,
-):
-    """
-    @notice Changes the maximum expansion burst and its full linear refill period.
-    """
-    assert self._is_admin(msg.sender)
-    assert _max_expansion_burst_bps <= BPS
-    assert _expansion_refill_period > 0
-
-    self._checkpoint_velocity()
-    self.max_expansion_burst_bps = _max_expansion_burst_bps
-    self.expansion_refill_period = _expansion_refill_period
-    log VelocityPolicyUpdated(
-        max_expansion_burst_bps=_max_expansion_burst_bps,
-        expansion_refill_period=_expansion_refill_period,
-    )
-
-
-@external
 def set_policy(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
@@ -1616,7 +1508,6 @@ def set_policy(
     assert _normal_exit_min_profit_ppm <= PPM
     assert _max_deployed_crvusd > 0
 
-    self._checkpoint_velocity()
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
     self.max_deployed_crvusd = _max_deployed_crvusd

@@ -107,14 +107,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertFalse(IPegKeeperV3(deployment.frxUsdPegKeeper).expansion_paused());
         assertFalse(IPegKeeperV3(deployment.frxUsdPegKeeper).contraction_paused());
         assertFalse(IPegKeeperV3(deployment.frxUsdPegKeeper).all_execution_paused());
-        assertEq(
-            IPegKeeperV3(deployment.frxUsdPegKeeper).max_expansion_burst_bps(),
-            config.maxExpansionBurstBps
-        );
-        assertEq(
-            IPegKeeperV3(deployment.frxUsdPegKeeper).expansion_refill_period(),
-            config.expansionRefillPeriod
-        );
 
         vm.prank(config.owner);
         vm.expectRevert(IPegKeeperV3Factory.OwnershipHandoffPending.selector);
@@ -167,8 +159,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.priorityUtilizationBps, 8_000);
         assertEq(config.keeperProfitShareBps, 3_000);
         assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
-        assertEq(config.maxExpansionBurstBps, 1_000);
-        assertEq(config.expansionRefillPeriod, 36 seconds);
         assertEq(config.ammExecutionBufferBps, 3);
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.usdeProxy, deployer.USDE_USD_PROXY());
@@ -210,8 +200,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         config.priorityUtilizationBps = 8_000;
         config.keeperProfitShareBps = 3_000;
         config.maxDeployedCrvUsd = 2_500_000e18;
-        config.maxExpansionBurstBps = 700;
-        config.expansionRefillPeriod = 7 minutes;
         config.ammExecutionBufferBps = 7;
         config.frxUsdProxy = address(chainlinkProxy);
         config.frxUsdMaxDelay = 26 hours;

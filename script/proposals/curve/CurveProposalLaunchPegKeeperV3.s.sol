@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 20_095;
+    uint256 public constant IMPLEMENTATION_RUNTIME_SIZE = 19_026;
     bytes32 public constant EXPECTED_IMPLEMENTATION_RUNTIME_HASH =
-        0x9af68c945716ce92b3e79066bd4e8b042ccbdefb50009dd9c162897a365275d9;
+        0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3;
     uint256 public constant POLICY_RUNTIME_SIZE = 5_490;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0x0a377d97e86097ebcbe7fb7f5733a1fa54d29bac01b751f21196b070051ee14e;
@@ -44,8 +44,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
     uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
-    uint256 public constant MAX_EXPANSION_BURST_BPS = 1_000;
-    uint256 public constant EXPANSION_REFILL_PERIOD = 36 seconds;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_CHAINLINK_MAX_DELAY = 26 hours;
     uint256 public constant USDE_CHAINLINK_MAX_DELAY = 25 hours;
@@ -355,8 +353,6 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
         require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");
-        require(keeper.max_expansion_burst_bps() == MAX_EXPANSION_BURST_BPS, "expansion burst");
-        require(keeper.expansion_refill_period() == EXPANSION_REFILL_PERIOD, "expansion refill");
         require(keeper.amm_execution_buffer_bps() == AMM_EXECUTION_BUFFER_BPS, "AMM buffer");
         require(keeper.admin() == CURVE_OWNERSHIP_AGENT, "keeper admin");
         require(keeper.emergency_admin() == CURVE_EMERGENCY_ADMIN, "keeper emergency admin");

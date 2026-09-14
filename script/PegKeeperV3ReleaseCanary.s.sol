@@ -98,7 +98,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             "AMM frxUSD allowance"
         );
 
-        vm.warp(block.timestamp + pegKeeper.expansion_refill_period());
+        vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
         uint256 sweepLp = _sweepDonationAsKeeper(pegKeeper);
 
         aggregateOracle.setPrice(0.999e18);

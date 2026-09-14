@@ -13,7 +13,7 @@ Each proxy fixes:
 - `pool_uses_dynamic_arrays`: whether liquidity quotes/deposits use `uint256[]` or `uint256[2]`;
 - `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
 - `backing_oracle`: an independent USD oracle for retained backing;
-- local capacity, intervention, profit, velocity, role, and pause state.
+- local capacity, intervention, profit, role, and pause state.
 
 The core contains no target AMM, swap operation, route struct, path storage, route loss bound, DAI/USDS adapter, ERC-4626 route operation, Frax minter operation, or detached preview module.
 
@@ -82,7 +82,6 @@ A keeper exposes `can_expand_without_policy()`. This is a non-recursive local pr
 - canonical expansion amount;
 - idle crvUSD;
 - local and ControllerFactory capacity;
-- velocity availability;
 - retained-backing oracle floor;
 - direct AMM quote, entry-profit floor, reward, and final solvency preview.
 
@@ -134,7 +133,7 @@ its configured floor, has nonzero effective capacity, and remains below the shar
 utilization threshold. Policy checks those facts directly.
 
 Temporary local non-executability does not release priority. In particular, pool imbalance,
-intervention delay, velocity pressure, loose crvUSD, AMM quote, and entry-profit viability are
+intervention delay, loose crvUSD, AMM quote, and entry-profit viability are
 candidate execution checks rather than predecessor-priority checks. This prevents one
 same-block transaction from expanding a primary, consuming its immediate local capacity, and
 then cascading through secondary and tertiary keepers.
@@ -193,7 +192,7 @@ The call:
 1. checks pauses, `policy.can_expand(self)`, intervention delay, and local deficit share;
 2. checks retained-backing oracle health;
 3. values loose paired tokens;
-4. checks idle balance, local/Factory cap, and velocity for total matched crvUSD;
+4. checks idle balance and local/Factory cap for total matched crvUSD;
 5. quotes and performs direct `add_liquidity` with one AMM execution buffer;
 6. measures exact crvUSD, paired-token, and LP deltas;
 7. computes gross action profit before caller reward;
@@ -233,7 +232,7 @@ realized gross       = max(LP value after - baseline - principal, 0)
 
 The configured entry floor applies to realized gross profit before caller compensation. Caller reward is calculated only after that floor passes, and the retained LP must still cover resulting debt. With the global `3_000 bps` caller share, the launch `0.1 bp` preferred entry floor splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol; the `3 bp` tertiary entry floor splits into `0.9 bp` and `2.1 bp`, respectively.
 
-Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpansionBurstBps, expansionRefillPeriod)` is restricted to the Factory's dynamic admin, allows a zero burst to disable new capacity, requires burst at most `10_000 bps`, and requires a nonzero refill period. The launch rule is `1_000 bps` (`10%`) of local maximum exposure with a `36 second` full linear refill. This buys roughly three blocks for independent backing oracles to react while the separately configurable `20%` local-imbalance action limits each intervention. Velocity parameters and local-cap updates first checkpoint pressure under the old rule, preventing retroactive decay at a newly selected rate.
+The intervention share controls per-action magnitude. The shared intervention delay controls action frequency and can be increased without adding an independent amount limit. Local and ControllerFactory ceilings independently bound aggregate exposure.
 
 `sweep_donated_paired_token(maxAmount)`:
 
@@ -242,7 +241,7 @@ Expansion velocity is keeper-local configuration. `set_velocity_policy(maxExpans
 - matches crvUSD only when `policy.can_allocate(self)`;
 - at/above aggregate `$1`, targets a full value match;
 - below aggregate `$1`, matches only the amount needed to avoid overshooting normalized pool balance;
-- consumes capacity and velocity only for actual crvUSD matched;
+- consumes capacity only for actual crvUSD matched;
 - does not update the monetary-intervention timestamp.
 
 `withdraw_profit()` performs the same donation settlement before transferring all claimable idle crvUSD to the live Factory fee receiver. `withdraw_profit(maxCrvUsdAmount)` runs the same path with a caller-supplied transfer bound.
@@ -296,7 +295,6 @@ The function requires:
 - `factory.policy().can_expand(address(this))`;
 - resulting debt within the local cap and ControllerFactory ceiling;
 - sufficient idle crvUSD;
-- sufficient velocity.
 
 It increments `deployed_crvusd`, updates the intervention timestamp, transfers exactly `amount`, and emits `CrvUsdBorrowed`.
 
@@ -318,18 +316,18 @@ Factory `admin()` may pause or unpause. `emergency_admin()` may only pause. Ever
 
 `execute(target,value,data)` remains an admin-only arbitrary execution/recovery hook with bubbled revert data. It is not permissionless and does not silently modify debt.
 
-## 11. Capacity and velocity
+## 11. Capacity and timing
 
-Expansion, donation matching, surplus claims, and `borrow_crvusd` consume velocity by actual crvUSD debt increase.
+`max_intervention_share_bps` controls the sole ordinary action size. `min_intervention_delay` controls how frequently `expand_supply`, `contract_supply`, `update`, and `borrow_crvusd` may run. Increasing the delay slows monetary-intervention frequency without changing the canonical amount. Donation and profit settlement remain outside this timer so a donated dust amount cannot monopolize it; those paths may use the remaining capacity in one call.
 
-Default bucket:
+Every debt increase remains bounded by both:
 
 ```text
-max burst = 10% of max_deployed_crvusd
-full refill = 36 seconds
+keeper.max_deployed_crvusd()
+ControllerFactory.debt_ceiling(keeper)
 ```
 
-`available_expansion()` returns zero unless policy admission passes. Otherwise it reports the sole canonical amount: the minimum of the `20%` local imbalance allowance, idle crvUSD after reserving any donation match, local/Factory capacity, and velocity. `available_contraction()` reports the sole exact crvUSD output allowed by the `20%` local excess and available LP backing.
+`available_expansion()` returns zero unless policy admission passes. Otherwise it reports the sole canonical amount: the minimum of the `20%` local imbalance allowance, idle crvUSD after reserving any donation match, and local/Factory capacity. `available_contraction()` reports the sole exact crvUSD output allowed by the `20%` local excess and available LP backing.
 
 ## 12. Factory deployment and active lifecycle
 
@@ -365,11 +363,11 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-implementation initcode: 20,253 bytes
-implementation runtime:  20,095 bytes
+implementation initcode: 19,180 bytes
+implementation runtime:  19,026 bytes
 implementation hash:
-0x9af68c945716ce92b3e79066bd4e8b042ccbdefb50009dd9c162897a365275d9
-EIP-170 headroom:          4,481 bytes
+0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3
+EIP-170 headroom:          5,550 bytes
 
 PegKeeperPolicy runtime:   5,490 bytes
 policy hash:
