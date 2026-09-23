@@ -9,13 +9,7 @@ import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
-import {
-    LpYieldAmm,
-    LpYieldFactory,
-    LpYieldOracle,
-    LpYieldToken,
-    LpYieldVault
-} from "./PegKeeperV3LpYield.t.sol";
+import {LpYieldAmm, LpYieldFactory, LpYieldOracle, LpYieldToken} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3UnifiedDeploymentTest is Test {
     string internal constant TEST_OUTPUT = "deployments/mainnet/PegKeeperV3-deployment.test.json";
@@ -65,7 +59,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
             policy.keeper_profit_share_bps(deployment.usdtPegKeeper), config.keeperProfitShareBps
         );
         assertEq(factory.admin(), config.admin);
-        assertEq(factory.activePegKeeperCount(), 4);
+        assertEq(factory.activePegKeeperCount(), 3);
         assertEq(factory.pendingOwner(), config.finalOwner);
         assertEq(factory.ownershipTransferNonce(), deployment.factoryOwnershipNonce);
         assertEq(deployment.factoryOwnershipNonce, 1);
@@ -80,25 +74,19 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(deployment.policy, vm.computeCreateAddress(address(deployer), 2));
         assertEq(deployment.factory, vm.computeCreateAddress(address(deployer), 3));
         assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 4));
-        assertEq(deployment.usdeUsdOracle, vm.computeCreateAddress(address(deployer), 5));
-        assertEq(deployment.usdcUsdOracle, vm.computeCreateAddress(address(deployer), 6));
-        assertEq(deployment.usdtUsdOracle, vm.computeCreateAddress(address(deployer), 7));
+        assertEq(deployment.usdcUsdOracle, vm.computeCreateAddress(address(deployer), 5));
+        assertEq(deployment.usdtUsdOracle, vm.computeCreateAddress(address(deployer), 6));
         assertEq(deployment.frxUsdPegKeeper, vm.computeCreateAddress(deployment.factory, 1));
-        assertEq(deployment.sUsdePegKeeper, vm.computeCreateAddress(deployment.factory, 2));
-        assertEq(deployment.usdcPegKeeper, vm.computeCreateAddress(deployment.factory, 3));
-        assertEq(deployment.usdtPegKeeper, vm.computeCreateAddress(deployment.factory, 4));
+        assertEq(deployment.usdcPegKeeper, vm.computeCreateAddress(deployment.factory, 2));
+        assertEq(deployment.usdtPegKeeper, vm.computeCreateAddress(deployment.factory, 3));
         assertEq(factory.activePegKeeperAt(0), deployment.frxUsdPegKeeper);
-        assertEq(factory.activePegKeeperAt(1), deployment.sUsdePegKeeper);
-        assertEq(factory.activePegKeeperAt(2), deployment.usdcPegKeeper);
-        assertEq(factory.activePegKeeperAt(3), deployment.usdtPegKeeper);
+        assertEq(factory.activePegKeeperAt(1), deployment.usdcPegKeeper);
+        assertEq(factory.activePegKeeperAt(2), deployment.usdtPegKeeper);
         assertTrue(policy.can_allocate(deployment.frxUsdPegKeeper));
-        assertTrue(policy.can_allocate(deployment.sUsdePegKeeper));
         assertTrue(policy.can_allocate(deployment.usdcPegKeeper));
         assertTrue(policy.can_allocate(deployment.usdtPegKeeper));
         assertEq(IPegKeeperV3(deployment.frxUsdPegKeeper).entry_min_profit_ppm(), 10);
         assertEq(IPegKeeperV3(deployment.frxUsdPegKeeper).normal_exit_min_profit_ppm(), 150);
-        assertEq(IPegKeeperV3(deployment.sUsdePegKeeper).entry_min_profit_ppm(), 10);
-        assertEq(IPegKeeperV3(deployment.sUsdePegKeeper).normal_exit_min_profit_ppm(), 110);
         assertEq(IPegKeeperV3(deployment.usdcPegKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(deployment.usdcPegKeeper).normal_exit_min_profit_ppm(), 80);
         assertEq(IPegKeeperV3(deployment.usdtPegKeeper).entry_min_profit_ppm(), 300);
@@ -116,7 +104,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         _assertChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
-        _assertChainlinkOracle(deployment.usdeUsdOracle, config.usdeProxy, config.usdeMaxDelay);
         _assertChainlinkOracle(deployment.usdcUsdOracle, config.usdcProxy, config.usdcMaxDelay);
         _assertChainlinkOracle(deployment.usdtUsdOracle, config.usdtProxy, config.usdtMaxDelay);
 
@@ -127,14 +114,14 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(vm.parseJsonAddress(json, ".policy"), deployment.policy);
         assertEq(vm.parseJsonAddress(json, ".factory"), deployment.factory);
         assertEq(vm.parseJsonAddress(json, ".frxUsdUsdOracle"), deployment.frxUsdUsdOracle);
-        assertEq(vm.parseJsonAddress(json, ".usdeUsdOracle"), deployment.usdeUsdOracle);
         assertEq(vm.parseJsonAddress(json, ".usdcUsdOracle"), deployment.usdcUsdOracle);
         assertEq(vm.parseJsonAddress(json, ".usdtUsdOracle"), deployment.usdtUsdOracle);
         assertEq(vm.parseJsonAddress(json, ".initialOwner"), deployment.initialOwner);
         assertEq(vm.parseJsonAddress(json, ".frxUsdPegKeeper"), deployment.frxUsdPegKeeper);
-        assertEq(vm.parseJsonAddress(json, ".sUsdePegKeeper"), deployment.sUsdePegKeeper);
         assertEq(vm.parseJsonAddress(json, ".usdcPegKeeper"), deployment.usdcPegKeeper);
         assertEq(vm.parseJsonAddress(json, ".usdtPegKeeper"), deployment.usdtPegKeeper);
+        assertFalse(vm.keyExistsJson(json, ".usdeUsdOracle"));
+        assertFalse(vm.keyExistsJson(json, ".sUsdePegKeeper"));
         assertEq(vm.parseJsonUint(json, ".factoryOwnershipNonce"), deployment.factoryOwnershipNonce);
         assertEq(vm.parseJsonUint(json, ".policyOwnershipNonce"), deployment.policyOwnershipNonce);
         vm.removeFile(TEST_OUTPUT);
@@ -153,18 +140,15 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.emergencyAdmin, deployer.EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
         assertEq(config.keeperProfitShareBps, 3_000);
-        assertEq(config.maxDeployedCrvUsd, 20_000_000e18);
+        assertEq(config.maxDeployedCrvUsd, 150_000_000e18);
         assertEq(config.ammExecutionBufferBps, 3);
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
-        assertEq(config.usdeProxy, deployer.USDE_USD_PROXY());
         assertEq(config.usdcProxy, deployer.USDC_USD_PROXY());
         assertEq(config.usdtProxy, deployer.USDT_USD_PROXY());
         assertEq(config.frxUsdMaxDelay, 26 hours);
-        assertEq(config.usdeMaxDelay, 25 hours);
         assertEq(config.usdcMaxDelay, 26 hours);
         assertEq(config.usdtMaxDelay, 26 hours);
         assertEq(config.frxUsdCrvUsdPool, deployer.FRXUSD_CRVUSD_POOL());
-        assertEq(config.sUsdeCrvUsdPool, deployer.SUSDE_CRVUSD_POOL());
         assertEq(config.usdcCrvUsdPool, deployer.USDC_CRVUSD_POOL());
         assertEq(config.usdtCrvUsdPool, deployer.USDT_CRVUSD_POOL());
     }
@@ -197,8 +181,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         config.ammExecutionBufferBps = 7;
         config.frxUsdProxy = address(chainlinkProxy);
         config.frxUsdMaxDelay = 26 hours;
-        config.usdeProxy = address(chainlinkProxy);
-        config.usdeMaxDelay = 25 hours;
         config.usdcProxy = address(chainlinkProxy);
         config.usdcMaxDelay = 26 hours;
         config.usdtProxy = address(chainlinkProxy);
@@ -206,9 +188,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
 
         LpYieldToken frxUsd = new LpYieldToken(18);
         config.frxUsdCrvUsdPool = address(new LpYieldAmm(address(frxUsd), address(crvUsd)));
-        LpYieldToken usde = new LpYieldToken(18);
-        LpYieldVault sUsde = new LpYieldVault(address(usde));
-        config.sUsdeCrvUsdPool = address(new LpYieldAmm(address(sUsde), address(crvUsd)));
         LpYieldToken usdc = new LpYieldToken(6);
         config.usdcCrvUsdPool = address(new LpYieldAmm(address(usdc), address(crvUsd)));
         LpYieldToken usdt = new LpYieldToken(6);

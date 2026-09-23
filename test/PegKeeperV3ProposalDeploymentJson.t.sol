@@ -22,11 +22,9 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
             policy: makeAddr("policy"),
             factory: makeAddr("factory"),
             frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
-            usdeUsdOracle: makeAddr("usdeUsdOracle"),
             usdcUsdOracle: makeAddr("usdcUsdOracle"),
             usdtUsdOracle: makeAddr("usdtUsdOracle"),
             frxUsdPegKeeper: makeAddr("frxUsdPegKeeper"),
-            sUsdePegKeeper: makeAddr("sUsdePegKeeper"),
             usdcPegKeeper: makeAddr("usdcPegKeeper"),
             usdtPegKeeper: makeAddr("usdtPegKeeper"),
             factoryOwnershipNonce: 7,
@@ -41,11 +39,9 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         assertEq(proposal.deploymentFactory(), deployment.factory);
         assertEq(proposal.pegKeeperPolicy(), deployment.policy);
         assertEq(proposal.frxUsdOracle(), deployment.frxUsdUsdOracle);
-        assertEq(proposal.usdeOracle(), deployment.usdeUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcUsdOracle);
         assertEq(proposal.usdtOracle(), deployment.usdtUsdOracle);
         assertEq(proposal.frxUsdKeeper(), deployment.frxUsdPegKeeper);
-        assertEq(proposal.sUsdeKeeper(), deployment.sUsdePegKeeper);
         assertEq(proposal.usdcKeeper(), deployment.usdcPegKeeper);
         assertEq(proposal.usdtKeeper(), deployment.usdtPegKeeper);
         assertEq(proposal.factoryOwnershipNonce(), deployment.factoryOwnershipNonce);

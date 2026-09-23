@@ -24,24 +24,19 @@ contract DeployPegKeeperV3 is Script {
     address public constant EMERGENCY_ADMIN = 0x467947EE34aF926cF1DCac093870f613C96B1E0c;
     address public constant FEE_SPLITTER = 0x2dFd89449faff8a532790667baB21cF733C064f2;
     address public constant FRXUSD_USD_PROXY = 0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83;
-    address public constant USDE_USD_PROXY = 0xa569d910839Ae8865Da8F8e70FfFb0cBA869F961;
     address public constant USDC_USD_PROXY = 0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
     address public constant USDT_USD_PROXY = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
 
     address public constant FRXUSD_CRVUSD_POOL = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1;
-    address public constant SUSDE_CRVUSD_POOL = 0x57064F49Ad7123C92560882a45518374ad982e85;
     address public constant USDC_CRVUSD_POOL = 0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E;
     address public constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
 
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
-    uint256 public constant RECOMMENDED_USDE_CHAINLINK_MAX_DELAY = 25 hours;
-    uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 20_000_000e18;
+    uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 150_000_000e18;
     uint256 public constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_ENTRY_MIN_PROFIT_PPM = 10;
     uint256 public constant FRXUSD_EXIT_MIN_PROFIT_PPM = 150;
-    uint256 public constant SUSDE_ENTRY_MIN_PROFIT_PPM = 10;
-    uint256 public constant SUSDE_EXIT_MIN_PROFIT_PPM = 110;
     uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
@@ -61,14 +56,11 @@ contract DeployPegKeeperV3 is Script {
         uint256 ammExecutionBufferBps;
         address frxUsdProxy;
         uint256 frxUsdMaxDelay;
-        address usdeProxy;
-        uint256 usdeMaxDelay;
         address usdcProxy;
         uint256 usdcMaxDelay;
         address usdtProxy;
         uint256 usdtMaxDelay;
         address frxUsdCrvUsdPool;
-        address sUsdeCrvUsdPool;
         address usdcCrvUsdPool;
         address usdtCrvUsdPool;
     }
@@ -79,11 +71,9 @@ contract DeployPegKeeperV3 is Script {
         address policy;
         address factory;
         address frxUsdUsdOracle;
-        address usdeUsdOracle;
         address usdcUsdOracle;
         address usdtUsdOracle;
         address frxUsdPegKeeper;
-        address sUsdePegKeeper;
         address usdcPegKeeper;
         address usdtPegKeeper;
         uint256 factoryOwnershipNonce;
@@ -119,14 +109,11 @@ contract DeployPegKeeperV3 is Script {
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
         config.frxUsdProxy = FRXUSD_USD_PROXY;
         config.frxUsdMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
-        config.usdeProxy = USDE_USD_PROXY;
-        config.usdeMaxDelay = RECOMMENDED_USDE_CHAINLINK_MAX_DELAY;
         config.usdcProxy = USDC_USD_PROXY;
         config.usdcMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
         config.usdtProxy = USDT_USD_PROXY;
         config.usdtMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
         config.frxUsdCrvUsdPool = FRXUSD_CRVUSD_POOL;
-        config.sUsdeCrvUsdPool = SUSDE_CRVUSD_POOL;
         config.usdcCrvUsdPool = USDC_CRVUSD_POOL;
         config.usdtCrvUsdPool = USDT_CRVUSD_POOL;
     }
@@ -159,9 +146,6 @@ contract DeployPegKeeperV3 is Script {
         deployment.frxUsdUsdOracle =
             _deployChainlinkAdapter(config.frxUsdProxy, config.frxUsdMaxDelay);
 
-        console2.log("Deploying Chainlink USDe/USD oracle");
-        deployment.usdeUsdOracle = _deployChainlinkAdapter(config.usdeProxy, config.usdeMaxDelay);
-
         console2.log("Deploying Chainlink USDC/USD oracle");
         deployment.usdcUsdOracle = _deployChainlinkAdapter(config.usdcProxy, config.usdcMaxDelay);
 
@@ -179,11 +163,9 @@ contract DeployPegKeeperV3 is Script {
         vm.serializeAddress(objectKey, "policy", deployment.policy);
         vm.serializeAddress(objectKey, "factory", deployment.factory);
         vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
-        vm.serializeAddress(objectKey, "usdeUsdOracle", deployment.usdeUsdOracle);
         vm.serializeAddress(objectKey, "usdcUsdOracle", deployment.usdcUsdOracle);
         vm.serializeAddress(objectKey, "usdtUsdOracle", deployment.usdtUsdOracle);
         vm.serializeAddress(objectKey, "frxUsdPegKeeper", deployment.frxUsdPegKeeper);
-        vm.serializeAddress(objectKey, "sUsdePegKeeper", deployment.sUsdePegKeeper);
         vm.serializeAddress(objectKey, "usdcPegKeeper", deployment.usdcPegKeeper);
         vm.serializeAddress(objectKey, "usdtPegKeeper", deployment.usdtPegKeeper);
         vm.serializeUint(objectKey, "factoryOwnershipNonce", deployment.factoryOwnershipNonce);
@@ -242,16 +224,6 @@ contract DeployPegKeeperV3 is Script {
             deployment.frxUsdUsdOracle,
             FRXUSD_ENTRY_MIN_PROFIT_PPM,
             FRXUSD_EXIT_MIN_PROFIT_PPM,
-            config
-        );
-
-        deployment.sUsdePegKeeper =
-            factory.deployPegKeeper(config.sUsdeCrvUsdPool, true, true, deployment.usdeUsdOracle);
-        _configureKeeper(
-            deployment.sUsdePegKeeper,
-            deployment.usdeUsdOracle,
-            SUSDE_ENTRY_MIN_PROFIT_PPM,
-            SUSDE_EXIT_MIN_PROFIT_PPM,
             config
         );
 
@@ -374,7 +346,6 @@ contract DeployPegKeeperV3 is Script {
         _verifyChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
-        _verifyChainlinkOracle(deployment.usdeUsdOracle, config.usdeProxy, config.usdeMaxDelay);
         _verifyChainlinkOracle(deployment.usdcUsdOracle, config.usdcProxy, config.usdcMaxDelay);
         _verifyChainlinkOracle(deployment.usdtUsdOracle, config.usdtProxy, config.usdtMaxDelay);
     }
@@ -402,11 +373,10 @@ contract DeployPegKeeperV3 is Script {
             "factory handoff nonce"
         );
         require(factory.admin() == config.admin, "final admin mismatch");
-        require(factory.activePegKeeperCount() == 4, "keeper count mismatch");
+        require(factory.activePegKeeperCount() == 3, "keeper count mismatch");
         require(factory.activePegKeeperAt(0) == deployment.frxUsdPegKeeper, "frxUSD order");
-        require(factory.activePegKeeperAt(1) == deployment.sUsdePegKeeper, "sUSDe order");
-        require(factory.activePegKeeperAt(2) == deployment.usdcPegKeeper, "USDC order");
-        require(factory.activePegKeeperAt(3) == deployment.usdtPegKeeper, "USDT order");
+        require(factory.activePegKeeperAt(1) == deployment.usdcPegKeeper, "USDC order");
+        require(factory.activePegKeeperAt(2) == deployment.usdtPegKeeper, "USDT order");
 
         _verifyConfiguredKeeper(
             deployment.frxUsdPegKeeper,
@@ -415,15 +385,6 @@ contract DeployPegKeeperV3 is Script {
             deployment.frxUsdUsdOracle,
             FRXUSD_ENTRY_MIN_PROFIT_PPM,
             FRXUSD_EXIT_MIN_PROFIT_PPM,
-            config
-        );
-        _verifyConfiguredKeeper(
-            deployment.sUsdePegKeeper,
-            deployment.factory,
-            config.sUsdeCrvUsdPool,
-            deployment.usdeUsdOracle,
-            SUSDE_ENTRY_MIN_PROFIT_PPM,
-            SUSDE_EXIT_MIN_PROFIT_PPM,
             config
         );
         _verifyConfiguredKeeper(
@@ -510,11 +471,9 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
         console2.log("AMM execution buffer (bps)", config.ammExecutionBufferBps);
         console2.log("frxUSD Chainlink proxy", config.frxUsdProxy);
-        console2.log("USDe Chainlink proxy", config.usdeProxy);
         console2.log("USDC Chainlink proxy", config.usdcProxy);
         console2.log("USDT Chainlink proxy", config.usdtProxy);
         console2.log("frxUSD/crvUSD pool", config.frxUsdCrvUsdPool);
-        console2.log("sUSDe/crvUSD pool", config.sUsdeCrvUsdPool);
         console2.log("USDC/crvUSD pool", config.usdcCrvUsdPool);
         console2.log("USDT/crvUSD pool", config.usdtCrvUsdPool);
         console2.log("Output", DEPLOYMENT_OUTPUT_PATH);
@@ -525,11 +484,9 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Policy", deployment.policy);
         console2.log("Factory", deployment.factory);
         console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
-        console2.log("Chainlink USDe/USD oracle", deployment.usdeUsdOracle);
         console2.log("Chainlink USDC/USD oracle", deployment.usdcUsdOracle);
         console2.log("Chainlink USDT/USD oracle", deployment.usdtUsdOracle);
         console2.log("frxUSD PegKeeperV3", deployment.frxUsdPegKeeper);
-        console2.log("sUSDe PegKeeperV3", deployment.sUsdePegKeeper);
         console2.log("USDC PegKeeperV3", deployment.usdcPegKeeper);
         console2.log("USDT PegKeeperV3", deployment.usdtPegKeeper);
         console2.log("Deployment JSON", DEPLOYMENT_OUTPUT_PATH);

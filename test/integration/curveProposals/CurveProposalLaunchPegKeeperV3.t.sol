@@ -49,13 +49,12 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     address internal constant SD_VOTEPROXY = 0x52f541764E6e90eeBc5c21Ff570De0e2D63766B6;
 
     address internal constant FRXUSD = 0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29;
-    address internal constant SUSDE = 0x9D39A5DE30e57443BfF2A8307A4256c8797A3497;
-    address internal constant USDE = 0x4c9EDD5852cd905f086C759E8383e09bff1E68B3;
     address internal constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address internal constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
     address internal constant FRXUSD_CRVUSD_POOL = 0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1;
+    address internal constant USDC_CRVUSD_POOL = 0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E;
 
-    uint256 internal constant CAP = 20_000_000e18;
+    uint256 internal constant CAP = 150_000_000e18;
     uint256 internal constant VOTING_PERIOD = 8 days;
 
     ICurveVoting internal constant OWNERSHIP_VOTE = ICurveVoting(OWNERSHIP_VOTING);
@@ -64,7 +63,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     IPegKeeperV3Factory internal factory;
     IPegKeeperPolicy internal keeperPolicy;
     address internal expectedFrxUsdKeeper;
-    address internal expectedSUsdeKeeper;
     address internal expectedUsdcKeeper;
     address internal expectedUsdtKeeper;
 
@@ -77,18 +75,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment =
             deployer.deploy(deployer.mainnetConfig(address(deployer)));
-        address[4] memory oracles = [
-            deployment.frxUsdUsdOracle,
-            deployment.usdeUsdOracle,
-            deployment.usdcUsdOracle,
-            deployment.usdtUsdOracle
-        ];
-        address[4] memory keepers = [
-            deployment.frxUsdPegKeeper,
-            deployment.sUsdePegKeeper,
-            deployment.usdcPegKeeper,
-            deployment.usdtPegKeeper
-        ];
+        address[3] memory oracles =
+            [deployment.frxUsdUsdOracle, deployment.usdcUsdOracle, deployment.usdtUsdOracle];
+        address[3] memory keepers =
+            [deployment.frxUsdPegKeeper, deployment.usdcPegKeeper, deployment.usdtPegKeeper];
         uint256[2] memory handoffNonces =
             [deployment.factoryOwnershipNonce, deployment.policyOwnershipNonce];
         proposal.setDeployment(
@@ -103,30 +93,28 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         factory = IPegKeeperV3Factory(deployment.factory);
         keeperPolicy = IPegKeeperPolicy(deployment.policy);
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);
-        expectedSUsdeKeeper = proposal.expectedKeeper(2);
-        expectedUsdcKeeper = proposal.expectedKeeper(3);
-        expectedUsdtKeeper = proposal.expectedKeeper(4);
+        expectedUsdcKeeper = proposal.expectedKeeper(2);
+        expectedUsdtKeeper = proposal.expectedKeeper(3);
     }
 
     function test_actionsAcceptPreconfiguredKeepersThenRegisterAndFund() public view {
         BaseCurveProposal.Action[] memory actions = proposal.buildProposalActions();
-        assertEq(actions.length, 13);
+        assertEq(actions.length, 11);
 
         _assertOwnershipAcceptance(actions[0], address(factory), factory.ownershipTransferNonce());
         _assertOwnershipAcceptance(
             actions[1], address(keeperPolicy), keeperPolicy.ownershipTransferNonce()
         );
 
-        address[4] memory keepers =
-            [expectedFrxUsdKeeper, expectedSUsdeKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
+        address[3] memory keepers = [expectedFrxUsdKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
         for (uint256 i; i < keepers.length; ++i) {
             _assertRegistrationAction(actions[2 + i * 2], MONETARY_POLICY, keepers[i]);
             _assertRegistrationAction(actions[3 + i * 2], LEGACY_MONETARY_POLICY, keepers[i]);
         }
 
-        _assertDebtCeilingAction(actions[10], expectedFrxUsdKeeper, CAP);
-        _assertDebtCeilingAction(actions[11], expectedUsdcKeeper, CAP);
-        _assertDebtCeilingAction(actions[12], expectedUsdtKeeper, CAP);
+        _assertDebtCeilingAction(actions[8], expectedFrxUsdKeeper, CAP);
+        _assertDebtCeilingAction(actions[9], expectedUsdcKeeper, CAP);
+        _assertDebtCeilingAction(actions[10], expectedUsdtKeeper, CAP);
 
         for (uint256 i; i < actions.length; ++i) {
             bytes4 selector = _selector(actions[i].data);
@@ -211,11 +199,11 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         proposal.buildProposalActions();
     }
 
-    function test_proposalAcceptsFourActivePreconfiguredKeepersAndFundsThree() public {
-        uint256[4] memory currentPolicySlots =
-            _firstFourEmptySlots(IAggMonetaryPolicy(MONETARY_POLICY));
-        uint256[4] memory legacySlots =
-            _firstFourEmptySlots(IAggMonetaryPolicy(LEGACY_MONETARY_POLICY));
+    function test_proposalAcceptsAndFundsThreeActivePreconfiguredKeepers() public {
+        uint256[3] memory currentPolicySlots =
+            _firstThreeEmptySlots(IAggMonetaryPolicy(MONETARY_POLICY));
+        uint256[3] memory legacySlots =
+            _firstThreeEmptySlots(IAggMonetaryPolicy(LEGACY_MONETARY_POLICY));
         assertEq(factory.owner(), proposal.deploymentInitialOwner());
         assertEq(factory.pendingOwner(), OWNERSHIP_AGENT);
         assertEq(keeperPolicy.owner(), proposal.deploymentInitialOwner());
@@ -226,11 +214,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(factory.pendingOwner(), address(0));
         assertEq(keeperPolicy.owner(), OWNERSHIP_AGENT);
         assertEq(keeperPolicy.pendingOwner(), address(0));
-        assertEq(factory.activePegKeeperCount(), 4);
+        assertEq(factory.activePegKeeperCount(), 3);
         assertEq(factory.activePegKeeperAt(0), expectedFrxUsdKeeper);
-        assertEq(factory.activePegKeeperAt(1), expectedSUsdeKeeper);
-        assertEq(factory.activePegKeeperAt(2), expectedUsdcKeeper);
-        assertEq(factory.activePegKeeperAt(3), expectedUsdtKeeper);
+        assertEq(factory.activePegKeeperAt(1), expectedUsdcKeeper);
+        assertEq(factory.activePegKeeperAt(2), expectedUsdtKeeper);
 
         _assertKeeper(
             expectedFrxUsdKeeper,
@@ -240,15 +227,6 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             false,
             true,
             proposal.frxUsdOracle()
-        );
-        _assertKeeper(
-            expectedSUsdeKeeper,
-            proposal.SUSDE_CRVUSD_POOL(),
-            SUSDE,
-            USDE,
-            true,
-            true,
-            proposal.usdeOracle()
         );
         _assertKeeper(
             expectedUsdcKeeper,
@@ -271,17 +249,14 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         assertEq(keeperPolicy.factory(), address(factory));
         assertTrue(keeperPolicy.can_allocate(expectedFrxUsdKeeper));
-        assertTrue(keeperPolicy.can_allocate(expectedSUsdeKeeper));
         assertTrue(keeperPolicy.can_allocate(expectedUsdcKeeper));
         assertTrue(keeperPolicy.can_allocate(expectedUsdtKeeper));
 
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedFrxUsdKeeper), CAP);
-        assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedSUsdeKeeper), 0);
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdcKeeper), CAP);
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdtKeeper), CAP);
 
-        address[4] memory keepers =
-            [expectedFrxUsdKeeper, expectedSUsdeKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
+        address[3] memory keepers = [expectedFrxUsdKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
         for (uint256 i; i < keepers.length; ++i) {
             assertEq(
                 IAggMonetaryPolicy(MONETARY_POLICY).peg_keepers(currentPolicySlots[i]), keepers[i]
@@ -317,50 +292,14 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         assertEq(IPegKeeperV3(expectedFrxUsdKeeper).entry_min_profit_ppm(), 10);
         assertEq(IPegKeeperV3(expectedFrxUsdKeeper).normal_exit_min_profit_ppm(), 150);
-        assertEq(IPegKeeperV3(expectedSUsdeKeeper).entry_min_profit_ppm(), 10);
-        assertEq(IPegKeeperV3(expectedSUsdeKeeper).normal_exit_min_profit_ppm(), 110);
-
         assertEq(IPegKeeperV3(expectedUsdcKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(expectedUsdcKeeper).normal_exit_min_profit_ppm(), 80);
         assertEq(IPegKeeperV3(expectedUsdtKeeper).entry_min_profit_ppm(), 300);
         assertEq(IPegKeeperV3(expectedUsdtKeeper).normal_exit_min_profit_ppm(), 80);
     }
 
-    function test_sUsdeCanExpandUnderItsOwnPolicy() public {
-        _executeActionsDirectly();
-        assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedSUsdeKeeper), 0);
-
-        vm.prank(OWNERSHIP_AGENT);
-        ICurveEDAOAdminProxy(EDAO_PROXY)
-            .execute(
-                CONTROLLER_FACTORY,
-                abi.encodeCall(
-                    IControllerFactory.set_debt_ceiling, (expectedSUsdeKeeper, 20_000e18)
-                )
-            );
-        IPegKeeperV3 sUsdeKeeper = IPegKeeperV3(expectedSUsdeKeeper);
-
-        assertTrue(keeperPolicy.can_expand(expectedSUsdeKeeper));
-        (uint256 expectedDebt,,, uint256 expectedLp) = sUsdeKeeper.preview_expansion();
-        assertGt(expectedDebt, 0);
-        assertGt(expectedLp, 0);
-
-        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand_supply();
-        assertEq(debtAdded, expectedDebt);
-        assertGt(lpReceived, 0);
-        assertGe(sUsdeKeeper.trusted_backing_value(), sUsdeKeeper.deployed_crvusd());
-    }
-
     function test_oneKeeperCooldownDoesNotBlockAnotherInSameBlock() public {
         _executeActionsDirectly();
-        vm.prank(OWNERSHIP_AGENT);
-        ICurveEDAOAdminProxy(EDAO_PROXY)
-            .execute(
-                CONTROLLER_FACTORY,
-                abi.encodeCall(
-                    IControllerFactory.set_debt_ceiling, (expectedSUsdeKeeper, 20_000_000e18)
-                )
-            );
 
         address trader = makeAddr("frxUSD expansion trader");
         uint256 marketTrade = 2_000_000e18;
@@ -370,17 +309,27 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(0, 1, marketTrade, 0);
         vm.stopPrank();
 
+        address usdcTrader = makeAddr("USDC expansion trader");
+        uint256 usdcTradeChunk = 2_000_000e6;
+        deal(USDC, usdcTrader, 6_000_000e6);
+        vm.startPrank(usdcTrader);
+        IERC20(USDC).approve(USDC_CRVUSD_POOL, 6_000_000e6);
+        for (uint256 i; i < 3; ++i) {
+            IStableSwap2Pool(USDC_CRVUSD_POOL).exchange(0, 1, usdcTradeChunk, 0);
+        }
+        vm.stopPrank();
+
         IPegKeeperV3 frxUsdKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
-        IPegKeeperV3 sUsdeKeeper = IPegKeeperV3(expectedSUsdeKeeper);
+        IPegKeeperV3 usdcKeeper = IPegKeeperV3(expectedUsdcKeeper);
         assertTrue(keeperPolicy.can_expand(expectedFrxUsdKeeper));
-        assertTrue(sUsdeKeeper.can_expand_without_policy());
+        assertTrue(usdcKeeper.can_expand_without_policy());
 
         frxUsdKeeper.expand_supply();
 
         assertFalse(frxUsdKeeper.can_expand_without_policy());
-        assertTrue(keeperPolicy.can_allocate(expectedSUsdeKeeper));
-        assertTrue(keeperPolicy.can_expand(expectedSUsdeKeeper));
-        (uint256 debtAdded, uint256 lpReceived,) = sUsdeKeeper.expand_supply();
+        assertTrue(keeperPolicy.can_allocate(expectedUsdcKeeper));
+        assertTrue(keeperPolicy.can_expand(expectedUsdcKeeper));
+        (uint256 debtAdded, uint256 lpReceived,) = usdcKeeper.expand_supply();
         assertGt(debtAdded, 0);
         assertGt(lpReceived, 0);
     }
@@ -388,7 +337,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
     function _executeProposal() internal {
         _executeOwnershipVote(
             proposal.buildProposalScript(),
-            "Accept and activate four direct PegKeeperV3 keepers with fee-based soft priorities"
+            "Accept and activate three direct PegKeeperV3 keepers with fee-based soft priorities"
         );
     }
 
@@ -494,10 +443,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(configuredCap, cap);
     }
 
-    function _firstFourEmptySlots(IAggMonetaryPolicy monetaryPolicy)
+    function _firstThreeEmptySlots(IAggMonetaryPolicy monetaryPolicy)
         internal
         view
-        returns (uint256[4] memory slots)
+        returns (uint256[3] memory slots)
     {
         uint256 found;
         for (uint256 i; i < 1_000; ++i) {
@@ -506,7 +455,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             ++found;
             if (found == slots.length) return slots;
         }
-        revert("fewer than four policy slots");
+        revert("fewer than three policy slots");
     }
 
     function _selector(bytes memory data) internal pure returns (bytes4 selector) {

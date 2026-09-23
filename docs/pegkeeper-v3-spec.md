@@ -93,7 +93,7 @@ Expected economic failure returns `false`. A malformed or reverting external dep
 
 The current policy has no cross-keeper ordering. Every active, Factory-bound keeper is evaluated independently. One keeper's debt, capacity, pause state, retained-backing oracle, pool imbalance, intervention delay, AMM quote, or entry economics cannot deny another keeper.
 
-Keeper-local AMM fees and gross-profit floors provide the launch's soft economic preference. frxUSD and sUSDe use lower entry floors than USDC and USDT, so the latter require more gross edge before expansion. The policy does not promise an execution order. A future Factory-bound policy may add hard ordering without changing or redeploying keepers.
+Keeper-local AMM fees and gross-profit floors provide the launch's soft economic preference. frxUSD uses a lower entry floor than USDC and USDT, so the latter require more gross edge before expansion. The policy does not promise an execution order. A future Factory-bound policy may add hard ordering without changing or redeploying keepers.
 
 ### 3.2 Allocation admission
 
@@ -286,12 +286,11 @@ Historical deployment membership is private. The public policy-facing registry c
 
 | AMM | Liquidity ABI | Paired token | Backing oracle | Local max | Initial ceiling | Entry floor | Contraction floor |
 |---|---|---|---|---:|---:|---:|---:|
-| frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 20m | 20m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
-| crvUSD/sUSDe | dynamic | sUSDe | USDe/USD | provisional 20m | 0 | 10 ppm / 0.1 bp | 110 ppm / 1.1 bp |
-| USDC/crvUSD | fixed | USDC | USDC/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
-| USDT/crvUSD | fixed | USDT | USDT/USD | 20m | 20m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
+| frxUSD/crvUSD | dynamic | frxUSD | frxUSD/USD | 150m | 150m | 10 ppm / 0.1 bp | 150 ppm / 1.5 bp |
+| USDC/crvUSD | fixed | USDC | USDC/USD | 150m | 150m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
+| USDT/crvUSD | fixed | USDT | USDT/USD | 150m | 150m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
 
-The deployment sender initially owns the Factory and policy, binds them, creates and configures all four keepers, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, registers every keeper in both aggregate monetary policies, and assigns 20 million crvUSD ceilings to frxUSD, USDC, and USDT. Those three become active immediately; sUSDe stays at zero allocation.
+The deployment sender initially owns the Factory and policy, binds them, creates and configures all three keepers with 150 million crvUSD local maxima, installs Curve's final dynamic keeper roles, and names the Curve Ownership Agent as pending owner of both contracts. Once a pending handoff exists, old-owner configuration is frozen. Correcting the pending recipient increments an acceptance nonce, so an already-reviewed proposal cannot accept a redirected handoff. The proposal accepts both nonce-bound handoffs, validates the preconfigured local maxima, registers every keeper in both aggregate monetary policies, and assigns 150 million crvUSD ControllerFactory ceilings to frxUSD, USDC, and USDT.
 
 ## 14. Compiled identity
 
@@ -328,4 +327,4 @@ The existing `3.0.0` manifest and release checklist predate this source snapshot
 7. Generate a new release manifest; never relabel historical evidence.
 8. Obtain explicit governance authorization before any deployment, allocation, registration, activation, or broadcast.
 
-The bundled pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit settings throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening either floor, funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. A separate pinned test executes both exact-output selector modes against all four candidate production pools.
+The bundled pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit settings throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening either floor, funds through the live ownership-agent/eDAO-proxy/ControllerFactory path, burns idle allocation after setting the ceiling to zero, calls permissionless `rug_debt_ceiling`, and verifies exact keeper-balance, total-supply, residual-allocation, local-debt, and unlimited-allowance reconciliation. A separate pinned test executes both exact-output selector modes against all four supported pool fixtures.

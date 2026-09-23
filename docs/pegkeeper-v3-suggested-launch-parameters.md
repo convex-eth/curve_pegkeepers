@@ -8,23 +8,18 @@ All keepers use their own crvUSD/paired-token pool directly. There are no routes
 
 | Keeper | AMM | Liquidity ABI | Paired token | Retained backing | Local max | Initial ControllerFactory ceiling |
 |---|---|---|---|---|---:|---:|
-| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD | frxUSD | 20m | 20m |
-| sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | sUSDe | USDe | provisional 20m | **0** |
-| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC | USDC | 20m | 20m |
-| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT | USDT | 20m | 20m |
+| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD | frxUSD | 150m | 150m |
+| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC | USDC | 150m | 150m |
+| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT | USDT | 150m | 150m |
 
 Token addresses:
 
 ```text
 crvUSD  0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E
 frxUSD  0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29
-sUSDe   0x9D39A5DE30e57443BfF2A8307A4256c8797A3497
-USDe    0x4c9EDD5852cd905f086C759E8383e09bff1E68B3
 USDC    0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
 USDT    0xdAC17F958D2ee523a2206206994597C13D831ec7
 ```
-
-The proposal deploys/configures/registers sUSDe but deliberately assigns no production debt ceiling. Its `20m` local maximum is a placeholder, not funding. Governance must remeasure pool depth and explicitly choose both values before activation.
 
 ## Shared deployment configuration
 
@@ -46,7 +41,7 @@ The aggregate crvUSD oracle is owned by `PegKeeperPolicy`, not the Factory:
 
 Every active, Factory-bound keeper can expand independently when the aggregate crvUSD direction allows it and that keeper's complete local probe passes. No keeper's utilization, pause state, oracle, delay, imbalance, or profitability blocks another keeper. `can_allocate` likewise uses active Factory membership only; the keeper still enforces donation matching, backing, capacity, aggregate-direction handling, and final solvency.
 
-AMM fees and keeper-local gross-profit floors provide soft economic preference. frxUSD and sUSDe use `0.1 bp` entry floors, while USDC and USDT require `3 bp`; this makes stablecoin-pool exposure harder to create without encoding a mandatory order. Exit floors bias the opposite direction. Actual executability still depends on each pool's fee, amplification, imbalance, and LP economics.
+AMM fees and keeper-local gross-profit floors provide soft economic preference. frxUSD uses a `0.1 bp` entry floor, while USDC and USDT require `3 bp`; this makes stablecoin-pool exposure harder to create without encoding a mandatory order. Exit floors bias the opposite direction. Actual executability still depends on each pool's fee, amplification, imbalance, and LP economics.
 
 Deactivated keepers cannot allocate or expand. They can still contract and wind down. Governance can add hard cross-keeper ordering later by installing a new Factory-bound policy without redeploying keepers.
 
@@ -60,17 +55,17 @@ Deactivated keepers cannot allocate or expand. They can still contract and wind 
 
 ## Keeper-local policy
 
-| Parameter | frxUSD | sUSDe | USDC / USDT |
-|---|---:|---:|---:|
-| `entryMinProfitPpm` | `10` (`0.1 bp`) | `10` (`0.1 bp`) | `300` (`3 bp`) |
-| `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `110` (`1.1 bp`) | `80` (`0.8 bp`) |
-| `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) | `2_000` (`20%`) |
-| `minInterventionDelay` | `12` seconds | `12` seconds | `12` seconds |
-| retained-backing floor | `0.999e18` | `0.999e18` | `0.999e18` |
+| Parameter | frxUSD | USDC / USDT |
+|---|---:|---:|
+| `entryMinProfitPpm` | `10` (`0.1 bp`) | `300` (`3 bp`) |
+| `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `80` (`0.8 bp`) |
+| `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) |
+| `minInterventionDelay` | `12` seconds | `12` seconds |
+| retained-backing floor | `0.999e18` | `0.999e18` |
 
-Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp`, `1.1 bp`, and `0.8 bp` exit floors pay the caller `0.45 bp`, `0.33 bp`, and `0.24 bp`, respectively, at their exact boundaries.
+Both configured profit floors apply to gross realized profit before keeper compensation. With the initial global `3_000 bps` keeper share, the `1.5 bp` and `0.8 bp` exit floors pay the caller `0.45 bp` and `0.24 bp`, respectively, at their exact boundaries.
 
-Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction toward USDC/USDT at `0.8 bp`, then sUSDe at `1.1 bp`, then frxUSD at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `3 bp` entry edge, making their exposure materially harder to create than frxUSD or sUSDe exposure.
+Entry and normal-contraction floors are independent; no ordering constraint is enforced by the contract. The launch profiles economically bias contraction toward USDC/USDT at `0.8 bp` rather than frxUSD at `1.5 bp`. Different pool states, fees, amplification, and LP economics can still change actual cross-pool executability. USDC and USDT additionally require a `3 bp` entry edge, making their exposure materially harder to create than frxUSD exposure.
 
 `maxInterventionShareBps` is configurable and launches at V2's `20%` share. It defines the sole ordinary action amount rather than only an upper bound: expansion uses exactly the current normalized paired-token surplus share, subject to balance and capacity; contraction requests exactly the current normalized crvUSD excess share, subject to available LP backing. Callers cannot choose smaller dust clips. `update()` automatically selects the local direction, `update(address beneficiary)` routes the action reward to a selected nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions explicitly.
 
@@ -81,11 +76,8 @@ Entry and normal-contraction floors are independent; no ordering constraint is e
 | Keeper | Chainlink proxy | Adapter max delay | Minimum |
 |---|---|---:|---:|
 | frxUSD | `0x9B4a96210bc8D9D55b1908B465D8B0de68B7fF83` | `26 hours` | `0.999e18` |
-| sUSDe backing USDe | `0xa569d910839Ae8865Da8F8e70FfFb0cBA869F961` | `25 hours` | `0.999e18` |
 | USDC | `0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6` | `26 hours` | `0.999e18` |
 | USDT | `0x3E7d1eAB13ad0104d2750B8863b489D65364e32D` | `26 hours` | `0.999e18` |
-
-For sUSDe, loose shares use `convertToAssets()` for normalized balance calculations. Held LP uses only pool virtual price. The USDe/USD adapter is an independent retained-backing floor; it does not multiply LP value by the sUSDe share rate.
 
 ## Direct expansion
 
@@ -116,9 +108,9 @@ Deployment sender sequence:
 
 1. deploy the locked keeper implementation;
 2. deploy policy and Factory with the deployment sender as initial owner and keeper admin;
-3. deploy the frxUSD/USD, USDe/USD, USDC/USD, and USDT/USD adapters;
+3. deploy the frxUSD/USD, USDC/USD, and USDT/USD adapters;
 4. bind policy to Factory;
-5. deploy and configure all four unpaused keepers with zero ControllerFactory allocation and verify each keeper's unlimited crvUSD allowance to the ControllerFactory;
+5. deploy and configure all three unpaused keepers with zero ControllerFactory allocation and verify each keeper's unlimited crvUSD allowance to the ControllerFactory;
 6. change the Factory's dynamic keeper admin to the Curve Ownership Agent; and
 7. set the Curve Ownership Agent as pending owner of both Factory and policy, freezing old-owner configuration and recording the acceptance nonces. A corrected recipient increments its nonce and invalidates any already-built acceptance proposal.
 
@@ -126,11 +118,10 @@ Proposal sequence:
 
 1. accept Factory ownership;
 2. accept policy ownership;
-3. register all four keepers in both aggregate monetary policies;
-4. assign 20 million crvUSD ControllerFactory ceilings to frxUSD, USDC, and USDT; and
-5. leave sUSDe at a zero ceiling.
+3. register all three keepers in both aggregate monetary policies; and
+4. assign 150 million crvUSD ControllerFactory ceilings to frxUSD, USDC, and USDT.
 
-The proposal contains 13 actions. It does not deploy or configure keepers, toggle pause flags, remove V2 keepers, change a V2 Regulator, or edit aggregate-oracle membership. The proposal validates the complete preconfigured state and rejects a paused, prefunded, mutated, mis-owned, or incorrectly wired candidate before producing calldata.
+The proposal contains 11 actions. It does not deploy or configure keepers, toggle pause flags, remove V2 keepers, change a V2 Regulator, or edit aggregate-oracle membership. The proposal validates the complete preconfigured state and rejects a paused, prefunded, mutated, mis-owned, or incorrectly wired candidate before producing calldata.
 
 ## V2 coexistence and later removal
 
@@ -158,10 +149,9 @@ Before authorization:
 1. Reconfirm implementation, policy, Factory, keeper, and oracle-adapter identities.
 2. Reconfirm all pool coin orders, selected fixed/dynamic liquidity ABI modes, rate behavior, virtual prices, fee parameters, balances, exact-output imbalance withdrawal behavior, and the one-LP-wei quote/burn difference.
 3. Reassess every local max and ControllerFactory debt ceiling against current pool depth.
-4. Confirm the deployment sender still owns Factory and policy, Curve is pending owner of both, Curve is already the dynamic keeper admin, all four keepers are unpaused and debt-free, and every ControllerFactory ceiling is zero.
-5. Keep sUSDe at zero until governance deliberately funds it.
-6. Simulate the exact 13-action vote and verify that frxUSD, USDC, and USDT receive their ceilings only after ownership acceptance and dual-policy registration.
-7. Immediately after execution, run bounded expansion and contraction canaries and verify every balance/debt delta, including returned-crvUSD burning through permissionless `rug_debt_ceiling` and the keeper's ControllerFactory allowance.
-8. Retire V2 globally with `Killed.Provide`, zero ceilings, and periodic `rug_debt_ceiling` calls when separately authorized. If any overlap between V2 and V3 expansion is unacceptable, include those V2 shutdown actions in the same atomic vote before the V3 ceiling assignments.
+4. Confirm the deployment sender still owns Factory and policy, Curve is pending owner of both, Curve is already the dynamic keeper admin, all three keepers are unpaused and debt-free, and every ControllerFactory ceiling is zero.
+5. Simulate the exact 11-action vote and verify that frxUSD, USDC, and USDT receive their ceilings only after ownership acceptance and dual-policy registration.
+6. Immediately after execution, run bounded expansion and contraction canaries and verify every balance/debt delta, including returned-crvUSD burning through permissionless `rug_debt_ceiling` and the keeper's ControllerFactory allowance.
+7. Retire V2 globally with `Killed.Provide`, zero ceilings, and periodic `rug_debt_ceiling` calls when separately authorized. If any overlap between V2 and V3 expansion is unacceptable, include those V2 shutdown actions in the same atomic vote before the V3 ceiling assignments.
 
 A current-block canary is mandatory before any production action. Pinned-fork success is evidence of code behavior, not authorization or current market safety.

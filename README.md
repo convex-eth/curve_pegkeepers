@@ -71,7 +71,7 @@ The current policy has no cross-keeper ordering. Every Factory-active keeper is 
 
 `can_expand_without_policy()` is the non-recursive candidate probe. It checks pause state, intervention delay, local imbalance, retained-backing oracle, capacity, canonical-action economics, and final solvency. `can_allocate(keeper)` checks only active Factory membership because donation matching has its own keeper-local amount, backing, capacity, and solvency guards.
 
-Keeper-local AMM fees and gross-profit floors provide soft economic preference. Lower entry floors make frxUSD and sUSDe economical sooner; higher USDC/USDT entry floors make those pools more expensive to enter. This is not hard sequencing. Governance can install a new Factory-bound policy later if structural ordering becomes desirable without redeploying keepers.
+Keeper-local AMM fees and gross-profit floors provide soft economic preference. The lower entry floor makes frxUSD economical sooner; higher USDC/USDT entry floors make those pools more expensive to enter. This is not hard sequencing. Governance can install a new Factory-bound policy later if structural ordering becomes desirable without redeploying keepers.
 
 The aggregate direction boundary remains exact:
 
@@ -125,10 +125,9 @@ loss-making withdrawals are never permitted by configuration.
 | Profile | `entryMinProfitPpm` | `normalExitMinProfitPpm` |
 |---|---:|---:|
 | frxUSD | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
-| sUSDe | `10` (`0.1 bp`) | `110` (`1.1 bp`) |
 | USDC / USDT | `300` (`3 bp`) | `80` (`0.8 bp`) |
 
-These profiles make USDC/USDT more expensive to enter and economically easier to unwind, followed by sUSDe and then frxUSD. They are soft economic biases, not enforced cross-pool ordering in either direction. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
+These profiles make USDC/USDT more expensive to enter and economically easier to unwind than frxUSD. They are soft economic biases, not enforced cross-pool ordering in either direction. `PegKeeperPolicy.keeper_profit_share_bps(keeper)` returns the global `3_000` keeper reward share for every candidate. Governance can change that one policy value for all existing keepers; the address argument preserves room for future keeper-aware policy without changing the keeper ABI.
 
 The intervention share controls per-action magnitude. The shared intervention delay controls `expand_supply`, `contract_supply`, `update`, and `borrow_crvusd` frequency and can be increased without adding a second amount limit. Donation and profit settlement remain timer-independent and capacity-bounded so a donated dust amount cannot monopolize the monetary-intervention timer. Local and ControllerFactory ceilings independently bound aggregate exposure.
 
@@ -147,30 +146,28 @@ deployPegKeeper(
 
 Every deployed keeper is added to the active list and starts unpaused. Initialization grants the ControllerFactory unlimited crvUSD allowance so ceiling reductions and permissionless residual rugging can burn returned allocation through `crvUSD.burnFrom`. Before governance assigns a ControllerFactory debt ceiling, its zero allocation prevents expansion and its zero LP/debt position leaves nothing to contract.
 
-The environment-free dependency deployer performs seven monotonic CREATEs:
+The environment-free dependency deployer performs six monotonic CREATEs:
 
 1. locked `PegKeeperV3` implementation bound to the ControllerFactory's crvUSD;
 2. `PegKeeperPolicy`;
 3. `PegKeeperV3Factory`;
 4. frxUSD/USD Chainlink adapter;
-5. USDe/USD Chainlink adapter;
-6. USDC/USD Chainlink adapter;
-7. USDT/USD Chainlink adapter.
+5. USDC/USD Chainlink adapter;
+6. USDT/USD Chainlink adapter.
 
-The deployment sender initially owns the Factory and policy. The deployer binds the policy, creates and configures all four keepers, changes the dynamic keeper admin to the Curve Ownership Agent, and sets that agent as pending owner of both Factory and policy. Starting either pending handoff freezes old-owner configuration. Any recipient correction increments its acceptance nonce and invalidates an already-built proposal, preventing stale deployment state from being accepted during the governance vote. The deployment JSON records every dependency, keeper address, and handoff nonce for independent verification.
+The deployment sender initially owns the Factory and policy. The deployer binds the policy, creates and configures all three keepers, changes the dynamic keeper admin to the Curve Ownership Agent, and sets that agent as pending owner of both Factory and policy. Starting either pending handoff freezes old-owner configuration. Any recipient correction increments its acceptance nonce and invalidates an already-built proposal, preventing stale deployment state from being accepted during the governance vote. The deployment JSON records every dependency, keeper address, and handoff nonce for independent verification.
 
 ## Canonical launch proposal
 
-The current proposal accepts the two ownership handoffs, registers four preconfigured direct keepers, and funds three:
+The current proposal accepts the two ownership handoffs, registers three preconfigured direct keepers, and funds all three:
 
 | Paired token | AMM | Liquidity ABI | Retained oracle | Local cap | Initial ceiling | Entry floor | Contraction floor |
 |---|---|---|---|---:|---:|---:|---:|
-| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 20m | 20m | 0.1 bp | 1.5 bp |
-| sUSDe | `0x57064F49Ad7123C92560882a45518374ad982e85` | dynamic | USDe/USD | provisional 20m | **0** | 0.1 bp | 1.1 bp |
-| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 20m | 20m | 3 bp | 0.8 bp |
-| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 20m | 20m | 3 bp | 0.8 bp |
+| frxUSD | `0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1` | dynamic | frxUSD/USD | 150m | 150m | 0.1 bp | 1.5 bp |
+| USDC | `0x4DEcE678ceceb27446b35C672dC7d61F30bAD69E` | fixed | USDC/USD | 150m | 150m | 3 bp | 0.8 bp |
+| USDT | `0x390f3595bCa2Df7d23783dFd126427CCeb997BF4` | fixed | USDT/USD | 150m | 150m | 3 bp | 0.8 bp |
 
-The proposal contains 13 actions: two ownership acceptances, eight registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD. sUSDe remains inert at a zero ceiling pending a separate liquidity decision.
+The proposal contains 11 actions: two ownership acceptances, six registrations across the current and legacy aggregate monetary policies, and three ControllerFactory ceiling assignments. frxUSD, USDC, and USDT become permissionless immediately when those ceilings supply crvUSD.
 
 ## Runtime identity
 
@@ -204,7 +201,7 @@ make setup
 ETH_RPC_URL=https://an-archive-rpc.example make check
 ```
 
-Coverage includes fixed- and dynamic-array liquidity dispatch, canonical amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, independent policy admission, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, unified deployment JSON, full Curve ownership-vote execution, and an action-level live sUSDe dynamic-array expansion at a coherent pinned state. A pinned fork test executes exact-crvUSD `remove_liquidity_imbalance` against all four production pools and verifies exact receipt plus the observed one-LP-wei quote/burn difference.
+Coverage includes fixed- and dynamic-array liquidity dispatch, canonical amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, independent policy admission, active-list lifecycle, policy replacement, admin draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, unified deployment JSON, and full Curve ownership-vote execution. A pinned fork test executes exact-crvUSD `remove_liquidity_imbalance` against all four supported pool fixtures and verifies exact receipt plus the observed one-LP-wei quote/burn difference.
 
 The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile throughout. It executes a canonical `725,584.551618870081342128 crvUSD` expansion and a canonical `767,265.042426419027971889 crvUSD` exact-output contraction under the `20%` intervention rule without weakening the profit floor. It also verifies policy direction, measured deltas, debt reduction, final solvency, real ownership-agent/eDAO-proxy/ControllerFactory funding, idle-allocation burning, permissionless residual rugging, and the keeper's persistent ControllerFactory allowance.
 
