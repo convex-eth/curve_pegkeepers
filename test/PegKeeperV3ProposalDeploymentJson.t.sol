@@ -18,6 +18,7 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = DeployPegKeeperV3.Deployment({
             policy: makeAddr("policy"),
+            registry: makeAddr("registry"),
             frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
             usdcUsdOracle: makeAddr("usdcUsdOracle"),
             usdtUsdOracle: makeAddr("usdtUsdOracle"),
@@ -31,6 +32,7 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         proposal.loadDeployment(TEST_OUTPUT);
 
         assertEq(proposal.pegKeeperPolicy(), deployment.policy);
+        assertEq(proposal.pegKeeperRegistry(), deployment.registry);
         assertEq(proposal.frxUsdOracle(), deployment.frxUsdUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcUsdOracle);
         assertEq(proposal.usdtOracle(), deployment.usdtUsdOracle);

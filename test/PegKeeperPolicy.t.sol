@@ -33,227 +33,60 @@ contract OversizedPolicyPriceOracle {
     }
 }
 
-contract PolicyKeeperMock {
-    address public policy;
-    bool public locallyExpandable = true;
-    bool public localProbeReverts;
-
-    constructor(address keeperPolicy) {
-        policy = keeperPolicy;
-    }
-
-    function setPolicy(address newPolicy) external {
-        policy = newPolicy;
-    }
-
-    function setLocallyExpandable(bool expandable) external {
-        locallyExpandable = expandable;
-    }
-
-    function setLocalProbeReverts(bool value) external {
-        localProbeReverts = value;
-    }
-
-    function can_expand_without_policy() external view returns (bool) {
-        require(!localProbeReverts, "local probe failure");
-        return locallyExpandable;
-    }
-}
-
 contract PegKeeperPolicyTest is Test {
     PolicyPriceOracleMock internal oracle;
     IPegKeeperPolicy internal policy;
-    PolicyKeeperMock internal preferredKeeper;
-    PolicyKeeperMock internal alternativeKeeper;
 
     function setUp() public {
         oracle = new PolicyPriceOracleMock();
         policy = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
+            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle)))
         );
-
-        preferredKeeper = _newKeeper(address(policy));
-        alternativeKeeper = _newKeeper(address(policy));
-        address[] memory keepers = new address[](2);
-        keepers[0] = address(preferredKeeper);
-        keepers[1] = address(alternativeKeeper);
-        policy.add_peg_keepers(keepers);
     }
 
-    function test_boundKeepersHaveNoStructuralPriorityOrdering() public view {
-        assertTrue(policy.can_allocate(address(preferredKeeper)));
-        assertTrue(policy.can_allocate(address(alternativeKeeper)));
-        assertTrue(policy.can_expand(address(preferredKeeper)));
-        assertTrue(policy.can_expand(address(alternativeKeeper)));
-    }
+    function test_policyOnlyReportsGlobalExecutionRulingsWithoutKeeperInput() public {
+        assertTrue(policy.expansion_regime());
+        assertTrue(policy.can_expand());
+        assertTrue(policy.can_contract());
 
-    function test_policyUsesKeeperBindingWithoutFactoryRegistry() public view {
-        (bool factoryGetterExists,) =
-            address(policy).staticcall(abi.encodeWithSignature("factory()"));
-        assertFalse(factoryGetterExists);
-        assertTrue(policy.can_allocate(address(preferredKeeper)));
-        assertTrue(policy.can_expand(address(preferredKeeper)));
-    }
-
-    function test_policyActiveListUsesPopAndSwapAndSupportsReadding() public {
-        IPegKeeperPolicy freshPolicy = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
+        _assertStaticCallFails(abi.encodeWithSignature("can_expand(address)", address(this)));
+        _assertStaticCallFails(abi.encodeWithSignature("can_contract(address)", address(this)));
+        _assertStaticCallFails(abi.encodeWithSignature("can_allocate(address)", address(this)));
+        _assertStaticCallFails(abi.encodeWithSignature("can_expand_without_policy()"));
+        _assertStaticCallFails(abi.encodeWithSignature("peg_keeper_count()"));
+        _assertStaticCallFails(abi.encodeWithSignature("peg_keepers(uint256)", 0));
+        _assertStaticCallFails(abi.encodeWithSignature("is_active(address)", address(this)));
+        _assertCallFails(abi.encodeWithSignature("add_peg_keepers(address[])", new address[](0)));
+        _assertCallFails(abi.encodeWithSignature("remove_peg_keepers(address[])", new address[](0)));
+        _assertStaticCallFails(
+            abi.encodeWithSignature("keeper_profit_share_bps(address)", address(this))
         );
-        PolicyKeeperMock first = _newKeeper(address(freshPolicy));
-        PolicyKeeperMock second = _newKeeper(address(freshPolicy));
-        assertEq(freshPolicy.peg_keeper_count(), 0);
-
-        address[] memory keepers = new address[](2);
-        keepers[0] = address(first);
-        keepers[1] = address(second);
-        freshPolicy.add_peg_keepers(keepers);
-
-        assertEq(freshPolicy.peg_keeper_count(), 2);
-        assertEq(freshPolicy.peg_keepers(0), address(first));
-        assertEq(freshPolicy.peg_keepers(1), address(second));
-        assertTrue(freshPolicy.is_active(address(first)));
-        assertTrue(freshPolicy.is_active(address(second)));
-
-        address[] memory removed = new address[](1);
-        removed[0] = address(first);
-        freshPolicy.remove_peg_keepers(removed);
-
-        assertEq(freshPolicy.peg_keeper_count(), 1);
-        assertEq(freshPolicy.peg_keepers(0), address(second));
-        assertFalse(freshPolicy.is_active(address(first)));
-        assertTrue(freshPolicy.is_active(address(second)));
-        assertFalse(freshPolicy.can_allocate(address(first)));
-        assertFalse(freshPolicy.can_expand(address(first)));
-        assertTrue(freshPolicy.can_contract(address(first)));
-
-        freshPolicy.add_peg_keepers(removed);
-        assertEq(freshPolicy.peg_keeper_count(), 2);
-        assertEq(freshPolicy.peg_keepers(1), address(first));
-        assertTrue(freshPolicy.is_active(address(first)));
+        _assertCallFails(abi.encodeWithSignature("set_keeper_profit_share_bps(uint256)", 2_000));
     }
 
-    function test_policyListRejectsDuplicateMissingAndWrongBinding() public {
-        address[] memory oneKeeper = new address[](1);
-        oneKeeper[0] = address(preferredKeeper);
-        vm.expectRevert(IPegKeeperPolicy.DuplicateKeeper.selector);
-        policy.add_peg_keepers(oneKeeper);
-
-        PolicyKeeperMock missing = _newKeeper(address(policy));
-        oneKeeper[0] = address(missing);
-        vm.expectRevert(IPegKeeperPolicy.InvalidKeeper.selector);
-        policy.remove_peg_keepers(oneKeeper);
-
-        PolicyKeeperMock wrongBinding = _newKeeper(makeAddr("another policy"));
-        oneKeeper[0] = address(wrongBinding);
-        vm.expectRevert(IPegKeeperPolicy.InvalidKeeper.selector);
-        policy.add_peg_keepers(oneKeeper);
-    }
-
-    function test_onlyOwnerCanAddAndRemovePolicyKeepers() public {
-        PolicyKeeperMock candidate = _newKeeper(address(policy));
-        address[] memory oneKeeper = new address[](1);
-        oneKeeper[0] = address(candidate);
-
-        vm.startPrank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
-        policy.add_peg_keepers(oneKeeper);
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
-        policy.remove_peg_keepers(oneKeeper);
-        vm.stopPrank();
-    }
-
-    function test_policyListIsBoundedToEightAndNinthAdditionRollsBack() public {
-        IPegKeeperPolicy freshPolicy = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
-        );
-        address[] memory keepers = new address[](8);
-        for (uint256 i; i < keepers.length; ++i) {
-            keepers[i] = address(_newKeeper(address(freshPolicy)));
-        }
-        freshPolicy.add_peg_keepers(keepers);
-        assertEq(freshPolicy.peg_keeper_count(), 8);
-
-        address ninth = address(_newKeeper(address(freshPolicy)));
-        address[] memory oneKeeper = new address[](1);
-        oneKeeper[0] = ninth;
-        vm.expectRevert();
-        freshPolicy.add_peg_keepers(oneKeeper);
-
-        assertEq(freshPolicy.peg_keeper_count(), 8);
-        assertFalse(freshPolicy.is_active(ninth));
-    }
-
-    function test_keeperProfitShareIsOneBoundedGlobalPolicyRule() public {
-        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 3_000);
-        assertEq(policy.keeper_profit_share_bps(address(alternativeKeeper)), 3_000);
-
-        policy.set_keeper_profit_share_bps(1_250);
-        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 1_250);
-        assertEq(policy.keeper_profit_share_bps(address(alternativeKeeper)), 1_250);
-
-        policy.set_keeper_profit_share_bps(0);
-        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 0);
-
-        vm.prank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
-        policy.set_keeper_profit_share_bps(2_000);
-
-        vm.expectRevert(IPegKeeperPolicy.InvalidThreshold.selector);
-        policy.set_keeper_profit_share_bps(10_001);
-    }
-
-    function test_allocationRequiresBindingButNotCandidateLocalExpansion() public {
-        alternativeKeeper.setLocallyExpandable(false);
-        assertTrue(policy.can_allocate(address(alternativeKeeper)));
-        assertFalse(policy.can_expand(address(alternativeKeeper)));
-
-        alternativeKeeper.setLocalProbeReverts(true);
-        assertTrue(policy.can_allocate(address(alternativeKeeper)));
-        assertFalse(policy.can_expand(address(alternativeKeeper)));
-
-        alternativeKeeper.setPolicy(makeAddr("other policy"));
-        assertFalse(policy.can_allocate(address(alternativeKeeper)));
-        assertFalse(policy.can_expand(address(alternativeKeeper)));
-        assertFalse(policy.can_contract(address(alternativeKeeper)));
-    }
-
-    function test_keeperBoundToAnotherPolicyIsRejected() public {
-        IPegKeeperPolicy otherPolicy = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), 3_000))
-        );
-        PolicyKeeperMock outsider = _newKeeper(address(otherPolicy));
-
-        assertFalse(policy.can_allocate(address(outsider)));
-        assertFalse(policy.can_expand(address(outsider)));
-        assertFalse(policy.can_contract(address(outsider)));
-    }
-
-    function test_nonContractAndMalformedKeepersAreRejected() public {
-        assertFalse(policy.can_allocate(address(0)));
-        assertFalse(policy.can_allocate(makeAddr("no code")));
-        assertFalse(policy.can_allocate(address(oracle)));
-        assertFalse(policy.can_expand(address(oracle)));
-        assertFalse(policy.can_contract(address(oracle)));
-    }
-
-    function test_aggregateDirectionGateAppliesToEveryKeeperAndContraction() public {
+    function test_aggregateDirectionBoundaryIsExact() public {
         oracle.setPrice(1e18 - 1);
-        assertFalse(policy.can_expand(address(preferredKeeper)));
-        assertFalse(policy.can_expand(address(alternativeKeeper)));
-        assertTrue(policy.can_contract(address(preferredKeeper)));
+        assertFalse(policy.expansion_regime());
+        assertFalse(policy.can_expand());
+        assertTrue(policy.can_contract());
+
+        oracle.setPrice(1e18);
+        assertTrue(policy.expansion_regime());
+        assertTrue(policy.can_expand());
+        assertTrue(policy.can_contract());
 
         oracle.setPrice(1e18 + 1);
-        assertTrue(policy.can_expand(address(preferredKeeper)));
-        assertTrue(policy.can_expand(address(alternativeKeeper)));
-        assertFalse(policy.can_contract(address(preferredKeeper)));
+        assertTrue(policy.expansion_regime());
+        assertTrue(policy.can_expand());
+        assertFalse(policy.can_contract());
     }
 
     function test_invalidAggregateOracleFailsClosed() public {
         oracle.setShouldRevert(true);
         vm.expectRevert();
-        policy.can_expand(address(preferredKeeper));
+        policy.can_expand();
         vm.expectRevert();
-        policy.can_contract(address(preferredKeeper));
+        policy.can_contract();
         vm.expectRevert();
         policy.expansion_regime();
     }
@@ -261,32 +94,38 @@ contract PegKeeperPolicyTest is Test {
     function test_zeroAndOversizedAggregateOracleResponsesFailClosed() public {
         oracle.setPrice(0);
         vm.expectRevert();
-        policy.can_expand(address(preferredKeeper));
+        policy.can_expand();
         vm.expectRevert();
-        policy.can_contract(address(preferredKeeper));
+        policy.can_contract();
         vm.expectRevert();
         policy.expansion_regime();
 
         OversizedPolicyPriceOracle oversized = new OversizedPolicyPriceOracle();
         policy.set_aggregate_crvusd_oracle(address(oversized));
         vm.expectRevert();
-        policy.can_expand(address(preferredKeeper));
+        policy.can_expand();
         vm.expectRevert();
-        policy.can_contract(address(preferredKeeper));
+        policy.can_contract();
         vm.expectRevert();
         policy.expansion_regime();
     }
 
-    function test_onlyOwnerCanConfigurePolicy() public {
-        vm.startPrank(makeAddr("not owner"));
+    function test_onlyOwnerCanSetAggregateOracle() public {
+        PolicyPriceOracleMock replacement = new PolicyPriceOracleMock();
+        vm.prank(makeAddr("not owner"));
         vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
-        policy.set_aggregate_crvusd_oracle(address(oracle));
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
-        policy.set_keeper_profit_share_bps(2_000);
-        vm.stopPrank();
+        policy.set_aggregate_crvusd_oracle(address(replacement));
+
+        policy.set_aggregate_crvusd_oracle(address(replacement));
+        assertEq(policy.aggregateCrvUsdOracle(), address(replacement));
+
+        vm.expectRevert(IPegKeeperPolicy.InvalidOracle.selector);
+        policy.set_aggregate_crvusd_oracle(address(0));
+        vm.expectRevert(IPegKeeperPolicy.InvalidOracle.selector);
+        policy.set_aggregate_crvusd_oracle(makeAddr("no code"));
     }
 
-    function test_pendingOwnershipHandoffFreezesPolicyUntilAcceptance() public {
+    function test_pendingOwnershipHandoffFreezesOracleConfigurationUntilAcceptance() public {
         address nextOwner = makeAddr("nextOwner");
         address correctedOwner = makeAddr("correctedOwner");
         policy.transferOwnership(nextOwner);
@@ -294,8 +133,6 @@ contract PegKeeperPolicyTest is Test {
 
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_aggregate_crvusd_oracle(address(oracle));
-        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_keeper_profit_share_bps(2_000);
         policy.transferOwnership(correctedOwner);
         assertEq(policy.ownershipTransferNonce(), 2);
 
@@ -309,35 +146,6 @@ contract PegKeeperPolicyTest is Test {
         policy.acceptOwnership(2);
         assertEq(policy.owner(), correctedOwner);
         assertEq(policy.pendingOwner(), address(0));
-
-        vm.prank(correctedOwner);
-        policy.set_keeper_profit_share_bps(2_000);
-        assertEq(policy.keeper_profit_share_bps(address(preferredKeeper)), 2_000);
-    }
-
-    function test_factoryAndPrioritySelectorsAreAbsent() public {
-        _assertStaticCallFails(abi.encodeWithSignature("factory()"));
-        _assertStaticCallFails(abi.encodeWithSignature("activePegKeeperCount()"));
-        _assertStaticCallFails(abi.encodeWithSignature("activePegKeeperAt(uint256)", 0));
-        _assertCallFails(abi.encodeWithSignature("set_factory(address)", makeAddr("factory")));
-        _assertCallFails(
-            abi.encodeWithSignature("set_active(address,bool)", address(preferredKeeper), true)
-        );
-        _assertStaticCallFails(abi.encodeWithSignature("priorityUtilizationBps()"));
-        _assertStaticCallFails(abi.encodeWithSignature("primary()"));
-        _assertStaticCallFails(abi.encodeWithSignature("tier(address)", address(preferredKeeper)));
-        _assertStaticCallFails(abi.encodeWithSignature("secondaryCount()"));
-        _assertStaticCallFails(abi.encodeWithSignature("secondaryAt(uint256)", 0));
-        _assertStaticCallFails(abi.encodeWithSignature("tertiaryCount()"));
-        _assertStaticCallFails(abi.encodeWithSignature("tertiaryAt(uint256)", 0));
-        _assertCallFails(abi.encodeWithSignature("set_priority_utilization_bps(uint256)", 8_000));
-        _assertCallFails(
-            abi.encodeWithSignature("set_tier(address,uint256)", address(preferredKeeper), 1)
-        );
-    }
-
-    function _newKeeper(address keeperPolicy) internal returns (PolicyKeeperMock keeper) {
-        keeper = new PolicyKeeperMock(keeperPolicy);
     }
 
     function _assertStaticCallFails(bytes memory data) internal view {

@@ -8,7 +8,7 @@ import {console2} from "forge-std/console2.sol";
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {ICurveEDAOAdminProxy} from "../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
-import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
+import {IPegKeeperRegistry} from "../src/interfaces/IPegKeeperRegistry.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {DeployPegKeeperV3} from "./DeployPegKeeperV3.s.sol";
@@ -158,11 +158,10 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
 
-        IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
         vm.prank(CANARY_ADMIN);
         address[] memory keepers = new address[](1);
         keepers[0] = deployment.frxUsdPegKeeper;
-        policy.add_peg_keepers(keepers);
+        IPegKeeperRegistry(deployment.registry).add_peg_keepers(keepers);
         pegKeeper = IPegKeeperV3(deployment.frxUsdPegKeeper);
     }
 

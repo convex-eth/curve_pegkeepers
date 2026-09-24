@@ -8,6 +8,7 @@ import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoin
 import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
+import {IPegKeeperRegistry} from "../src/interfaces/IPegKeeperRegistry.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 
 /// @notice Deploys the complete standalone direct-liquidity PegKeeperV3 candidate set.
@@ -64,6 +65,7 @@ contract DeployPegKeeperV3 is Script {
 
     struct Deployment {
         address policy;
+        address registry;
         address frxUsdUsdOracle;
         address usdcUsdOracle;
         address usdtUsdOracle;
@@ -117,6 +119,9 @@ contract DeployPegKeeperV3 is Script {
     function deploy(Config memory config) public virtual returns (Deployment memory deployment) {
         console2.log("Deploying PegKeeperPolicy");
         deployment.policy = _deployPolicy(config);
+
+        console2.log("Deploying PegKeeperRegistry");
+        deployment.registry = _deployRegistry(config);
 
         console2.log("Deploying Chainlink frxUSD/USD oracle");
         deployment.frxUsdUsdOracle =
@@ -181,6 +186,7 @@ contract DeployPegKeeperV3 is Script {
         string memory objectKey = "pegKeeperV3";
         vm.serializeUint(objectKey, "chainId", block.chainid);
         vm.serializeAddress(objectKey, "policy", deployment.policy);
+        vm.serializeAddress(objectKey, "registry", deployment.registry);
         vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         vm.serializeAddress(objectKey, "usdcUsdOracle", deployment.usdcUsdOracle);
         vm.serializeAddress(objectKey, "usdtUsdOracle", deployment.usdtUsdOracle);
@@ -193,12 +199,15 @@ contract DeployPegKeeperV3 is Script {
 
     function _deployPolicy(Config memory config) internal returns (address) {
         bytes memory creationCode = vm.getCode("out/PegKeeperPolicy.vy/PegKeeperPolicy.json");
-        return _create(
-            bytes.concat(
-                creationCode,
-                abi.encode(config.admin, config.aggregateCrvUsdOracle, config.keeperProfitShareBps)
-            )
-        );
+        return
+            _create(
+                bytes.concat(creationCode, abi.encode(config.admin, config.aggregateCrvUsdOracle))
+            );
+    }
+
+    function _deployRegistry(Config memory config) internal returns (address) {
+        bytes memory creationCode = vm.getCode("out/PegKeeperRegistry.vy/PegKeeperRegistry.json");
+        return _create(bytes.concat(creationCode, abi.encode(config.admin)));
     }
 
     function _deployKeeper(Config memory config, address policy, KeeperConfig memory keeperConfig)
@@ -219,6 +228,7 @@ contract DeployPegKeeperV3 is Script {
             keeperConfig.entryMinProfitPpm,
             keeperConfig.exitMinProfitPpm,
             config.ammExecutionBufferBps,
+            config.keeperProfitShareBps,
             config.admin,
             config.emergencyAdmin,
             config.feeReceiver,
@@ -249,6 +259,7 @@ contract DeployPegKeeperV3 is Script {
         view
     {
         require(deployment.policy.code.length <= EIP_170_RUNTIME_LIMIT, "policy too large");
+        require(deployment.registry.code.length <= EIP_170_RUNTIME_LIMIT, "registry too large");
         require(deployment.frxUsdPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "frxUSD too large");
         require(deployment.usdcPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "USDC too large");
         require(deployment.usdtPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "USDT too large");
@@ -260,11 +271,10 @@ contract DeployPegKeeperV3 is Script {
             policy.aggregateCrvUsdOracle() == config.aggregateCrvUsdOracle,
             "aggregate oracle mismatch"
         );
-        require(
-            policy.keeper_profit_share_bps(address(0)) == config.keeperProfitShareBps,
-            "keeper profit share mismatch"
-        );
-
+        IPegKeeperRegistry registry = IPegKeeperRegistry(deployment.registry);
+        require(registry.owner() == config.admin, "registry owner mismatch");
+        require(registry.pendingOwner() == address(0), "unexpected registry pending owner");
+        require(registry.peg_keeper_count() == 0, "registry not empty");
         _verifyChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
         );
@@ -332,9 +342,8 @@ contract DeployPegKeeperV3 is Script {
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit mismatch");
         require(keeper.keeper_index() == expectedIndex, "keeper index mismatch");
         require(
-            IPegKeeperPolicy(expectedPolicy).keeper_profit_share_bps(keeperAddress)
-                == config.keeperProfitShareBps,
-            "keeper reward policy mismatch"
+            keeper.keeper_profit_share_bps() == config.keeperProfitShareBps,
+            "keeper profit share mismatch"
         );
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
         require(keeper.action_delay_bps() == ACTION_DELAY_BPS, "share cap");
@@ -369,7 +378,7 @@ contract DeployPegKeeperV3 is Script {
 
     function _logPlan(Config memory config) internal view {
         console2.log("Network chain id", block.chainid);
-        console2.log("Policy owner / keeper admin", config.admin);
+        console2.log("Policy / Registry owner / keeper admin", config.admin);
         console2.log("ControllerFactory", config.controllerFactory);
         console2.log("Aggregate crvUSD oracle", config.aggregateCrvUsdOracle);
         console2.log("Emergency admin", config.emergencyAdmin);
@@ -388,6 +397,7 @@ contract DeployPegKeeperV3 is Script {
 
     function _logDeployment(Deployment memory deployment) internal pure {
         console2.log("Policy", deployment.policy);
+        console2.log("Registry", deployment.registry);
         console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
         console2.log("Chainlink USDC/USD oracle", deployment.usdcUsdOracle);
         console2.log("Chainlink USDT/USD oracle", deployment.usdtUsdOracle);

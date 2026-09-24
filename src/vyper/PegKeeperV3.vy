@@ -18,10 +18,8 @@ interface ControllerFactory:
 
 interface PegKeeperPolicy:
     def expansion_regime() -> bool: view
-    def can_allocate(_keeper: address) -> bool: view
-    def can_expand(_keeper: address) -> bool: view
-    def can_contract(_keeper: address) -> bool: view
-    def keeper_profit_share_bps(_keeper: address) -> uint256: view
+    def can_expand() -> bool: view
+    def can_contract() -> bool: view
 
 interface Pool:
     def coins(_index: uint256) -> address: view
@@ -121,6 +119,12 @@ event PolicyUpdated:
     normal_exit_min_profit_ppm: uint256
     max_deployed_crvusd: uint256
 
+
+event KeeperProfitShareUpdated:
+    old_keeper_profit_share_bps: uint256
+    new_keeper_profit_share_bps: uint256
+
+
 event InterventionPolicyUpdated:
     action_delay_bps: uint256
     action_delay: uint256
@@ -188,6 +192,7 @@ pool_paired_token_index: public(uint256)
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
 max_deployed_crvusd: public(uint256)
+keeper_profit_share_bps: public(uint256)
 action_delay_bps: public(uint256)
 action_delay: public(uint256)
 last_intervention_at: public(uint256)
@@ -212,6 +217,7 @@ def __init__(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
     _amm_execution_buffer_bps: uint256,
+    _keeper_profit_share_bps: uint256,
     _admin: address,
     _emergency_admin: address,
     _fee_receiver: address,
@@ -230,6 +236,7 @@ def __init__(
     assert _backing_oracle.address.codesize > 0
     assert _normal_exit_min_profit_ppm <= PPM
     assert _amm_execution_buffer_bps <= BPS
+    assert _keeper_profit_share_bps <= BPS
     assert _admin != empty(address)
     assert _emergency_admin != empty(address)
     assert _fee_receiver != empty(address)
@@ -291,6 +298,7 @@ def __init__(
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
     self.max_deployed_crvusd = _max_deployed_crvusd
+    self.keeper_profit_share_bps = _keeper_profit_share_bps
     self.action_delay_bps = DEFAULT_ACTION_DELAY_BPS
     self.action_delay = DEFAULT_ACTION_DELAY
     self.amm_execution_buffer_bps = _amm_execution_buffer_bps
@@ -305,6 +313,10 @@ def __init__(
     )
     log FeeReceiverUpdated(old_fee_receiver=empty(address), new_fee_receiver=_fee_receiver)
     log PolicyContractUpdated(old_policy=empty(address), new_policy=_policy)
+    log KeeperProfitShareUpdated(
+        old_keeper_profit_share_bps=0,
+        new_keeper_profit_share_bps=_keeper_profit_share_bps,
+    )
 
 
 @external
@@ -457,42 +469,19 @@ def _policy_address() -> address:
 @internal
 @view
 def _keeper_reward(_gross_profit: uint256) -> uint256:
-    return _gross_profit * staticcall PegKeeperPolicy(
-        self._policy_address()
-    ).keeper_profit_share_bps(self) // BPS
+    return _gross_profit * self.keeper_profit_share_bps // BPS
 
 
 @internal
 @view
 def _require_expansion_policy():
-    assert staticcall PegKeeperPolicy(self._policy_address()).can_expand(self)
+    assert staticcall PegKeeperPolicy(self._policy_address()).can_expand()
 
 
 @internal
 @view
 def _require_contraction_policy():
-    assert staticcall PegKeeperPolicy(self._policy_address()).can_contract(self)
-
-
-@internal
-@view
-def _allocation_allowed() -> bool:
-    policy: address = self.policy
-    if policy == empty(address) or policy.codesize == 0:
-        return False
-
-    ok: bool = False
-    response: Bytes[64] = empty(Bytes[64])
-    ok, response = raw_call(
-        policy,
-        abi_encode(self, method_id=method_id("can_allocate(address)")),
-        max_outsize=64,
-        is_static_call=True,
-        revert_on_failure=False,
-    )
-    if not ok or len(response) != 32:
-        return False
-    return convert(slice(response, 0, 32), uint256) == 1
+    assert staticcall PegKeeperPolicy(self._policy_address()).can_contract()
 
 
 @internal
@@ -677,7 +666,7 @@ def available_expansion() -> uint256:
     """
     @notice Returns the most crvUSD that can be used for a policy-approved expansion now.
     """
-    if not staticcall PegKeeperPolicy(self._policy_address()).can_expand(self):
+    if not staticcall PegKeeperPolicy(self._policy_address()).can_expand():
         return 0
     return self._available_expansion_without_policy()
 
@@ -688,7 +677,7 @@ def available_contraction() -> uint256:
     """
     @notice Returns the most crvUSD that can be withdrawn by a policy-approved contraction now.
     """
-    if not staticcall PegKeeperPolicy(self._policy_address()).can_contract(self):
+    if not staticcall PegKeeperPolicy(self._policy_address()).can_contract():
         return 0
     return self._available_contraction_without_policy()
 
@@ -1143,9 +1132,10 @@ def expand_supply() -> (uint256, uint256, uint256):
 @internal
 @view
 def _donation_match_amount(_donated_paired_token_value: uint256) -> uint256:
-    if not self._allocation_allowed():
+    policy: PegKeeperPolicy = PegKeeperPolicy(self._policy_address())
+    if not staticcall policy.can_expand():
         return 0
-    if staticcall PegKeeperPolicy(self._policy_address()).expansion_regime():
+    if staticcall policy.expansion_regime():
         return _donated_paired_token_value
 
     pool_crv_usd: uint256 = staticcall self.pool.balances(self.pool_crvusd_index)
@@ -1523,6 +1513,22 @@ def set_policy_contract(_new_policy: address):
     old_policy: address = self.policy
     self.policy = _new_policy
     log PolicyContractUpdated(old_policy=old_policy, new_policy=_new_policy)
+
+
+@external
+def set_keeper_profit_share_bps(_new_keeper_profit_share_bps: uint256):
+    """
+    @notice Changes this keeper's caller-reward share.
+    """
+    assert self._is_admin(msg.sender)
+    assert _new_keeper_profit_share_bps <= BPS
+
+    old_keeper_profit_share_bps: uint256 = self.keeper_profit_share_bps
+    self.keeper_profit_share_bps = _new_keeper_profit_share_bps
+    log KeeperProfitShareUpdated(
+        old_keeper_profit_share_bps=old_keeper_profit_share_bps,
+        new_keeper_profit_share_bps=_new_keeper_profit_share_bps,
+    )
 
 
 @external

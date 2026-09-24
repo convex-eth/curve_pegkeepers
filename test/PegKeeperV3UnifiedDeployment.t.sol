@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 
 import {DeployPegKeeperV3} from "../script/DeployPegKeeperV3.s.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
+import {IPegKeeperRegistry} from "../src/interfaces/IPegKeeperRegistry.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {IChainlinkStablecoinOracle} from "../src/interfaces/IChainlinkStablecoinOracle.sol";
 import {MockChainlinkAggregator, MockChainlinkProxy} from "./ChainlinkStablecoinOracle.t.sol";
@@ -41,31 +42,31 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
 
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
+        IPegKeeperRegistry registry = IPegKeeperRegistry(deployment.registry);
 
         assertGt(deployment.policy.code.length, 0);
+        assertGt(deployment.registry.code.length, 0);
         assertGt(deployment.frxUsdPegKeeper.code.length, 45);
         assertGt(deployment.usdcPegKeeper.code.length, 45);
         assertGt(deployment.usdtPegKeeper.code.length, 45);
         assertEq(policy.owner(), config.admin);
         assertEq(policy.pendingOwner(), address(0));
         assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
-        assertEq(
-            policy.keeper_profit_share_bps(deployment.frxUsdPegKeeper), config.keeperProfitShareBps
-        );
-        assertEq(
-            policy.keeper_profit_share_bps(deployment.usdtPegKeeper), config.keeperProfitShareBps
-        );
-        assertEq(policy.peg_keeper_count(), 0);
-        assertFalse(policy.can_allocate(deployment.frxUsdPegKeeper));
-        assertTrue(policy.can_contract(deployment.frxUsdPegKeeper));
+        assertTrue(policy.can_expand());
+        assertTrue(policy.can_contract());
+        assertEq(registry.owner(), config.admin);
+        assertEq(registry.pendingOwner(), address(0));
+        assertEq(registry.peg_keeper_count(), 0);
+        assertFalse(registry.is_active(deployment.frxUsdPegKeeper));
 
         assertEq(deployment.policy, vm.computeCreateAddress(address(deployer), 1));
-        assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 2));
-        assertEq(deployment.usdcUsdOracle, vm.computeCreateAddress(address(deployer), 3));
-        assertEq(deployment.usdtUsdOracle, vm.computeCreateAddress(address(deployer), 4));
-        assertEq(deployment.frxUsdPegKeeper, vm.computeCreateAddress(address(deployer), 5));
-        assertEq(deployment.usdcPegKeeper, vm.computeCreateAddress(address(deployer), 6));
-        assertEq(deployment.usdtPegKeeper, vm.computeCreateAddress(address(deployer), 7));
+        assertEq(deployment.registry, vm.computeCreateAddress(address(deployer), 2));
+        assertEq(deployment.frxUsdUsdOracle, vm.computeCreateAddress(address(deployer), 3));
+        assertEq(deployment.usdcUsdOracle, vm.computeCreateAddress(address(deployer), 4));
+        assertEq(deployment.usdtUsdOracle, vm.computeCreateAddress(address(deployer), 5));
+        assertEq(deployment.frxUsdPegKeeper, vm.computeCreateAddress(address(deployer), 6));
+        assertEq(deployment.usdcPegKeeper, vm.computeCreateAddress(address(deployer), 7));
+        assertEq(deployment.usdtPegKeeper, vm.computeCreateAddress(address(deployer), 8));
 
         _assertKeeper(deployment.frxUsdPegKeeper, deployment.policy, config, 1, 10, 150, true);
         _assertKeeper(deployment.usdcPegKeeper, deployment.policy, config, 2, 300, 80, false);
@@ -81,6 +82,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         string memory json = vm.readFile(TEST_OUTPUT);
         assertEq(vm.parseJsonUint(json, ".chainId"), block.chainid);
         assertEq(vm.parseJsonAddress(json, ".policy"), deployment.policy);
+        assertEq(vm.parseJsonAddress(json, ".registry"), deployment.registry);
         assertEq(vm.parseJsonAddress(json, ".frxUsdUsdOracle"), deployment.frxUsdUsdOracle);
         assertEq(vm.parseJsonAddress(json, ".usdcUsdOracle"), deployment.usdcUsdOracle);
         assertEq(vm.parseJsonAddress(json, ".usdtUsdOracle"), deployment.usdtUsdOracle);
@@ -138,6 +140,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(keeper.keeper_index(), index);
         assertEq(keeper.entry_min_profit_ppm(), entryProfit);
         assertEq(keeper.normal_exit_min_profit_ppm(), exitProfit);
+        assertEq(keeper.keeper_profit_share_bps(), config.keeperProfitShareBps);
         assertEq(keeper.max_deployed_crvusd(), config.maxDeployedCrvUsd);
         assertEq(keeper.amm_execution_buffer_bps(), config.ammExecutionBufferBps);
         assertEq(keeper.pool_uses_dynamic_arrays(), dynamicArrays);

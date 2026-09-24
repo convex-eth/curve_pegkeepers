@@ -78,6 +78,7 @@ library PegKeeperV3TestDeployer {
                 10,
                 500,
                 0,
+                3_000,
                 config.admin(),
                 config.emergency_admin(),
                 config.fee_receiver(),

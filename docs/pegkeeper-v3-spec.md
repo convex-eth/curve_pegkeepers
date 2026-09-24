@@ -14,7 +14,7 @@ The constructor fixes or derives:
 - `pool_uses_dynamic_arrays`: whether liquidity calls use `uint256[]` or `uint256[2]`;
 - `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
 - `backing_oracle`: an independent USD oracle for retained backing;
-- keeper index, local cap, entry/exit profit floors, and execution buffer;
+- keeper index, local cap, entry/exit profit floors, keeper reward share, and execution buffer;
 - final local `admin`, `emergency_admin`, `fee_receiver`, and `policy`.
 
 The constructor validates contract code, pool coin order, decimals, virtual price, role separation, Policy code, and parameter bounds. It grants the ControllerFactory unlimited crvUSD allowance for ceiling reductions and permissionless residual-allocation burning. The keeper starts unpaused, debt-free, and without ControllerFactory allocation.
@@ -39,6 +39,7 @@ admin();
 emergency_admin();
 fee_receiver();
 policy();
+keeper_profit_share_bps();
 ```
 
 Only the current keeper admin may call:
@@ -48,49 +49,36 @@ set_admin(address);
 set_emergency_admin(address);
 set_fee_receiver(address);
 set_policy_contract(address);
+set_keeper_profit_share_bps(uint256);
 ```
 
 Admin and emergency admin must be nonzero and distinct. Fee receiver must be nonzero. A replacement Policy must contain code. Role and Policy changes emit old/new events.
 
 The admin may configure keeper parameters, pause or unpause, execute recovery calls, and perform the external draw. The emergency admin may only pause. There is no shared keeper-role owner.
 
-## 3. PegKeeperPolicy and active list
+## 3. PegKeeperPolicy global rulings
 
-`PegKeeperPolicy` owns:
-
-- the aggregate crvUSD oracle;
-- one global keeper profit share;
-- the active keeper list;
-- `can_allocate`, `can_expand`, `can_contract`, and `expansion_regime` decisions.
-
-Policy ownership uses a nonce-bound two-step transfer. Configuration freezes while an ownership transfer is pending.
-
-The list follows the V2 regulator design and is bounded to eight keepers:
+Each keeper stores its selected Policy directly and queries:
 
 ```solidity
-peg_keeper_count();
-peg_keepers(uint256 index);
-is_active(address keeper);
-add_peg_keepers(address[] keepers);
-remove_peg_keepers(address[] keepers);
+can_expand();
+can_contract();
+expansion_regime();
 ```
 
-Addition is owner-only, rejects duplicate entries, and requires each candidate to contain code and return `policy() == address(this)`. Removal is owner-only, rejects missing entries, pop-and-swaps the tail into the removed slot, and repairs the moved keeper's 1-based index. Removed keepers can be added again.
+The current `PegKeeperPolicy` stores only the aggregate crvUSD oracle. It owns no keeper list or reward parameter and never calls a keeper for local conditions. Its current executable rulings depend only on the exact aggregate-price boundary. Policy ownership uses a nonce-bound two-step transfer; oracle configuration freezes while a transfer is pending.
 
-The list is not duplicated elsewhere. The aggregate crvUSD oracle and monetary policies maintain separate registries for different purposes.
+The no-argument ABI is intentionally replaceable rather than permanently price-only. A future Policy can add global or caller-aware rules while retaining these selectors; direct keeper calls expose the querying keeper as `msg.sender`. Governance can select a replacement with keeper-local `set_policy_contract`.
 
-Every reward path calls `policy.keeper_profit_share_bps(keeper)`. The current Policy returns one owner-managed value for every address and bounds it to `10_000 bps`; the address argument leaves room for future keeper-aware logic without changing the keeper ABI.
+```text
+aggregate price < 1e18: can_expand = false; can_contract = true
+aggregate price = 1e18: can_expand = true;  can_contract = true
+aggregate price > 1e18: can_expand = true;  can_contract = false
+```
 
-### 3.1 Binding and replacement
+The aggregate oracle is read with exact 32-byte returndata checks. Oracle failure or a zero price fails closed.
 
-Each keeper stores its selected Policy directly. Policy admission checks the reverse binding through `keeper.policy()`.
-
-- allocation and expansion require both active-list membership and correct binding;
-- contraction requires correct binding but not active membership.
-
-A Policy migration must coordinate keeper-local `set_policy_contract` with removal from the old list and addition to the new list. During any gap, allocation and expansion fail closed. A stale old-list entry is inert once the keeper points elsewhere because reverse binding fails.
-
-## 4. Expansion admission
+## 4. Keeper-local admission
 
 A keeper exposes `can_expand_without_policy()`, a non-recursive local probe covering:
 
@@ -102,32 +90,23 @@ A keeper exposes `can_expand_without_policy()`, a non-recursive local probe cove
 - retained-backing oracle floor;
 - direct AMM quote, entry-profit floor, reward, and final solvency.
 
-Expected economic failure returns `false`. Policy invokes this probe with a low-level static call and treats malformed return data or reversion as non-executability.
+Expected economic failure returns `false`. Execution and previews query the selected Policy for the applicable global ruling and enforce local conditions inside the keeper. The current Policy does not call `can_expand_without_policy()` or inspect keeper state. It has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
 
-`policy.can_expand(keeper)` requires:
+## 5. PegKeeperRegistry and wind-down
 
-1. a valid aggregate crvUSD price at least `1e18`;
-2. active-list membership;
-3. `keeper.policy() == policy`;
-4. a successful local keeper probe.
+`PegKeeperRegistry` is an independently owned discovery and enumeration contract:
 
-The Policy has no cross-keeper ordering. Every admitted keeper is evaluated independently. Keeper-local fees and profit floors provide soft economic preference only.
-
-`policy.can_allocate(keeper)` requires active membership and correct binding without calling the local AMM probe. Donation matching separately enforces amount, backing, capacity, aggregate direction, and final solvency.
-
-## 5. Aggregate direction and wind-down
-
-The aggregate oracle is read with exact 32-byte returndata checks.
-
-```text
-aggregate price < 1e18: can_expand = false; can_contract = true
-aggregate price = 1e18: can_expand = true;  can_contract = true
-aggregate price > 1e18: can_expand = true;  can_contract = false
+```solidity
+peg_keeper_count();
+peg_keepers(uint256 index);
+is_active(address keeper);
+add_peg_keepers(address[] keepers);
+remove_peg_keepers(address[] keepers);
 ```
 
-Oracle failure fails closed.
+The deterministic list bound is 32. Addition is owner-only and rejects non-contract or duplicate entries. Removal is owner-only, rejects missing entries, pop-and-swaps the tail into the removed slot, repairs the moved keeper's 1-based index, and permits later re-addition.
 
-`can_contract(keeper)` requires correct Policy binding but deliberately ignores active-list membership. Removing a keeper blocks new allocation and expansion without trapping its unwind.
+Registry is not queried by Policy or keeper execution. Enrollment is therefore informational and governance-facing: it does not grant expansion authority, and removal does not block expansion or contraction. Wind-down remains controlled by keeper-local conditions plus the selected Policy's global contraction ruling.
 
 ## 6. Direct expansion
 
@@ -186,9 +165,9 @@ The entry floor applies to realized gross profit before caller compensation. Rew
 
 - selects and settles loose paired tokens into the AMM;
 - requires oracle health and a positive amount;
-- matches crvUSD only when `policy.can_allocate(self)`;
-- at or above aggregate `$1`, targets a full value match;
-- below aggregate `$1`, matches only enough to avoid overshooting normalized pool balance;
+- requires `policy.can_expand()` before matching any positive crvUSD amount;
+- when expansion is allowed, selects the aggregate matching regime through `policy.expansion_regime()`;
+- under the current price-only Policy, fully matches at or above aggregate `$1` and deposits one-sided below `$1`;
 - consumes capacity only for actual matched crvUSD;
 - does not consume the monetary-intervention timer.
 
@@ -237,7 +216,7 @@ It requires:
 - open expansion/global pauses and elapsed action delay;
 - amount within normalized local imbalance;
 - healthy retained backing;
-- `policy.can_expand(address(this))`;
+- `policy.can_expand()`;
 - resulting debt within local cap and ControllerFactory ceiling;
 - sufficient idle crvUSD.
 
@@ -253,7 +232,7 @@ Pause directions:
 2 all execution
 ```
 
-`action_delay_bps` controls the sole ordinary action size. `action_delay` controls frequency for expansion, contraction, `update`, and external draw. Donation and profit settlement remain outside this timer so donated dust cannot monopolize it.
+`action_delay_bps` controls the sole ordinary action size. `action_delay` controls frequency for expansion, contraction, `update`, and external draw. `keeper_profit_share_bps` is independently stored and admin-controlled on each keeper, bounded to `10_000 bps`. Donation and profit settlement remain outside the timer so donated dust cannot monopolize it.
 
 Every debt increase is bounded by both:
 
@@ -262,27 +241,28 @@ keeper.max_deployed_crvusd()
 ControllerFactory.debt_ceiling(keeper)
 ```
 
-`available_expansion()` returns zero unless Policy admission passes. Otherwise it reports the minimum of canonical `20%` deficit, idle crvUSD after donation reserves, and both capacity limits. `available_contraction()` reports the canonical exact output permitted by local excess and available LP.
+`available_expansion()` returns zero unless the Policy's global expansion ruling passes. Otherwise it reports the minimum of canonical `20%` deficit, idle crvUSD after donation reserves, and both capacity limits. `available_contraction()` likewise requires the global contraction ruling and reports the canonical exact output permitted by local excess and available LP.
 
 ## 12. Deployment and activation
 
-The environment-free deployment script performs seven monotonic CREATEs:
+The environment-free deployment script performs eight monotonic CREATEs:
 
 1. `PegKeeperPolicy`, owned directly by the Curve Ownership Agent;
-2. frxUSD/USD adapter;
-3. USDC/USD adapter;
-4. USDT/USD adapter;
-5. standalone frxUSD keeper;
-6. standalone USDC keeper;
-7. standalone USDT keeper.
+2. `PegKeeperRegistry`, owned directly by the Curve Ownership Agent;
+3. frxUSD/USD adapter;
+4. USDC/USD adapter;
+5. USDT/USD adapter;
+6. standalone frxUSD keeper;
+7. standalone USDC keeper;
+8. standalone USDT keeper.
 
 Every keeper is complete at construction with final roles and selected Policy. There is no implementation deployment, clone creation, temporary ownership, ownership acceptance, acceptance nonce, or post-deploy keeper configuration.
 
-The Policy list remains empty after deployment. Every keeper is unpaused and has zero ControllerFactory allocation. Deployment alone therefore does not activate debt growth.
+The Registry remains empty after deployment. Every keeper is unpaused and has zero ControllerFactory allocation. Deployment alone therefore does not activate debt growth.
 
 The launch proposal performs ten actions:
 
-1. one batched `policy.add_peg_keepers([frxUSD, USDC, USDT])`;
+1. one batched `registry.add_peg_keepers([frxUSD, USDC, USDT])`;
 2. six registrations across current and legacy aggregate monetary policies;
 3. three ControllerFactory ceiling assignments.
 
@@ -294,7 +274,7 @@ The launch proposal performs ten actions:
 | USDC/crvUSD | fixed | USDC | USDC/USD | 150m | 150m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
 | USDT/crvUSD | fixed | USDT | USDT/USD | 150m | 150m | 300 ppm / 3 bp | 80 ppm / 0.8 bp |
 
-All launch keepers use `20%` intervention share, `12`-second `action_delay`, `0.999e18` retained-backing floor, and `3 bps` AMM execution buffer. Policy keeper reward share starts at `3_000 bps`.
+All launch keepers use `20%` intervention share, `12`-second `action_delay`, `0.999e18` retained-backing floor, `3 bps` AMM execution buffer, and an independent keeper-local reward share starting at `3_000 bps`.
 
 ## 14. Compiled identity
 
@@ -302,18 +282,22 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      19,545 bytes
-runtime core:            16,987 bytes
-standalone runtime:      17,019 bytes
-EIP-170 headroom:         7,557 bytes
+standalone initcode:      19,557 bytes
+runtime core:            16,885 bytes
+standalone runtime:      16,917 bytes
+EIP-170 headroom:         7,659 bytes
 runtime core hash:
-0x4fef80b3378ed9c00bafa476515296edc1b89224e983ae5a6b9cf26a3e9c3694
+0x9e1fd9f4249cc24b20281699acfc90631fcacf78d8f894eb47dafc440263e472
 mainnet runtime hash:
-0xe7c677f23c543e13aea315ca4384be7f7fa9c906532d4e90663bd528ac789cf8
+0x4415dd1373f39d0d5bfc3270ef9497319d2f73086cf5bb921fbc5277e71f9ba2
 
-PegKeeperPolicy runtime:   2,947 bytes
+PegKeeperPolicy runtime:   1,170 bytes
 policy hash:
-0xe4388d617ce6babcb14d56859da66b68f4978dcf32c34adb8ac2f01559f279d0
+0xd92c5aa2de65d423c89d099c669b7e309b936e189a207a08907c8006d9de57d1
+
+PegKeeperRegistry runtime: 1,609 bytes
+registry hash:
+0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab
 ```
 
 Vyper appends the canonical crvUSD immutable word to the Keeper runtime core. Tests pin the core and assert exact deployed-code composition before pinning the mainnet runtime hash.
@@ -323,8 +307,8 @@ The existing release manifest, release checklist, and manifest verifier predate 
 ## 15. Required verification before release
 
 1. Compile under pinned Vyper/Solidity and Prague settings.
-2. Pass unit, Policy-list, deployment, proposal, runtime, ABI-parity, and invariant checks.
-3. Verify pop-and-swap removal, moved-index repair, duplicate rejection, reactivation, and removed-keeper wind-down.
+2. Pass unit, Policy, Registry, deployment, proposal, runtime, ABI-parity, and invariant checks.
+3. Verify Registry pop-and-swap removal, moved-index repair, duplicate rejection, re-addition, and execution independence.
 4. Execute the full ten-action Curve ownership vote on a pinned fork.
 5. Execute live direct expansion/contraction canaries without oracle mocks.
 6. Reconfirm pool coin order, ABI mode, rates, virtual prices, fees, liquidity, oracle heartbeats, and ControllerFactory capacity at a current block.

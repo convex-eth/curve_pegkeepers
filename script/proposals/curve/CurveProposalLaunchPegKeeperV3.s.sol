@@ -7,6 +7,7 @@ import {IChainlinkStablecoinOracle} from "../../../src/interfaces/IChainlinkStab
 import {IControllerFactory} from "../../../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../../../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
+import {IPegKeeperRegistry} from "../../../src/interfaces/IPegKeeperRegistry.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 
 /// @title CurveProposalLaunchPegKeeperV3
@@ -15,12 +16,15 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant KEEPER_RUNTIME_SIZE = 17_019;
+    uint256 public constant KEEPER_RUNTIME_SIZE = 16_917;
     bytes32 public constant EXPECTED_KEEPER_RUNTIME_HASH =
-        0xe7c677f23c543e13aea315ca4384be7f7fa9c906532d4e90663bd528ac789cf8;
-    uint256 public constant POLICY_RUNTIME_SIZE = 2_947;
+        0x4415dd1373f39d0d5bfc3270ef9497319d2f73086cf5bb921fbc5277e71f9ba2;
+    uint256 public constant POLICY_RUNTIME_SIZE = 1_170;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0xe4388d617ce6babcb14d56859da66b68f4978dcf32c34adb8ac2f01559f279d0;
+        0xd92c5aa2de65d423c89d099c669b7e309b936e189a207a08907c8006d9de57d1;
+    uint256 public constant REGISTRY_RUNTIME_SIZE = 1_609;
+    bytes32 public constant EXPECTED_REGISTRY_RUNTIME_HASH =
+        0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab;
     uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 431;
     uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 527;
     bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
@@ -62,6 +66,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     address public constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
     address public pegKeeperPolicy;
+    address public pegKeeperRegistry;
     address public frxUsdOracle;
     address public usdcOracle;
     address public usdtOracle;
@@ -82,6 +87,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         string memory json = vm.readFile(path);
         require(vm.parseJsonUint(json, ".chainId") == block.chainid, "deployment chain");
         pegKeeperPolicy = vm.parseJsonAddress(json, ".policy");
+        pegKeeperRegistry = vm.parseJsonAddress(json, ".registry");
         frxUsdOracle = vm.parseJsonAddress(json, ".frxUsdUsdOracle");
         usdcOracle = vm.parseJsonAddress(json, ".usdcUsdOracle");
         usdtOracle = vm.parseJsonAddress(json, ".usdtUsdOracle");
@@ -90,16 +96,20 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         usdtKeeper = vm.parseJsonAddress(json, ".usdtPegKeeper");
     }
 
-    function setDeployment(address policy, address[3] calldata oracles, address[3] calldata keepers)
-        external
-    {
+    function setDeployment(
+        address policy,
+        address registry,
+        address[3] calldata oracles,
+        address[3] calldata keepers
+    ) external {
         require(
-            policy != address(0) && oracles[0] != address(0) && oracles[1] != address(0)
-                && oracles[2] != address(0) && keepers[0] != address(0) && keepers[1] != address(0)
-                && keepers[2] != address(0),
+            policy != address(0) && registry != address(0) && oracles[0] != address(0)
+                && oracles[1] != address(0) && oracles[2] != address(0) && keepers[0] != address(0)
+                && keepers[1] != address(0) && keepers[2] != address(0),
             "zero dependency"
         );
         pegKeeperPolicy = policy;
+        pegKeeperRegistry = registry;
         frxUsdOracle = oracles[0];
         usdcOracle = oracles[1];
         usdtOracle = oracles[2];
@@ -130,8 +140,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         keepers[2] = usdtKeeper;
         actions = new Action[](10);
         actions[0] = Action({
-            target: pegKeeperPolicy,
-            data: abi.encodeWithSelector(IPegKeeperPolicy.add_peg_keepers.selector, keepers)
+            target: pegKeeperRegistry,
+            data: abi.encodeWithSelector(IPegKeeperRegistry.add_peg_keepers.selector, keepers)
         });
         uint256 actionIndex = 1;
         for (uint256 i; i < keepers.length; ++i) {
@@ -147,29 +157,24 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     function _validateDependencies() internal view {
         require(pegKeeperPolicy != address(0), "policy not set");
+        require(pegKeeperRegistry != address(0), "registry not set");
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(pegKeeperPolicy);
         require(policy.owner() == CURVE_OWNERSHIP_AGENT, "policy owner");
         require(policy.pendingOwner() == address(0), "policy pending owner");
-        require(policy.peg_keeper_count() == 0, "policy keeper count");
-        require(!policy.is_active(frxUsdKeeper), "frxUSD already active");
-        require(!policy.is_active(usdcKeeper), "USDC already active");
-        require(!policy.is_active(usdtKeeper), "USDT already active");
         require(policy.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
-        require(
-            policy.keeper_profit_share_bps(frxUsdKeeper) == KEEPER_PROFIT_SHARE_BPS,
-            "frxUSD profit share"
-        );
-        require(
-            policy.keeper_profit_share_bps(usdcKeeper) == KEEPER_PROFIT_SHARE_BPS,
-            "USDC profit share"
-        );
-        require(
-            policy.keeper_profit_share_bps(usdtKeeper) == KEEPER_PROFIT_SHARE_BPS,
-            "USDT profit share"
-        );
         require(pegKeeperPolicy.code.length == POLICY_RUNTIME_SIZE, "policy size");
         require(pegKeeperPolicy.codehash == EXPECTED_POLICY_RUNTIME_HASH, "policy hash");
+
+        IPegKeeperRegistry registry = IPegKeeperRegistry(pegKeeperRegistry);
+        require(registry.owner() == CURVE_OWNERSHIP_AGENT, "registry owner");
+        require(registry.pendingOwner() == address(0), "registry pending owner");
+        require(registry.peg_keeper_count() == 0, "registry keeper count");
+        require(!registry.is_active(frxUsdKeeper), "frxUSD already registered");
+        require(!registry.is_active(usdcKeeper), "USDC already registered");
+        require(!registry.is_active(usdtKeeper), "USDT already registered");
+        require(pegKeeperRegistry.code.length == REGISTRY_RUNTIME_SIZE, "registry size");
+        require(pegKeeperRegistry.codehash == EXPECTED_REGISTRY_RUNTIME_HASH, "registry hash");
 
         _validateKeeperAssets(
             frxUsdKeeper, FRXUSD_CRVUSD_POOL, FRXUSD, FRXUSD, frxUsdOracle, false, true
@@ -230,6 +235,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");
+        require(keeper.keeper_profit_share_bps() == KEEPER_PROFIT_SHARE_BPS, "profit share");
         require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
         require(keeper.action_delay_bps() == ACTION_DELAY_BPS, "share cap");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");

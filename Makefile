@@ -29,6 +29,9 @@ check:
 		out/PegKeeperPolicy.vy/PegKeeperPolicy.json \
 		out/IPegKeeperPolicy.sol/IPegKeeperPolicy.json
 	python3 scripts/check-vyper-solidity-abi.py \
+		out/PegKeeperRegistry.vy/PegKeeperRegistry.json \
+		out/IPegKeeperRegistry.sol/IPegKeeperRegistry.json
+	python3 scripts/check-vyper-solidity-abi.py \
 		out/ChainlinkStablecoinOracle.vy/ChainlinkStablecoinOracle.json \
 		out/IChainlinkStablecoinOracle.sol/IChainlinkStablecoinOracle.json
 	$(MAKE) check-release-evidence

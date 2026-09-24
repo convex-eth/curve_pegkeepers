@@ -14,6 +14,7 @@ import {ICurveEDAOAdminProxy} from "../../../src/interfaces/ICurveEDAOAdminProxy
 import {ICurveVoting} from "../../../src/interfaces/ICurveVoting.sol";
 import {IERC20} from "../../../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../../../src/interfaces/IPegKeeperPolicy.sol";
+import {IPegKeeperRegistry} from "../../../src/interfaces/IPegKeeperRegistry.sol";
 import {IPegKeeperV3} from "../../../src/interfaces/IPegKeeperV3.sol";
 import {IStableSwap2Pool} from "../../../src/interfaces/IStableSwap2Pool.sol";
 
@@ -60,6 +61,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
     CurveProposalLaunchPegKeeperV3 internal proposal;
     IPegKeeperPolicy internal keeperPolicy;
+    IPegKeeperRegistry internal keeperRegistry;
     address internal expectedFrxUsdKeeper;
     address internal expectedUsdcKeeper;
     address internal expectedUsdtKeeper;
@@ -76,20 +78,21 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             [deployment.frxUsdUsdOracle, deployment.usdcUsdOracle, deployment.usdtUsdOracle];
         address[3] memory keepers =
             [deployment.frxUsdPegKeeper, deployment.usdcPegKeeper, deployment.usdtPegKeeper];
-        proposal.setDeployment(deployment.policy, oracles, keepers);
+        proposal.setDeployment(deployment.policy, deployment.registry, oracles, keepers);
 
         keeperPolicy = IPegKeeperPolicy(deployment.policy);
+        keeperRegistry = IPegKeeperRegistry(deployment.registry);
         expectedFrxUsdKeeper = proposal.expectedKeeper(1);
         expectedUsdcKeeper = proposal.expectedKeeper(2);
         expectedUsdtKeeper = proposal.expectedKeeper(3);
     }
 
-    function test_actionsActivatePreconfiguredKeepersThenRegisterAndFund() public view {
+    function test_actionsRegisterPreconfiguredKeepersThenRegisterWithPoliciesAndFund() public view {
         BaseCurveProposal.Action[] memory actions = proposal.buildProposalActions();
         assertEq(actions.length, 10);
 
         address[3] memory keepers = [expectedFrxUsdKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
-        _assertPolicyActivationAction(actions[0], keepers);
+        _assertRegistryEnrollmentAction(actions[0], keepers);
         for (uint256 i; i < keepers.length; ++i) {
             _assertRegistrationAction(actions[1 + i * 2], MONETARY_POLICY, keepers[i]);
             _assertRegistrationAction(actions[2 + i * 2], LEGACY_MONETARY_POLICY, keepers[i]);
@@ -118,16 +121,56 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         proposal.buildProposalActions();
     }
 
-    function test_proposalRejectsMutatedPolicyAndOracleBytecode() public {
+    function test_proposalRejectsMutatedPolicyRegistryAndOracleBytecode() public {
         bytes memory policyCode = address(keeperPolicy).code;
         vm.etch(address(keeperPolicy), bytes.concat(policyCode, hex"00"));
         vm.expectRevert(bytes("policy size"));
         proposal.buildProposalActions();
         vm.etch(address(keeperPolicy), policyCode);
 
+        bytes memory registryCode = address(keeperRegistry).code;
+        vm.etch(address(keeperRegistry), bytes.concat(registryCode, hex"00"));
+        vm.expectRevert(bytes("registry size"));
+        proposal.buildProposalActions();
+        vm.etch(address(keeperRegistry), registryCode);
+
         address oracle = proposal.frxUsdOracle();
         vm.etch(oracle, bytes.concat(oracle.code, hex"00"));
         vm.expectRevert(bytes("chainlink oracle size"));
+        proposal.buildProposalActions();
+    }
+
+    function test_proposalRejectsSameSizeCodeHashDrift() public {
+        bytes memory keeperCode = expectedFrxUsdKeeper.code;
+        vm.etch(expectedFrxUsdKeeper, _flipByteFromEnd(keeperCode, 33));
+        vm.expectRevert(bytes("keeper hash"));
+        proposal.buildProposalActions();
+        vm.etch(expectedFrxUsdKeeper, keeperCode);
+
+        bytes memory policyCode = address(keeperPolicy).code;
+        vm.etch(address(keeperPolicy), _flipByteFromEnd(policyCode, 1));
+        vm.expectRevert(bytes("policy hash"));
+        proposal.buildProposalActions();
+        vm.etch(address(keeperPolicy), policyCode);
+
+        bytes memory registryCode = address(keeperRegistry).code;
+        vm.etch(address(keeperRegistry), _flipByteFromEnd(registryCode, 1));
+        vm.expectRevert(bytes("registry hash"));
+        proposal.buildProposalActions();
+        vm.etch(address(keeperRegistry), registryCode);
+
+        address oracle = proposal.frxUsdOracle();
+        bytes memory oracleCode = oracle.code;
+        vm.etch(oracle, _flipByteFromEnd(oracleCode, 97));
+        vm.expectRevert(bytes("chainlink oracle hash"));
+        proposal.buildProposalActions();
+    }
+
+    function test_proposalRejectsWrongKeeperLocalRewardShare() public {
+        vm.prank(OWNERSHIP_AGENT);
+        IPegKeeperV3(expectedFrxUsdKeeper).set_keeper_profit_share_bps(2_999);
+
+        vm.expectRevert(bytes("profit share"));
         proposal.buildProposalActions();
     }
 
@@ -156,15 +199,17 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             _firstThreeEmptySlots(IAggMonetaryPolicy(LEGACY_MONETARY_POLICY));
         assertEq(keeperPolicy.owner(), OWNERSHIP_AGENT);
         assertEq(keeperPolicy.pendingOwner(), address(0));
-        assertEq(keeperPolicy.peg_keeper_count(), 0);
+        assertEq(keeperRegistry.owner(), OWNERSHIP_AGENT);
+        assertEq(keeperRegistry.pendingOwner(), address(0));
+        assertEq(keeperRegistry.peg_keeper_count(), 0);
         _executeProposal();
 
         assertEq(keeperPolicy.owner(), OWNERSHIP_AGENT);
         assertEq(keeperPolicy.pendingOwner(), address(0));
-        assertEq(keeperPolicy.peg_keeper_count(), 3);
-        assertEq(keeperPolicy.peg_keepers(0), expectedFrxUsdKeeper);
-        assertEq(keeperPolicy.peg_keepers(1), expectedUsdcKeeper);
-        assertEq(keeperPolicy.peg_keepers(2), expectedUsdtKeeper);
+        assertEq(keeperRegistry.peg_keeper_count(), 3);
+        assertEq(keeperRegistry.peg_keepers(0), expectedFrxUsdKeeper);
+        assertEq(keeperRegistry.peg_keepers(1), expectedUsdcKeeper);
+        assertEq(keeperRegistry.peg_keepers(2), expectedUsdtKeeper);
 
         _assertKeeper(
             expectedFrxUsdKeeper,
@@ -194,9 +239,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             proposal.usdtOracle()
         );
 
-        assertTrue(keeperPolicy.can_allocate(expectedFrxUsdKeeper));
-        assertTrue(keeperPolicy.can_allocate(expectedUsdcKeeper));
-        assertTrue(keeperPolicy.can_allocate(expectedUsdtKeeper));
+        assertTrue(keeperPolicy.can_expand());
 
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedFrxUsdKeeper), CAP);
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdcKeeper), CAP);
@@ -267,14 +310,13 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
 
         IPegKeeperV3 frxUsdKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
         IPegKeeperV3 usdcKeeper = IPegKeeperV3(expectedUsdcKeeper);
-        assertTrue(keeperPolicy.can_expand(expectedFrxUsdKeeper));
+        assertTrue(keeperPolicy.can_expand());
         assertTrue(usdcKeeper.can_expand_without_policy());
 
         frxUsdKeeper.expand_supply();
 
         assertFalse(frxUsdKeeper.can_expand_without_policy());
-        assertTrue(keeperPolicy.can_allocate(expectedUsdcKeeper));
-        assertTrue(keeperPolicy.can_expand(expectedUsdcKeeper));
+        assertTrue(keeperPolicy.can_expand());
         (uint256 debtAdded, uint256 lpReceived,) = usdcKeeper.expand_supply();
         assertGt(debtAdded, 0);
         assertGt(lpReceived, 0);
@@ -333,20 +375,21 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.pool_uses_dynamic_arrays(), usesDynamicArrays);
         assertEq(keeper.backing_oracle(), oracle);
         assertEq(keeper.min_backing_oracle_price(), proposal.MIN_BACKING_ORACLE_PRICE());
+        assertEq(keeper.keeper_profit_share_bps(), proposal.KEEPER_PROFIT_SHARE_BPS());
         assertEq(keeper.max_deployed_crvusd(), CAP);
         assertEq(keeper.debt(), 0);
-        assertTrue(keeperPolicy.is_active(keeperAddress));
+        assertTrue(keeperRegistry.is_active(keeperAddress));
         assertFalse(keeper.expansion_paused());
         assertFalse(keeper.contraction_paused());
         assertFalse(keeper.all_execution_paused());
     }
 
-    function _assertPolicyActivationAction(
+    function _assertRegistryEnrollmentAction(
         BaseCurveProposal.Action memory action,
         address[3] memory expectedKeepers
     ) internal view {
-        assertEq(action.target, address(keeperPolicy));
-        assertEq(_selector(action.data), IPegKeeperPolicy.add_peg_keepers.selector);
+        assertEq(action.target, address(keeperRegistry));
+        assertEq(_selector(action.data), IPegKeeperRegistry.add_peg_keepers.selector);
         address[] memory keepers = abi.decode(_withoutSelector(action.data), (address[]));
         assertEq(keepers.length, expectedKeepers.length);
         for (uint256 i; i < keepers.length; ++i) {
@@ -401,6 +444,17 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assembly {
             selector := mload(add(data, 0x20))
         }
+    }
+
+    function _flipByteFromEnd(bytes memory code, uint256 offsetFromEnd)
+        internal
+        pure
+        returns (bytes memory mutated)
+    {
+        require(offsetFromEnd > 0 && offsetFromEnd <= code.length, "invalid byte offset");
+        mutated = bytes.concat(code);
+        uint256 index = mutated.length - offsetFromEnd;
+        mutated[index] = bytes1(uint8(mutated[index]) ^ 1);
     }
 
     function _withoutSelector(bytes memory data) internal pure returns (bytes memory result) {
