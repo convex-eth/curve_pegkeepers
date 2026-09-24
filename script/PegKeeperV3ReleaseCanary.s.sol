@@ -10,7 +10,6 @@ import {ICurveEDAOAdminProxy} from "../src/interfaces/ICurveEDAOAdminProxy.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
-import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 import {IStableSwap2Pool} from "../src/interfaces/IStableSwap2Pool.sol";
 import {DeployPegKeeperV3} from "./DeployPegKeeperV3.s.sol";
 
@@ -29,7 +28,7 @@ contract CanaryAggregateCrvUsdOracle {
 /// @notice Pinned-block direct-liquidity mainnet simulation. This script never broadcasts.
 contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     uint256 internal constant PINNED_MAINNET_BLOCK = 25_868_730;
-    address internal constant FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
+    address internal constant CONTROLLER_FACTORY = 0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC;
     address internal constant OWNERSHIP_AGENT = 0x40907540d8a6C65c637785e8f8B742ae6b0b9968;
     address internal constant EDAO_PROXY = 0xb7400D2EA0f6DC1d7b153aA430B9E572F28afB79;
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
@@ -41,7 +40,6 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     address internal constant CANARY_ADMIN = address(0xC0FFEE01);
     address internal constant CANARY_TRADER = address(0xC0FFEE02);
     address internal constant CANARY_KEEPER = address(0xC0FFEE03);
-    address internal constant CANARY_FACTORY_OWNER = address(0xC0FFEE04);
 
     uint256 internal constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 internal constant ALLOCATION = 2_000_000e18;
@@ -61,7 +59,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(!pegKeeper.contraction_paused(), "contraction unexpectedly paused");
         require(!pegKeeper.all_execution_paused(), "execution unexpectedly paused");
         require(
-            IERC20(CRVUSD).allowance(address(pegKeeper), FACTORY) == type(uint256).max,
+            IERC20(CRVUSD).allowance(address(pegKeeper), CONTROLLER_FACTORY) == type(uint256).max,
             "ControllerFactory crvUSD allowance"
         );
 
@@ -98,14 +96,14 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             "AMM frxUSD allowance"
         );
 
-        vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
+        vm.warp(block.timestamp + pegKeeper.action_delay());
         uint256 sweepLp = _sweepDonationAsKeeper(pegKeeper);
 
         aggregateOracle.setPrice(0.999e18);
         _claimDonationAsKeeper(pegKeeper);
         _setDebtCeiling(pegKeeper, 0);
         require(
-            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+            IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper))
                 == pegKeeper.deployed_crvusd(),
             "idle allocation burn"
         );
@@ -116,7 +114,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         );
         IStableSwap2Pool(FRXUSD_CRVUSD_POOL).exchange(1, 0, CONTRACTION_MARKET_TRADE, 0);
         vm.stopPrank();
-        vm.warp(block.timestamp + pegKeeper.min_intervention_delay());
+        vm.warp(block.timestamp + pegKeeper.action_delay());
 
         // Exercise the production frxUSD profit profile at the pinned fork state.
 
@@ -143,49 +141,29 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         vm.prank(OWNERSHIP_AGENT);
         ICurveEDAOAdminProxy(EDAO_PROXY)
             .execute(
-                FACTORY,
+                CONTROLLER_FACTORY,
                 abi.encodeCall(IControllerFactory.set_debt_ceiling, (address(pegKeeper), ceiling))
             );
     }
 
     function _deployCanary(address aggregateOracle) internal returns (IPegKeeperV3 pegKeeper) {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
-        DeployPegKeeperV3.Config memory config = deployer.mainnetConfig(CANARY_FACTORY_OWNER);
-        config.owner = CANARY_FACTORY_OWNER;
-        config.controllerFactory = FACTORY;
+        DeployPegKeeperV3.Config memory config = deployer.mainnetConfig();
+        config.controllerFactory = CONTROLLER_FACTORY;
         config.aggregateCrvUsdOracle = aggregateOracle;
         config.admin = CANARY_ADMIN;
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
         config.maxDeployedCrvUsd = ALLOCATION;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
-        DeployPegKeeperV3.Deployment memory deployment = deployer.deployDependencies(config);
+        DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
-        vm.prank(CANARY_FACTORY_OWNER);
-        policy.set_factory(deployment.factory);
-
-        IPegKeeperV3Factory deploymentFactory = IPegKeeperV3Factory(deployment.factory);
-        vm.prank(CANARY_FACTORY_OWNER);
-        deploymentFactory.setDefaults(
-            IPegKeeperV3Factory.DeploymentDefaults({
-                admin: CANARY_ADMIN,
-                emergencyAdmin: EMERGENCY_ADMIN,
-                feeReceiver: FEE_SPLITTER,
-                maxDeployedCrvUsd: ALLOCATION,
-                ammExecutionBufferBps: AMM_EXECUTION_BUFFER_BPS
-            })
-        );
-        address expectedKeeper = _computeCreateAddress(deployment.factory, 1);
-        vm.prank(CANARY_FACTORY_OWNER);
-        pegKeeper = IPegKeeperV3(
-            deploymentFactory.deployPegKeeper(
-                FRXUSD_CRVUSD_POOL, false, true, deployment.frxUsdUsdOracle
-            )
-        );
         vm.prank(CANARY_ADMIN);
-        pegKeeper.set_policy(10, 150, ALLOCATION);
-        require(address(pegKeeper) == expectedKeeper, "unexpected canary keeper");
+        address[] memory keepers = new address[](1);
+        keepers[0] = deployment.frxUsdPegKeeper;
+        policy.add_peg_keepers(keepers);
+        pegKeeper = IPegKeeperV3(deployment.frxUsdPegKeeper);
     }
 
     function _sweepDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 lpReceived) {
@@ -247,7 +225,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     {
         uint256 debtBefore = pegKeeper.deployed_crvusd();
         uint256 residualBefore =
-            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper));
+            IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper));
         require(residualBefore == debtBefore, "pre-contraction residual");
 
         (lpBurned, crvUsdReceived) = _contractAsKeeper(pegKeeper);
@@ -259,30 +237,22 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
 
         uint256 supplyBefore = IERC20(CRVUSD).totalSupply();
         vm.prank(CANARY_KEEPER);
-        IControllerFactory(FACTORY).rug_debt_ceiling(address(pegKeeper));
+        IControllerFactory(CONTROLLER_FACTORY).rug_debt_ceiling(address(pegKeeper));
         require(IERC20(CRVUSD).balanceOf(address(pegKeeper)) == 0, "rugged keeper balance");
         require(IERC20(CRVUSD).totalSupply() == supplyBefore - burnedCrvUsd, "rugged crvUSD supply");
         require(
-            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+            IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper))
                 == residualBefore - burnedCrvUsd,
             "rugged residual"
         );
         require(
-            IControllerFactory(FACTORY).debt_ceiling_residual(address(pegKeeper))
+            IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper))
                 == pegKeeper.deployed_crvusd(),
             "residual debt reconciliation"
         );
         require(
-            IERC20(CRVUSD).allowance(address(pegKeeper), FACTORY) == type(uint256).max,
+            IERC20(CRVUSD).allowance(address(pegKeeper), CONTROLLER_FACTORY) == type(uint256).max,
             "rugged ControllerFactory allowance"
         );
-    }
-
-    function _computeCreateAddress(address creator, uint256 nonce) internal pure returns (address) {
-        require(nonce > 0 && nonce <= 0x7f, "unsupported nonce");
-        // forge-lint: disable-next-line(unsafe-typecast)
-        bytes1 encodedNonce = bytes1(uint8(nonce));
-        return
-            address(uint160(uint256(keccak256(abi.encodePacked(hex"d694", creator, encodedNonce)))));
     }
 }

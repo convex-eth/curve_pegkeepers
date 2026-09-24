@@ -4,72 +4,85 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
+import {
+    LpYieldAmm,
+    LpYieldControllerAndPolicy,
+    LpYieldOracle,
+    LpYieldToken
+} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3RuntimeSizeTest is Test {
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_IMPLEMENTATION_INITCODE_SIZE = 19_180;
-    uint256 internal constant RELEASE_IMPLEMENTATION_RUNTIME_SIZE = 19_026;
-    bytes32 internal constant RELEASE_IMPLEMENTATION_RUNTIME_HASH =
-        0x26d71a114bf2eab2bc7286f4da2de98d85afebc6625f3a352d828db19abd72b3;
-    uint256 internal constant MINIMAL_PROXY_INITCODE_SIZE = 55;
-    uint256 internal constant MINIMAL_PROXY_RUNTIME_SIZE = 45;
+    uint256 internal constant RELEASE_KEEPER_INITCODE_SIZE = 19_545;
+    uint256 internal constant RELEASE_KEEPER_CORE_SIZE = 16_987;
+    bytes32 internal constant RELEASE_KEEPER_CORE_HASH =
+        0x3ea6b15c5e12d39aecf1f98e99076598f8ff85cadba14cb29b403e61d8e0db34;
+    uint256 internal constant RELEASE_KEEPER_RUNTIME_SIZE = 17_019;
+    bytes32 internal constant RELEASE_KEEPER_RUNTIME_HASH =
+        0x147f13c1e456fa7ff0fdda157ec3e68ab06b54eb6cc38eb43c10d5aa78c5257a;
 
-    function test_directImplementationAndMinimalProxyFitProtocolLimits() public {
-        bytes memory implementationInitCode =
-            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(CRVUSD));
-        assertEq(
-            implementationInitCode.length,
-            RELEASE_IMPLEMENTATION_INITCODE_SIZE,
-            "implementation initcode drift"
+    function test_standaloneKeeperFitsProtocolLimits() public {
+        LpYieldToken crvUsd = new LpYieldToken(18);
+        LpYieldToken pairedToken = new LpYieldToken(18);
+        LpYieldOracle oracle = new LpYieldOracle();
+        LpYieldControllerAndPolicy controllerFactory = new LpYieldControllerAndPolicy(
+            address(crvUsd), address(this), address(0xBEEF), address(0xFEE), address(oracle)
         );
-        assertLe(
-            implementationInitCode.length,
-            EIP_3860_INITCODE_LIMIT,
-            "implementation exceeds EIP-3860"
-        );
+        LpYieldAmm pool = new LpYieldAmm(address(crvUsd), address(pairedToken));
 
-        address implementation;
-        assembly ("memory-safe") {
-            implementation := create(
-                0,
-                add(implementationInitCode, 0x20),
-                mload(implementationInitCode)
-            )
-        }
-        assertTrue(implementation != address(0), "implementation deployment failed");
-        assertEq(
-            implementation.code.length,
-            RELEASE_IMPLEMENTATION_RUNTIME_SIZE,
-            "implementation runtime drift"
-        );
-        assertEq(implementation.codehash, RELEASE_IMPLEMENTATION_RUNTIME_HASH, "runtime hash drift");
-        assertLe(
-            implementation.code.length, EIP_170_RUNTIME_LIMIT, "implementation exceeds EIP-170"
-        );
-        assertTrue(IPegKeeperV3(implementation).initialized(), "implementation is not locked");
-
-        bytes memory proxyInitCode = abi.encodePacked(
-            hex"3d602d80600a3d3981f3",
-            hex"363d3d373d3d3d363d73",
-            bytes20(implementation),
-            hex"5af43d82803e903d91602b57fd5bf3"
-        );
-        assertEq(proxyInitCode.length, MINIMAL_PROXY_INITCODE_SIZE);
-        address proxy;
-        assembly ("memory-safe") {
-            proxy := create(0, add(proxyInitCode, 0x20), mload(proxyInitCode))
-        }
-        assertTrue(proxy != address(0), "minimal proxy deployment failed");
-        assertEq(proxy.code.length, MINIMAL_PROXY_RUNTIME_SIZE);
-        assertEq(
-            proxy.code,
-            abi.encodePacked(
-                hex"363d3d373d3d3d363d73",
-                bytes20(implementation),
-                hex"5af43d82803e903d91602b57fd5bf3"
+        bytes memory keeperInitCode = bytes.concat(
+            vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"),
+            abi.encode(
+                address(controllerFactory),
+                address(pool),
+                false,
+                true,
+                150_000_000e18,
+                1,
+                address(oracle)
+            ),
+            abi.encode(
+                10,
+                150,
+                3,
+                address(this),
+                address(0xBEEF),
+                address(0xFEE),
+                address(controllerFactory)
             )
         );
+        assertEq(keeperInitCode.length, RELEASE_KEEPER_INITCODE_SIZE, "keeper initcode drift");
+        assertLe(keeperInitCode.length, EIP_3860_INITCODE_LIMIT, "keeper exceeds EIP-3860");
+
+        address keeperAddress;
+        assembly ("memory-safe") {
+            keeperAddress := create(0, add(keeperInitCode, 0x20), mload(keeperInitCode))
+        }
+        assertTrue(keeperAddress != address(0), "keeper deployment failed");
+        bytes memory keeperCore = vm.getDeployedCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        assertEq(keeperCore.length, RELEASE_KEEPER_CORE_SIZE, "keeper core size drift");
+        assertEq(keccak256(keeperCore), RELEASE_KEEPER_CORE_HASH, "keeper core hash drift");
+        assertEq(
+            keeperAddress.code,
+            bytes.concat(keeperCore, abi.encode(address(crvUsd))),
+            "Vyper immutable suffix drift"
+        );
+        assertEq(keeperAddress.code.length, RELEASE_KEEPER_RUNTIME_SIZE, "keeper runtime drift");
+        assertEq(
+            keccak256(bytes.concat(keeperCore, abi.encode(CRVUSD))),
+            RELEASE_KEEPER_RUNTIME_HASH,
+            "mainnet runtime hash drift"
+        );
+        assertLe(keeperAddress.code.length, EIP_170_RUNTIME_LIMIT, "keeper exceeds EIP-170");
+        assertGt(keeperAddress.code.length, 45, "keeper unexpectedly uses a minimal proxy");
+        assertEq(IPegKeeperV3(keeperAddress).policy(), address(controllerFactory));
+
+        (bool factoryGetterExists,) = keeperAddress.staticcall(abi.encodeWithSignature("factory()"));
+        assertFalse(factoryGetterExists);
+        (bool initializedGetterExists,) =
+            keeperAddress.staticcall(abi.encodeWithSignature("initialized()"));
+        assertFalse(initializedGetterExists);
     }
 }

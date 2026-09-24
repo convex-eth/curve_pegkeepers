@@ -5,8 +5,12 @@ import {Vm} from "forge-std/Vm.sol";
 
 import {IPegKeeperV3} from "../../src/interfaces/IPegKeeperV3.sol";
 
-interface IStablecoinProvider {
+interface IKeeperTestConfigProvider {
     function stablecoin() external view returns (address);
+    function admin() external view returns (address);
+    function emergency_admin() external view returns (address);
+    function fee_receiver() external view returns (address);
+    function policy() external view returns (address);
 }
 
 contract PegKeeperV3TestOracle {
@@ -31,7 +35,7 @@ library PegKeeperV3TestDeployer {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function deploy(
-        address factory,
+        address controllerFactory,
         address backingAsset,
         address yieldToken,
         address yieldAmm,
@@ -39,7 +43,7 @@ library PegKeeperV3TestDeployer {
         uint256 keeperIndex
     ) internal returns (IPegKeeperV3 keeper) {
         return deploy(
-            factory,
+            controllerFactory,
             backingAsset,
             yieldToken,
             yieldAmm,
@@ -50,7 +54,7 @@ library PegKeeperV3TestDeployer {
     }
 
     function deploy(
-        address factory,
+        address controllerFactory,
         address backingAsset,
         address yieldToken,
         address yieldAmm,
@@ -58,38 +62,37 @@ library PegKeeperV3TestDeployer {
         uint256 keeperIndex,
         address yieldOracle
     ) internal returns (IPegKeeperV3 keeper) {
-        address implementation = _deployImplementation(IStablecoinProvider(factory).stablecoin());
-        address proxy = _clone(implementation);
-        vm.prank(factory);
-        IPegKeeperV3(proxy)
-            .initialize(
-                backingAsset, yieldToken, yieldAmm, true, maxDeployed, keeperIndex, yieldOracle
-            );
-        return IPegKeeperV3(proxy);
-    }
-
-    function _deployImplementation(address stablecoin) private returns (address implementation) {
-        bytes memory creationCode =
-            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(stablecoin));
+        IKeeperTestConfigProvider config = IKeeperTestConfigProvider(controllerFactory);
+        bytes memory creationCode = bytes.concat(
+            vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"),
+            abi.encode(
+                controllerFactory,
+                yieldAmm,
+                backingAsset != yieldToken,
+                true,
+                maxDeployed,
+                keeperIndex,
+                yieldOracle
+            ),
+            abi.encode(
+                10,
+                500,
+                0,
+                config.admin(),
+                config.emergency_admin(),
+                config.fee_receiver(),
+                config.policy()
+            )
+        );
+        address deployed;
         assembly ("memory-safe") {
-            implementation := create(0, add(creationCode, 0x20), mload(creationCode))
-            if iszero(implementation) {
+            deployed := create(0, add(creationCode, 0x20), mload(creationCode))
+            if iszero(deployed) {
                 returndatacopy(0, 0, returndatasize())
                 revert(0, returndatasize())
             }
         }
-    }
-
-    function _clone(address implementation) private returns (address proxy) {
-        bytes memory initCode = abi.encodePacked(
-            hex"3d602d80600a3d3981f3",
-            hex"363d3d373d3d3d363d73",
-            bytes20(implementation),
-            hex"5af43d82803e903d91602b57fd5bf3"
-        );
-        assembly ("memory-safe") {
-            proxy := create(0, add(initCode, 0x20), mload(initCode))
-            if iszero(proxy) { revert(0, 0) }
-        }
+        keeper = IPegKeeperV3(deployed);
+        require(keeper.backing_asset() == backingAsset, "backing asset mismatch");
     }
 }

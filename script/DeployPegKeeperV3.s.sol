@@ -9,9 +9,8 @@ import {IControllerFactory} from "../src/interfaces/IControllerFactory.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {IPegKeeperPolicy} from "../src/interfaces/IPegKeeperPolicy.sol";
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
-import {IPegKeeperV3Factory} from "../src/interfaces/IPegKeeperV3Factory.sol";
 
-/// @notice Deploys and configures the complete direct-liquidity PegKeeperV3 candidate set.
+/// @notice Deploys the complete standalone direct-liquidity PegKeeperV3 candidate set.
 contract DeployPegKeeperV3 is Script {
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
 
@@ -41,11 +40,9 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
     uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
-    uint256 public constant MIN_INTERVENTION_DELAY = 12 seconds;
+    uint256 public constant ACTION_DELAY = 12 seconds;
 
     struct Config {
-        address owner;
-        address finalOwner;
         address controllerFactory;
         address aggregateCrvUsdOracle;
         address admin;
@@ -66,25 +63,29 @@ contract DeployPegKeeperV3 is Script {
     }
 
     struct Deployment {
-        address initialOwner;
-        address implementation;
         address policy;
-        address factory;
         address frxUsdUsdOracle;
         address usdcUsdOracle;
         address usdtUsdOracle;
         address frxUsdPegKeeper;
         address usdcPegKeeper;
         address usdtPegKeeper;
-        uint256 factoryOwnershipNonce;
-        uint256 policyOwnershipNonce;
+    }
+
+    struct KeeperConfig {
+        address pool;
+        bool pairedTokenIsErc4626;
+        bool poolUsesDynamicArrays;
+        uint256 keeperIndex;
+        address backingOracle;
+        uint256 entryMinProfitPpm;
+        uint256 exitMinProfitPpm;
     }
 
     function run() external virtual returns (Deployment memory deployment) {
         require(block.chainid == 1, "mainnet required");
         vm.startBroadcast();
-        (, address broadcaster,) = vm.readCallers();
-        Config memory config = mainnetConfig(broadcaster);
+        Config memory config = mainnetConfig();
         _logPlan(config);
         deployment = deploy(config);
         vm.stopBroadcast();
@@ -93,12 +94,7 @@ contract DeployPegKeeperV3 is Script {
         _logDeployment(deployment);
     }
 
-    function mainnetConfig(address initialOwner) public pure returns (Config memory config) {
-        require(
-            initialOwner != address(0) && initialOwner != CURVE_OWNERSHIP_AGENT, "initial owner"
-        );
-        config.owner = initialOwner;
-        config.finalOwner = CURVE_OWNERSHIP_AGENT;
+    function mainnetConfig() public pure returns (Config memory config) {
         config.controllerFactory = CRVUSD_CONTROLLER_FACTORY;
         config.aggregateCrvUsdOracle = CRVUSD_AGGREGATE_ORACLE;
         config.admin = CURVE_OWNERSHIP_AGENT;
@@ -119,28 +115,8 @@ contract DeployPegKeeperV3 is Script {
     }
 
     function deploy(Config memory config) public virtual returns (Deployment memory deployment) {
-        deployment = deployDependencies(config);
-        _configureKeepersAndHandoff(deployment, config);
-        _verifyConfiguredDeployment(deployment, config);
-    }
-
-    function deployDependencies(Config memory config)
-        public
-        virtual
-        returns (Deployment memory deployment)
-    {
-        deployment.initialOwner = config.owner;
-        console2.log("Deploying PegKeeperV3 implementation");
-        address crvUsd = IControllerFactory(config.controllerFactory).stablecoin();
-        deployment.implementation = _create(
-            bytes.concat(vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(crvUsd))
-        );
-
         console2.log("Deploying PegKeeperPolicy");
         deployment.policy = _deployPolicy(config);
-
-        console2.log("Deploying PegKeeperV3Factory");
-        deployment.factory = _deployFactory(config, deployment.implementation, deployment.policy);
 
         console2.log("Deploying Chainlink frxUSD/USD oracle");
         deployment.frxUsdUsdOracle =
@@ -152,25 +128,66 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Deploying Chainlink USDT/USD oracle");
         deployment.usdtUsdOracle = _deployChainlinkAdapter(config.usdtProxy, config.usdtMaxDelay);
 
+        console2.log("Deploying standalone frxUSD PegKeeperV3");
+        deployment.frxUsdPegKeeper = _deployKeeper(
+            config,
+            deployment.policy,
+            KeeperConfig({
+                pool: config.frxUsdCrvUsdPool,
+                pairedTokenIsErc4626: false,
+                poolUsesDynamicArrays: true,
+                keeperIndex: 1,
+                backingOracle: deployment.frxUsdUsdOracle,
+                entryMinProfitPpm: FRXUSD_ENTRY_MIN_PROFIT_PPM,
+                exitMinProfitPpm: FRXUSD_EXIT_MIN_PROFIT_PPM
+            })
+        );
+
+        console2.log("Deploying standalone USDC PegKeeperV3");
+        deployment.usdcPegKeeper = _deployKeeper(
+            config,
+            deployment.policy,
+            KeeperConfig({
+                pool: config.usdcCrvUsdPool,
+                pairedTokenIsErc4626: false,
+                poolUsesDynamicArrays: false,
+                keeperIndex: 2,
+                backingOracle: deployment.usdcUsdOracle,
+                entryMinProfitPpm: STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+                exitMinProfitPpm: STABLECOIN_EXIT_MIN_PROFIT_PPM
+            })
+        );
+
+        console2.log("Deploying standalone USDT PegKeeperV3");
+        deployment.usdtPegKeeper = _deployKeeper(
+            config,
+            deployment.policy,
+            KeeperConfig({
+                pool: config.usdtCrvUsdPool,
+                pairedTokenIsErc4626: false,
+                poolUsesDynamicArrays: false,
+                keeperIndex: 3,
+                backingOracle: deployment.usdtUsdOracle,
+                entryMinProfitPpm: STABLECOIN_ENTRY_MIN_PROFIT_PPM,
+                exitMinProfitPpm: STABLECOIN_EXIT_MIN_PROFIT_PPM
+            })
+        );
+
         _verifyDependencyDeployment(deployment, config);
+        _verifyConfiguredDeployment(deployment, config);
     }
 
     function writeDeploymentJson(Deployment memory deployment, string memory outputPath) public {
         string memory objectKey = "pegKeeperV3";
         vm.serializeUint(objectKey, "chainId", block.chainid);
-        vm.serializeAddress(objectKey, "initialOwner", deployment.initialOwner);
-        vm.serializeAddress(objectKey, "implementation", deployment.implementation);
         vm.serializeAddress(objectKey, "policy", deployment.policy);
-        vm.serializeAddress(objectKey, "factory", deployment.factory);
         vm.serializeAddress(objectKey, "frxUsdUsdOracle", deployment.frxUsdUsdOracle);
         vm.serializeAddress(objectKey, "usdcUsdOracle", deployment.usdcUsdOracle);
         vm.serializeAddress(objectKey, "usdtUsdOracle", deployment.usdtUsdOracle);
         vm.serializeAddress(objectKey, "frxUsdPegKeeper", deployment.frxUsdPegKeeper);
         vm.serializeAddress(objectKey, "usdcPegKeeper", deployment.usdcPegKeeper);
-        vm.serializeAddress(objectKey, "usdtPegKeeper", deployment.usdtPegKeeper);
-        vm.serializeUint(objectKey, "factoryOwnershipNonce", deployment.factoryOwnershipNonce);
         string memory json =
-            vm.serializeUint(objectKey, "policyOwnershipNonce", deployment.policyOwnershipNonce);
+            vm.serializeAddress(objectKey, "usdtPegKeeper", deployment.usdtPegKeeper);
         vm.writeJson(json, outputPath);
     }
 
@@ -179,100 +196,35 @@ contract DeployPegKeeperV3 is Script {
         return _create(
             bytes.concat(
                 creationCode,
-                abi.encode(config.owner, config.aggregateCrvUsdOracle, config.keeperProfitShareBps)
+                abi.encode(config.admin, config.aggregateCrvUsdOracle, config.keeperProfitShareBps)
             )
         );
     }
 
-    function _deployFactory(Config memory config, address implementation, address policy)
+    function _deployKeeper(Config memory config, address policy, KeeperConfig memory keeperConfig)
         internal
         returns (address)
     {
-        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ =
-            IPegKeeperV3Factory.DeploymentDefaults({
-                admin: config.owner,
-                emergencyAdmin: config.emergencyAdmin,
-                feeReceiver: config.feeReceiver,
-                maxDeployedCrvUsd: config.maxDeployedCrvUsd,
-                ammExecutionBufferBps: config.ammExecutionBufferBps
-            });
-        bytes memory creationCode = vm.getCode("out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json");
-        return _create(
-            bytes.concat(
-                creationCode,
-                abi.encode(
-                    config.owner, config.controllerFactory, implementation, policy, defaults_
-                )
-            )
+        bytes memory creationCode = vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json");
+        bytes memory coreConfig = abi.encode(
+            config.controllerFactory,
+            keeperConfig.pool,
+            keeperConfig.pairedTokenIsErc4626,
+            keeperConfig.poolUsesDynamicArrays,
+            config.maxDeployedCrvUsd,
+            keeperConfig.keeperIndex,
+            keeperConfig.backingOracle
         );
-    }
-
-    function _configureKeepersAndHandoff(Deployment memory deployment, Config memory config)
-        internal
-    {
-        require(config.finalOwner != address(0) && config.finalOwner != config.owner, "final owner");
-        IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
-        IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
-
-        policy.set_factory(deployment.factory);
-
-        deployment.frxUsdPegKeeper = factory.deployPegKeeper(
-            config.frxUsdCrvUsdPool, false, true, deployment.frxUsdUsdOracle
+        bytes memory governanceConfig = abi.encode(
+            keeperConfig.entryMinProfitPpm,
+            keeperConfig.exitMinProfitPpm,
+            config.ammExecutionBufferBps,
+            config.admin,
+            config.emergencyAdmin,
+            config.feeReceiver,
+            policy
         );
-        _configureKeeper(
-            deployment.frxUsdPegKeeper,
-            deployment.frxUsdUsdOracle,
-            FRXUSD_ENTRY_MIN_PROFIT_PPM,
-            FRXUSD_EXIT_MIN_PROFIT_PPM,
-            config
-        );
-
-        deployment.usdcPegKeeper =
-            factory.deployPegKeeper(config.usdcCrvUsdPool, false, false, deployment.usdcUsdOracle);
-        _configureKeeper(
-            deployment.usdcPegKeeper,
-            deployment.usdcUsdOracle,
-            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
-            STABLECOIN_EXIT_MIN_PROFIT_PPM,
-            config
-        );
-
-        deployment.usdtPegKeeper =
-            factory.deployPegKeeper(config.usdtCrvUsdPool, false, false, deployment.usdtUsdOracle);
-        _configureKeeper(
-            deployment.usdtPegKeeper,
-            deployment.usdtUsdOracle,
-            STABLECOIN_ENTRY_MIN_PROFIT_PPM,
-            STABLECOIN_EXIT_MIN_PROFIT_PPM,
-            config
-        );
-
-        factory.setDefaults(
-            IPegKeeperV3Factory.DeploymentDefaults({
-                admin: config.admin,
-                emergencyAdmin: config.emergencyAdmin,
-                feeReceiver: config.feeReceiver,
-                maxDeployedCrvUsd: config.maxDeployedCrvUsd,
-                ammExecutionBufferBps: config.ammExecutionBufferBps
-            })
-        );
-        factory.transferOwnership(config.finalOwner);
-        policy.transferOwnership(config.finalOwner);
-        deployment.factoryOwnershipNonce = factory.ownershipTransferNonce();
-        deployment.policyOwnershipNonce = policy.ownershipTransferNonce();
-    }
-
-    function _configureKeeper(
-        address keeperAddress,
-        address backingOracle,
-        uint256 entryMinProfitPpm,
-        uint256 exitMinProfitPpm,
-        Config memory config
-    ) internal {
-        IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
-        keeper.set_backing_oracle_policy(backingOracle, MIN_BACKING_ORACLE_PRICE);
-        keeper.set_policy(entryMinProfitPpm, exitMinProfitPpm, config.maxDeployedCrvUsd);
-        keeper.set_intervention_policy(MAX_INTERVENTION_SHARE_BPS, MIN_INTERVENTION_DELAY);
+        return _create(bytes.concat(creationCode, coreConfig, governanceConfig));
     }
 
     function _deployChainlinkAdapter(address feed, uint256 maxDelay)
@@ -296,25 +248,14 @@ contract DeployPegKeeperV3 is Script {
         internal
         view
     {
-        require(deployment.initialOwner == config.owner, "initial owner mismatch");
-        require(
-            deployment.implementation.code.length <= EIP_170_RUNTIME_LIMIT,
-            "implementation too large"
-        );
         require(deployment.policy.code.length <= EIP_170_RUNTIME_LIMIT, "policy too large");
-        require(deployment.factory.code.length <= EIP_170_RUNTIME_LIMIT, "factory too large");
-
-        IPegKeeperV3 implementation = IPegKeeperV3(deployment.implementation);
-        require(implementation.initialized(), "implementation not locked");
-        require(
-            implementation.crv_usd() == IControllerFactory(config.controllerFactory).stablecoin(),
-            "implementation crvUSD mismatch"
-        );
+        require(deployment.frxUsdPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "frxUSD too large");
+        require(deployment.usdcPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "USDC too large");
+        require(deployment.usdtPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "USDT too large");
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
-        require(policy.owner() == config.owner, "policy owner mismatch");
+        require(policy.owner() == config.admin, "policy owner mismatch");
         require(policy.pendingOwner() == address(0), "unexpected policy pending owner");
-        require(policy.factory() == address(0), "policy bound before governance");
         require(
             policy.aggregateCrvUsdOracle() == config.aggregateCrvUsdOracle,
             "aggregate oracle mismatch"
@@ -322,25 +263,6 @@ contract DeployPegKeeperV3 is Script {
         require(
             policy.keeper_profit_share_bps(address(0)) == config.keeperProfitShareBps,
             "keeper profit share mismatch"
-        );
-
-        IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
-        require(factory.owner() == config.owner, "factory owner mismatch");
-        require(factory.controllerFactory() == config.controllerFactory, "controller mismatch");
-        require(factory.implementation() == deployment.implementation, "implementation mismatch");
-        require(factory.policy() == deployment.policy, "factory policy mismatch");
-        require(factory.activePegKeeperCount() == 0, "unexpected active keeper");
-
-        IPegKeeperV3Factory.DeploymentDefaults memory defaults_ = factory.defaults();
-        require(defaults_.admin == config.owner, "initial admin mismatch");
-        require(defaults_.emergencyAdmin == config.emergencyAdmin, "emergency mismatch");
-        require(defaults_.feeReceiver == config.feeReceiver, "fee receiver mismatch");
-        require(
-            defaults_.maxDeployedCrvUsd == config.maxDeployedCrvUsd, "default capacity mismatch"
-        );
-        require(
-            defaults_.ammExecutionBufferBps == config.ammExecutionBufferBps,
-            "default AMM buffer mismatch"
         );
 
         _verifyChainlinkOracle(
@@ -354,70 +276,51 @@ contract DeployPegKeeperV3 is Script {
         internal
         view
     {
-        IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
-        require(policy.owner() == config.owner, "policy owner mismatch");
-        require(policy.pendingOwner() == config.finalOwner, "policy pending owner mismatch");
-        require(
-            policy.ownershipTransferNonce() == deployment.policyOwnershipNonce
-                && deployment.policyOwnershipNonce != 0,
-            "policy handoff nonce"
-        );
-        require(policy.factory() == deployment.factory, "policy factory mismatch");
-
-        IPegKeeperV3Factory factory = IPegKeeperV3Factory(deployment.factory);
-        require(factory.owner() == config.owner, "factory owner mismatch");
-        require(factory.pendingOwner() == config.finalOwner, "factory pending owner mismatch");
-        require(
-            factory.ownershipTransferNonce() == deployment.factoryOwnershipNonce
-                && deployment.factoryOwnershipNonce != 0,
-            "factory handoff nonce"
-        );
-        require(factory.admin() == config.admin, "final admin mismatch");
-        require(factory.activePegKeeperCount() == 3, "keeper count mismatch");
-        require(factory.activePegKeeperAt(0) == deployment.frxUsdPegKeeper, "frxUSD order");
-        require(factory.activePegKeeperAt(1) == deployment.usdcPegKeeper, "USDC order");
-        require(factory.activePegKeeperAt(2) == deployment.usdtPegKeeper, "USDT order");
-
         _verifyConfiguredKeeper(
             deployment.frxUsdPegKeeper,
-            deployment.factory,
+            deployment.policy,
             config.frxUsdCrvUsdPool,
             deployment.frxUsdUsdOracle,
             FRXUSD_ENTRY_MIN_PROFIT_PPM,
             FRXUSD_EXIT_MIN_PROFIT_PPM,
+            1,
             config
         );
         _verifyConfiguredKeeper(
             deployment.usdcPegKeeper,
-            deployment.factory,
+            deployment.policy,
             config.usdcCrvUsdPool,
             deployment.usdcUsdOracle,
             STABLECOIN_ENTRY_MIN_PROFIT_PPM,
             STABLECOIN_EXIT_MIN_PROFIT_PPM,
+            2,
             config
         );
         _verifyConfiguredKeeper(
             deployment.usdtPegKeeper,
-            deployment.factory,
+            deployment.policy,
             config.usdtCrvUsdPool,
             deployment.usdtUsdOracle,
             STABLECOIN_ENTRY_MIN_PROFIT_PPM,
             STABLECOIN_EXIT_MIN_PROFIT_PPM,
+            3,
             config
         );
     }
 
     function _verifyConfiguredKeeper(
         address keeperAddress,
-        address expectedFactory,
+        address expectedPolicy,
         address expectedPool,
         address expectedOracle,
         uint256 expectedEntryProfit,
         uint256 expectedExitProfit,
+        uint256 expectedIndex,
         Config memory config
     ) internal view {
         IPegKeeperV3 keeper = IPegKeeperV3(keeperAddress);
-        require(keeper.factory() == expectedFactory, "keeper factory mismatch");
+        require(keeper.policy() == expectedPolicy, "keeper policy mismatch");
+        require(keeper.controller_factory() == config.controllerFactory, "controller mismatch");
         require(
             keeper.crv_usd() == IControllerFactory(config.controllerFactory).stablecoin(),
             "keeper crvUSD mismatch"
@@ -427,15 +330,21 @@ contract DeployPegKeeperV3 is Script {
         require(keeper.min_backing_oracle_price() == MIN_BACKING_ORACLE_PRICE, "oracle floor");
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit mismatch");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit mismatch");
+        require(keeper.keeper_index() == expectedIndex, "keeper index mismatch");
         require(
-            IPegKeeperPolicy(IPegKeeperV3Factory(expectedFactory).policy())
-                .keeper_profit_share_bps(keeperAddress) == config.keeperProfitShareBps,
+            IPegKeeperPolicy(expectedPolicy).keeper_profit_share_bps(keeperAddress)
+                == config.keeperProfitShareBps,
             "keeper reward policy mismatch"
         );
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
         require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
-        require(keeper.min_intervention_delay() == MIN_INTERVENTION_DELAY, "intervention delay");
+        require(keeper.action_delay() == ACTION_DELAY, "action delay");
+        require(
+            keeper.amm_execution_buffer_bps() == config.ammExecutionBufferBps, "execution buffer"
+        );
         require(keeper.admin() == config.admin, "keeper admin mismatch");
+        require(keeper.emergency_admin() == config.emergencyAdmin, "emergency admin mismatch");
+        require(keeper.fee_receiver() == config.feeReceiver, "fee receiver mismatch");
         require(!keeper.expansion_paused(), "expansion paused");
         require(!keeper.contraction_paused(), "contraction paused");
         require(!keeper.all_execution_paused(), "execution paused");
@@ -460,11 +369,9 @@ contract DeployPegKeeperV3 is Script {
 
     function _logPlan(Config memory config) internal view {
         console2.log("Network chain id", block.chainid);
-        console2.log("Initial Factory/Policy owner", config.owner);
-        console2.log("Pending Factory/Policy owner", config.finalOwner);
+        console2.log("Policy owner / keeper admin", config.admin);
         console2.log("ControllerFactory", config.controllerFactory);
         console2.log("Aggregate crvUSD oracle", config.aggregateCrvUsdOracle);
-        console2.log("Factory admin", config.admin);
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);
         console2.log("Keeper profit share (bps)", config.keeperProfitShareBps);
@@ -480,9 +387,7 @@ contract DeployPegKeeperV3 is Script {
     }
 
     function _logDeployment(Deployment memory deployment) internal pure {
-        console2.log("Implementation", deployment.implementation);
         console2.log("Policy", deployment.policy);
-        console2.log("Factory", deployment.factory);
         console2.log("Chainlink frxUSD/USD oracle", deployment.frxUsdUsdOracle);
         console2.log("Chainlink USDC/USD oracle", deployment.usdcUsdOracle);
         console2.log("Chainlink USDT/USD oracle", deployment.usdtUsdOracle);

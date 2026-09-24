@@ -6,7 +6,12 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 
 import {IPegKeeperV3} from "../src/interfaces/IPegKeeperV3.sol";
 import {PegKeeperV3TestDeployer} from "./utils/PegKeeperV3TestDeployer.sol";
-import {LpYieldToken, LpYieldFactory, LpYieldAmm, LpYieldOracle} from "./PegKeeperV3LpYield.t.sol";
+import {
+    LpYieldToken,
+    LpYieldControllerAndPolicy,
+    LpYieldAmm,
+    LpYieldOracle
+} from "./PegKeeperV3LpYield.t.sol";
 
 contract PegKeeperV3LpYieldHandler is Test {
     IPegKeeperV3 public immutable keeper;
@@ -32,7 +37,7 @@ contract PegKeeperV3LpYieldHandler is Test {
 
     function expandSupply(uint256 seed) external {
         yieldAmm.setBalances(0, bound(seed, 1, 100_000_000e18));
-        vm.warp(block.timestamp + keeper.min_intervention_delay());
+        vm.warp(block.timestamp + keeper.action_delay());
         (bool success,) = address(keeper).call(abi.encodeCall(IPegKeeperV3.expand_supply, ()));
         if (success) successfulExpansions++;
     }
@@ -45,7 +50,7 @@ contract PegKeeperV3LpYieldHandler is Test {
         uint256 held = yieldToken.balanceOf(address(keeper));
         if (held == 0) return;
         yieldAmm.setBalances(0, 100_000_000e18);
-        vm.warp(block.timestamp + keeper.min_intervention_delay());
+        vm.warp(block.timestamp + keeper.action_delay());
         uint256 amount = bound(seed, 1, held);
         (bool success,) =
             address(keeper).call(abi.encodeCall(IPegKeeperV3.sweep_donated_paired_token, (amount)));
@@ -60,7 +65,7 @@ contract PegKeeperV3LpYieldHandler is Test {
         uint256 held = keeper.accounted_lp_tokens();
         if (held == 0) return;
         yieldAmm.setBalances(bound(seed, 1, 100_000_000e18), 0);
-        vm.warp(block.timestamp + keeper.min_intervention_delay());
+        vm.warp(block.timestamp + keeper.action_delay());
         (bool success,) = address(keeper).call(abi.encodeCall(IPegKeeperV3.contract_supply, ()));
         if (success) successfulContractions++;
     }
@@ -74,7 +79,7 @@ contract PegKeeperV3LpYieldHandler is Test {
     function withdrawProfit(uint256 seed) external {
         uint256 idle = crvUsd.balanceOf(address(keeper));
         if (idle == 0) return;
-        vm.warp(block.timestamp + keeper.min_intervention_delay());
+        vm.warp(block.timestamp + keeper.action_delay());
         uint256 amount = bound(seed, 1, idle);
         (bool success,) = address(keeper)
             .call(abi.encodeWithSelector(bytes4(keccak256("withdraw_profit(uint256)")), amount));
@@ -86,7 +91,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
     IPegKeeperV3 internal keeper;
     LpYieldToken internal crvUsd;
     LpYieldToken internal yieldToken;
-    LpYieldFactory internal factory;
+    LpYieldControllerAndPolicy internal controllerAndPolicy;
     LpYieldAmm internal yieldAmm;
     PegKeeperV3LpYieldHandler internal handler;
 
@@ -97,13 +102,13 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         crvUsd = new LpYieldToken(18);
         yieldToken = new LpYieldToken(18);
         LpYieldOracle oracle = new LpYieldOracle();
-        factory = new LpYieldFactory(
+        controllerAndPolicy = new LpYieldControllerAndPolicy(
             address(crvUsd), GOVERNANCE, address(0xBEEF), address(0xFEE), address(oracle)
         );
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         yieldAmm.setLpMintBps(10_001);
         keeper = PegKeeperV3TestDeployer.deploy(
-            address(factory),
+            address(controllerAndPolicy),
             address(yieldToken),
             address(yieldToken),
             address(yieldAmm),
@@ -111,7 +116,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
             1,
             address(oracle)
         );
-        factory.setDebtCeiling(address(keeper), MAX_DEPLOYED);
+        controllerAndPolicy.setDebtCeiling(address(keeper), MAX_DEPLOYED);
 
         vm.startPrank(GOVERNANCE);
         keeper.set_amm_execution_buffer(0);
@@ -134,9 +139,9 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         assertGe(keeper.trusted_backing_value(), keeper.deployed_crvusd());
     }
 
-    function invariant_exposureNeverExceedsLocalOrFactoryCapacity() public view {
+    function invariant_exposureNeverExceedsLocalOrControllerCapacity() public view {
         assertLe(keeper.deployed_crvusd(), keeper.max_deployed_crvusd());
-        assertLe(keeper.deployed_crvusd(), factory.debt_ceiling(address(keeper)));
+        assertLe(keeper.deployed_crvusd(), controllerAndPolicy.debt_ceiling(address(keeper)));
     }
 
     function invariant_ammAllowancesAreAlwaysZero() public view {

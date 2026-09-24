@@ -2,7 +2,7 @@
 """
 @title PegKeeperPolicy
 @license MIT
-@notice Applies aggregate direction and active-keeper admission to one PegKeeperV3 factory.
+@notice Applies aggregate direction to standalone PegKeeperV3 contracts bound to this policy.
 """
 
 
@@ -10,16 +10,9 @@ interface PriceOracle:
     def price() -> uint256: view
 
 
-interface PegKeeperFactory:
-    def is_active(_keeper: address) -> bool: view
-
-
 interface PegKeeper:
-    def factory() -> address: view
-
-
-event FactorySet:
-    factory: indexed(address)
+    def policy() -> address: view
+    def can_expand_without_policy() -> bool: view
 
 
 event AggregateCrvUsdOracleUpdated:
@@ -30,6 +23,14 @@ event AggregateCrvUsdOracleUpdated:
 event KeeperProfitShareUpdated:
     oldKeeperProfitShareBps: uint256
     newKeeperProfitShareBps: uint256
+
+
+event PegKeeperAdded:
+    pegKeeper: indexed(address)
+
+
+event PegKeeperRemoved:
+    pegKeeper: indexed(address)
 
 
 event OwnershipTransferStarted:
@@ -44,14 +45,17 @@ event OwnershipTransferred:
 
 BPS: constant(uint256) = 10_000
 PRECISION: constant(uint256) = 10 ** 18
+MAX_KEEPERS: constant(uint256) = 8
+POLICY_SELECTOR: constant(Bytes[4]) = method_id("policy()")
 LOCAL_EXPANDABLE_SELECTOR: constant(Bytes[4]) = method_id("can_expand_without_policy()")
 
 owner: public(address)
 pendingOwner: public(address)
 ownershipTransferNonce: public(uint256)
-factory: public(address)
 aggregateCrvUsdOracle: public(address)
 _keeperProfitShareBps: uint256
+peg_keepers: public(DynArray[address, MAX_KEEPERS])
+_pegKeeperIndexPlusOne: HashMap[address, uint256]
 
 
 @deploy
@@ -78,16 +82,6 @@ def __init__(
         oldKeeperProfitShareBps=0,
         newKeeperProfitShareBps=_keeper_profit_share_bps,
     )
-
-
-@external
-def set_factory(_factory: address):
-    self._check_owner()
-    if self.factory != empty(address) or _factory == empty(address) or _factory.codesize == 0:
-        raw_revert(method_id("InvalidFactory()"))
-
-    self.factory = _factory
-    log FactorySet(factory=_factory)
 
 
 @external
@@ -123,6 +117,52 @@ def keeper_profit_share_bps(_keeper: address) -> uint256:
 
 @external
 @view
+def peg_keeper_count() -> uint256:
+    return len(self.peg_keepers)
+
+
+@external
+@view
+def is_active(_keeper: address) -> bool:
+    return self._pegKeeperIndexPlusOne[_keeper] != 0
+
+
+@external
+def add_peg_keepers(_peg_keepers: DynArray[address, MAX_KEEPERS]):
+    self._check_owner()
+    for keeper: address in _peg_keepers:
+        if not self._is_bound_keeper(keeper):
+            raw_revert(method_id("InvalidKeeper()"))
+        if self._pegKeeperIndexPlusOne[keeper] != 0:
+            raw_revert(method_id("DuplicateKeeper()"))
+
+        self.peg_keepers.append(keeper)
+        self._pegKeeperIndexPlusOne[keeper] = len(self.peg_keepers)
+        log PegKeeperAdded(pegKeeper=keeper)
+
+
+@external
+def remove_peg_keepers(_peg_keepers: DynArray[address, MAX_KEEPERS]):
+    self._check_owner()
+    for keeper: address in _peg_keepers:
+        index_plus_one: uint256 = self._pegKeeperIndexPlusOne[keeper]
+        if index_plus_one == 0:
+            raw_revert(method_id("InvalidKeeper()"))
+
+        index: uint256 = index_plus_one - 1
+        last_index: uint256 = len(self.peg_keepers) - 1
+        if index != last_index:
+            moved: address = self.peg_keepers[last_index]
+            self.peg_keepers[index] = moved
+            self._pegKeeperIndexPlusOne[moved] = index + 1
+
+        self.peg_keepers.pop()
+        self._pegKeeperIndexPlusOne[keeper] = 0
+        log PegKeeperRemoved(pegKeeper=keeper)
+
+
+@external
+@view
 def expansion_regime() -> bool:
     return self._aggregate_crvusd_price() >= PRECISION
 
@@ -136,8 +176,6 @@ def can_allocate(_keeper: address) -> bool:
 @external
 @view
 def can_expand(_keeper: address) -> bool:
-    if self.factory == empty(address):
-        return False
     if self._aggregate_crvusd_price() < PRECISION:
         return False
     return self._is_locally_expandable(_keeper)
@@ -146,10 +184,7 @@ def can_expand(_keeper: address) -> bool:
 @external
 @view
 def can_contract(_keeper: address) -> bool:
-    factory: address = self.factory
-    if factory == empty(address) or _keeper == empty(address):
-        return False
-    if staticcall PegKeeper(_keeper).factory() != factory:
+    if not self._is_bound_keeper(_keeper):
         return False
     return self._aggregate_crvusd_price() <= PRECISION
 
@@ -205,13 +240,22 @@ def _aggregate_crvusd_price() -> uint256:
 
 @internal
 @view
-def _is_active_keeper(_keeper: address) -> bool:
-    factory: address = self.factory
-    if factory == empty(address) or _keeper == empty(address):
+def _is_bound_keeper(_keeper: address) -> bool:
+    if _keeper == empty(address) or _keeper.codesize == 0:
         return False
-    if not staticcall PegKeeperFactory(factory).is_active(_keeper):
+
+    success: bool = False
+    response: Bytes[32] = empty(Bytes[32])
+    success, response = raw_call(
+        _keeper,
+        POLICY_SELECTOR,
+        max_outsize=32,
+        is_static_call=True,
+        revert_on_failure=False,
+    )
+    if not success or len(response) != 32:
         return False
-    return staticcall PegKeeper(_keeper).factory() == factory
+    return abi_decode(response, address) == self
 
 
 @internal
@@ -232,3 +276,11 @@ def _is_locally_expandable(_keeper: address) -> bool:
     if not success or len(response) != 32:
         return False
     return convert(response, uint256) == 1
+
+
+@internal
+@view
+def _is_active_keeper(_keeper: address) -> bool:
+    if self._pegKeeperIndexPlusOne[_keeper] == 0:
+        return False
+    return self._is_bound_keeper(_keeper)

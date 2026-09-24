@@ -6,17 +6,6 @@ import {Vm} from "forge-std/Vm.sol";
 
 interface ILpPegKeeperV3 {
     function version() external view returns (uint256 major, uint256 minor, uint256 patch);
-    function initialize(
-        address backingAsset,
-        address yieldToken,
-        address yieldAmm,
-        bool poolUsesDynamicArrays,
-        uint256 maxDeployedCrvUsd,
-        uint256 keeperIndex,
-        address yieldOracle
-    ) external;
-
-    function initialized() external view returns (bool);
     function backing_asset() external view returns (address);
     function paired_token() external view returns (address);
     function pool() external view returns (address);
@@ -29,7 +18,7 @@ interface ILpPegKeeperV3 {
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function max_intervention_share_bps() external view returns (uint256);
-    function min_intervention_delay() external view returns (uint256);
+    function action_delay() external view returns (uint256);
     function expansion_paused() external view returns (bool);
     function all_execution_paused() external view returns (bool);
     function last_intervention_at() external view returns (uint256);
@@ -42,6 +31,10 @@ interface ILpPegKeeperV3 {
     function can_expand_without_policy() external view returns (bool);
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function backing_oracle() external view returns (address);
+    function policy() external view returns (address);
+    function admin() external view returns (address);
+    function emergency_admin() external view returns (address);
+    function fee_receiver() external view returns (address);
     function min_backing_oracle_price() external view returns (uint256);
     function set_backing_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
     function set_policy(
@@ -50,8 +43,11 @@ interface ILpPegKeeperV3 {
         uint256 maxDeployedCrvUsd
     ) external;
 
-    function set_intervention_policy(uint256 maxInterventionShareBps, uint256 minInterventionDelay)
-        external;
+    function set_intervention_policy(uint256 maxInterventionShareBps, uint256 actionDelay) external;
+    function set_admin(address newAdmin) external;
+    function set_emergency_admin(address newEmergencyAdmin) external;
+    function set_fee_receiver(address newFeeReceiver) external;
+    function set_policy_contract(address newPolicy) external;
     function set_direction_paused(uint256 direction, bool paused) external;
     function expand_supply()
         external
@@ -145,7 +141,7 @@ contract LpYieldOversizedOracle {
     }
 }
 
-contract LpYieldFactory {
+contract LpYieldControllerAndPolicy {
     address public immutable stablecoin;
     address public immutable controllerFactory;
     address public admin;
@@ -466,7 +462,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
     LpYieldToken internal crvUsd;
     LpYieldToken internal yieldToken;
-    LpYieldFactory internal factory;
+    LpYieldControllerAndPolicy internal controllerAndPolicy;
     LpYieldAmm internal yieldAmm;
     LpYieldOracle internal yieldOracle;
     LpYieldOracle internal aggregateCrvUsdOracle;
@@ -475,17 +471,16 @@ contract PegKeeperV3LpYieldTest is Test {
         crvUsd = new LpYieldToken(18);
         yieldToken = new LpYieldToken(18);
         aggregateCrvUsdOracle = new LpYieldOracle();
-        factory = new LpYieldFactory(
+        controllerAndPolicy = new LpYieldControllerAndPolicy(
             address(crvUsd), governance, emergencyAdmin, feeReceiver, address(aggregateCrvUsdOracle)
         );
         yieldAmm = new LpYieldAmm(address(crvUsd), address(yieldToken));
         yieldOracle = new LpYieldOracle();
     }
 
-    function test_initializePinsDirectAmmAndLpAccountingEndpoints() public {
+    function test_constructorPinsDirectAmmAndLpAccountingEndpoints() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
-        assertTrue(keeper.initialized());
         assertEq(keeper.backing_asset(), address(yieldToken));
         assertEq(keeper.paired_token(), address(yieldToken));
         assertEq(keeper.pool(), address(yieldAmm));
@@ -494,6 +489,54 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.pool_paired_token_index(), 1);
         assertEq(keeper.accounted_lp_tokens(), 0);
         assertEq(keeper.trusted_backing_value(), 0);
+    }
+
+    function test_keeperIsStandaloneAndHasNoFactorySelector() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        assertGt(address(keeper).code.length, 45);
+        assertEq(keeper.policy(), address(controllerAndPolicy));
+
+        (bool factoryGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("factory()"));
+        assertFalse(factoryGetterExists);
+        (bool initializedGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("initialized()"));
+        assertFalse(initializedGetterExists);
+    }
+
+    function test_adminControlsKeeperLocalRolesAndPolicy() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+        address nextAdmin = makeAddr("next admin");
+        address nextEmergencyAdmin = makeAddr("next emergency admin");
+        address nextFeeReceiver = makeAddr("next fee receiver");
+        LpYieldControllerAndPolicy nextPolicy = new LpYieldControllerAndPolicy(
+            address(crvUsd),
+            nextAdmin,
+            nextEmergencyAdmin,
+            nextFeeReceiver,
+            address(aggregateCrvUsdOracle)
+        );
+
+        vm.prank(makeAddr("not admin"));
+        vm.expectRevert();
+        keeper.set_admin(nextAdmin);
+
+        vm.startPrank(governance);
+        keeper.set_emergency_admin(nextEmergencyAdmin);
+        keeper.set_fee_receiver(nextFeeReceiver);
+        keeper.set_policy_contract(address(nextPolicy));
+        keeper.set_admin(nextAdmin);
+        vm.stopPrank();
+
+        assertEq(keeper.admin(), nextAdmin);
+        assertEq(keeper.emergency_admin(), nextEmergencyAdmin);
+        assertEq(keeper.fee_receiver(), nextFeeReceiver);
+        assertEq(keeper.policy(), address(nextPolicy));
+
+        vm.prank(governance);
+        vm.expectRevert();
+        keeper.set_fee_receiver(feeReceiver);
     }
 
     function test_versionIsNumericThreeZeroZeroTuple() public {
@@ -716,7 +759,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
         assertEq(keeper.max_intervention_share_bps(), 2_000);
-        assertEq(keeper.min_intervention_delay(), 12);
+        assertEq(keeper.action_delay(), 12);
         assertEq(keeper.last_intervention_at(), 0);
 
         vm.prank(makeAddr("unauthorized"));
@@ -726,7 +769,7 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.prank(governance);
         keeper.set_intervention_policy(5_000, 0);
         assertEq(keeper.max_intervention_share_bps(), 5_000);
-        assertEq(keeper.min_intervention_delay(), 0);
+        assertEq(keeper.action_delay(), 0);
 
         vm.startPrank(governance);
         vm.expectRevert();
@@ -734,6 +777,19 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.set_intervention_policy(10_001, 0);
         vm.stopPrank();
+    }
+
+    function test_actionDelayMatchesV2GetterAndLegacyNameIsAbsent() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        (bool actionDelayExists, bytes memory encodedDelay) =
+            address(keeper).staticcall(abi.encodeWithSignature("action_delay()"));
+        assertTrue(actionDelayExists);
+        assertEq(abi.decode(encodedDelay, (uint256)), 12);
+
+        (bool legacyGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("min_intervention_delay()"));
+        assertFalse(legacyGetterExists);
     }
 
     function test_policyAllowsExitProfitFloorBelowEntryProfitFloor() public {
@@ -749,9 +805,9 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_keeperRewardReadsCurrentPolicyForItsAddress() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
-        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
 
-        factory.setKeeperProfitShareBps(1_250);
+        controllerAndPolicy.setKeeperProfitShareBps(1_250);
         (, uint256 grossProfit, uint256 keeperReward,) = keeper.preview_expansion();
 
         assertGt(grossProfit, 0);
@@ -765,7 +821,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_entryProfitFloorUsesGrossProfitBeforeKeeperRewardInPreview() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_005);
-        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
 
         vm.prank(governance);
         keeper.set_policy(500, 100, MAX_DEPLOYED);
@@ -782,7 +838,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_entryProfitFloorUsesGrossProfitBeforeKeeperRewardInExecution() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_005);
-        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
 
         vm.prank(governance);
         keeper.set_policy(500, 100, MAX_DEPLOYED);
@@ -1370,12 +1426,12 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldAmm.removeLiquidityCalls(), 0);
     }
 
-    function test_contractionRemainsOpenAfterFactoryCeilingFallsBelowExposure() public {
+    function test_contractionRemainsOpenAfterControllerCeilingFallsBelowExposure() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         keeper.expand_supply();
-        factory.setDebtCeiling(address(keeper), 1e18);
+        controllerAndPolicy.setDebtCeiling(address(keeper), 1e18);
         yieldAmm.setBalances(100_000_000e18, 0);
 
         keeper.contract_supply();
@@ -1393,7 +1449,8 @@ contract PegKeeperV3LpYieldTest is Test {
 
         crvUsd.mint(address(keeper), 100e18);
         address newFeeReceiver = makeAddr("new fee receiver");
-        factory.setFeeReceiver(newFeeReceiver);
+        vm.prank(governance);
+        keeper.set_fee_receiver(newFeeReceiver);
 
         uint256 idleBefore = crvUsd.balanceOf(address(keeper));
         (uint256 expectedCrvUsd,, uint256 keeperReward) = keeper.preview_contraction();
@@ -1456,7 +1513,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(actualCrvUsd, 10_005e18);
     }
 
-    function test_interventionDelayIsSharedAcrossExpansionAndContraction() public {
+    function test_actionDelayIsSharedAcrossExpansionAndContraction() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         vm.prank(governance);
         keeper.set_intervention_policy(3_333, 12);
@@ -1488,7 +1545,7 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.preview_expansion();
     }
 
-    function test_zeroInterventionDelayAllowsSameTimestampContraction() public {
+    function test_zeroActionDelayAllowsSameTimestampContraction() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         vm.prank(governance);
         keeper.set_intervention_policy(3_333, 0);
@@ -1564,13 +1621,13 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.expand_supply();
     }
 
-    function test_factoryPolicyGatesExpansionWithoutChangingLocalViability() public {
+    function test_policyGatesExpansionWithoutChangingLocalViability() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 20_000e18);
 
         assertTrue(keeper.can_expand_without_policy());
-        factory.setPolicyExpansionAllowed(false);
+        controllerAndPolicy.setPolicyExpansionAllowed(false);
         assertTrue(keeper.can_expand_without_policy());
         assertEq(keeper.available_expansion(), 0);
         vm.expectRevert();
@@ -1578,7 +1635,7 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.expand_supply();
 
-        factory.setPolicyExpansionAllowed(true);
+        controllerAndPolicy.setPolicyExpansionAllowed(true);
         assertGt(keeper.available_expansion(), 0);
         keeper.expand_supply();
     }
@@ -1602,7 +1659,7 @@ contract PegKeeperV3LpYieldTest is Test {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         address receiver = makeAddr("module");
         crvUsd.mint(address(keeper), 20_000e18);
-        factory.setPolicyExpansionAllowed(false);
+        controllerAndPolicy.setPolicyExpansionAllowed(false);
 
         vm.prank(governance);
         vm.expectRevert();
@@ -1628,7 +1685,7 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.borrow_crvusd(0, makeAddr("zero-amount receiver"));
 
-        factory.setDebtCeiling(address(keeper), 5_000e18);
+        controllerAndPolicy.setDebtCeiling(address(keeper), 5_000e18);
         vm.prank(governance);
         vm.expectRevert();
         keeper.borrow_crvusd(5_000e18 + 1, makeAddr("module"));
@@ -1695,7 +1752,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(keeper.can_expand_without_policy());
     }
 
-    function test_factoryPolicyGatesContraction() public {
+    function test_policyGatesContraction() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         vm.prank(governance);
         keeper.set_intervention_policy(3_333, 0);
@@ -1706,13 +1763,13 @@ contract PegKeeperV3LpYieldTest is Test {
         aggregateCrvUsdOracle.setPrice(1e18 - 1);
         yieldAmm.setBalances(120_000e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
-        factory.setPolicyContractionAllowed(false);
+        controllerAndPolicy.setPolicyContractionAllowed(false);
         vm.expectRevert();
         keeper.preview_contraction();
         vm.expectRevert();
         keeper.contract_supply();
 
-        factory.setPolicyContractionAllowed(true);
+        controllerAndPolicy.setPolicyContractionAllowed(true);
         keeper.preview_contraction();
         keeper.contract_supply();
     }
@@ -1722,7 +1779,7 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 20_000e18);
         yieldToken.mint(address(keeper), 10_000e18);
-        factory.setPolicyAllocationAllowed(false);
+        controllerAndPolicy.setPolicyAllocationAllowed(false);
 
         (uint256 swept, uint256 matched,,) = keeper.sweep_donated_paired_token(10_000e18);
 
@@ -1749,12 +1806,12 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.expand_supply();
     }
 
-    function test_unpausedKeeperCannotUseDonatedCrvUsdAtZeroFactoryCeiling() public {
+    function test_unpausedKeeperCannotUseDonatedCrvUsdAtZeroControllerCeiling() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
-        factory.setDebtCeiling(address(keeper), 0);
+        controllerAndPolicy.setDebtCeiling(address(keeper), 0);
         crvUsd.mint(address(keeper), 100_000e18);
         yieldAmm.setBalances(0, 100_000_000e18);
-        vm.warp(block.timestamp + keeper.min_intervention_delay());
+        vm.warp(block.timestamp + keeper.action_delay());
 
         assertFalse(keeper.expansion_paused());
         assertFalse(keeper.all_execution_paused());
@@ -1831,7 +1888,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_malformedAggregateOracleFailsPreviewAndExecutionClosed() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         LpYieldOversizedOracle malformedOracle = new LpYieldOversizedOracle();
-        factory.setAggregateCrvUsdOracle(address(malformedOracle));
+        controllerAndPolicy.setAggregateCrvUsdOracle(address(malformedOracle));
         crvUsd.mint(address(keeper), 25_000e18);
         yieldAmm.mint(address(keeper), 1_000e18);
 
@@ -1979,7 +2036,7 @@ contract PegKeeperV3LpYieldTest is Test {
     {
         keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
-        factory.increaseDebtCeiling(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
         vm.prank(makeAddr("break-even expansion caller"));
         keeper.expand_supply();
 
@@ -2007,40 +2064,30 @@ contract PegKeeperV3LpYieldTest is Test {
         bool poolUsesDynamicArrays_
     ) internal returns (ILpPegKeeperV3 keeper) {
         bytes memory keeperCreationCode = bytes.concat(
-            vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"), abi.encode(address(crvUsd))
+            vm.getCode("out/PegKeeperV3.vy/PegKeeperV3.json"),
+            abi.encode(
+                address(controllerAndPolicy),
+                yieldAmm_,
+                backingAsset_ != yieldToken_,
+                poolUsesDynamicArrays_,
+                MAX_DEPLOYED,
+                1,
+                address(yieldOracle)
+            ),
+            abi.encode(
+                10, 500, 3, governance, emergencyAdmin, feeReceiver, address(controllerAndPolicy)
+            )
         );
-        address implementation;
+        address deployed;
         assembly ("memory-safe") {
-            implementation := create(0, add(keeperCreationCode, 0x20), mload(keeperCreationCode))
-            if iszero(implementation) {
+            deployed := create(0, add(keeperCreationCode, 0x20), mload(keeperCreationCode))
+            if iszero(deployed) {
                 returndatacopy(0, 0, returndatasize())
                 revert(0, returndatasize())
             }
         }
-
-        bytes memory proxyInitCode = abi.encodePacked(
-            hex"3d602d80600a3d3981f3",
-            hex"363d3d373d3d3d363d73",
-            bytes20(implementation),
-            hex"5af43d82803e903d91602b57fd5bf3"
-        );
-        address proxy;
-        assembly ("memory-safe") {
-            proxy := create(0, add(proxyInitCode, 0x20), mload(proxyInitCode))
-            if iszero(proxy) { revert(0, 0) }
-        }
-
-        keeper = ILpPegKeeperV3(proxy);
-        vm.prank(address(factory));
-        keeper.initialize(
-            backingAsset_,
-            yieldToken_,
-            yieldAmm_,
-            poolUsesDynamicArrays_,
-            MAX_DEPLOYED,
-            1,
-            address(yieldOracle)
-        );
-        factory.setDebtCeiling(proxy, MAX_DEPLOYED);
+        keeper = ILpPegKeeperV3(deployed);
+        assertEq(keeper.backing_asset(), backingAsset_);
+        controllerAndPolicy.setDebtCeiling(deployed, MAX_DEPLOYED);
     }
 }

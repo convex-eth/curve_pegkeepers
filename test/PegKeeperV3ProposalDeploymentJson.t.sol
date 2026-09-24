@@ -17,26 +17,19 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
     function test_proposalLoadsPreconfiguredCandidatesFromDeploymentJson() public {
         DeployPegKeeperV3 deployer = new DeployPegKeeperV3();
         DeployPegKeeperV3.Deployment memory deployment = DeployPegKeeperV3.Deployment({
-            initialOwner: makeAddr("initialOwner"),
-            implementation: makeAddr("implementation"),
             policy: makeAddr("policy"),
-            factory: makeAddr("factory"),
             frxUsdUsdOracle: makeAddr("frxUsdUsdOracle"),
             usdcUsdOracle: makeAddr("usdcUsdOracle"),
             usdtUsdOracle: makeAddr("usdtUsdOracle"),
             frxUsdPegKeeper: makeAddr("frxUsdPegKeeper"),
             usdcPegKeeper: makeAddr("usdcPegKeeper"),
-            usdtPegKeeper: makeAddr("usdtPegKeeper"),
-            factoryOwnershipNonce: 7,
-            policyOwnershipNonce: 9
+            usdtPegKeeper: makeAddr("usdtPegKeeper")
         });
         deployer.writeDeploymentJson(deployment, TEST_OUTPUT);
 
         CurveProposalLaunchPegKeeperV3 proposal = new CurveProposalLaunchPegKeeperV3();
         proposal.loadDeployment(TEST_OUTPUT);
 
-        assertEq(proposal.deploymentInitialOwner(), deployment.initialOwner);
-        assertEq(proposal.deploymentFactory(), deployment.factory);
         assertEq(proposal.pegKeeperPolicy(), deployment.policy);
         assertEq(proposal.frxUsdOracle(), deployment.frxUsdUsdOracle);
         assertEq(proposal.usdcOracle(), deployment.usdcUsdOracle);
@@ -44,8 +37,6 @@ contract PegKeeperV3ProposalDeploymentJsonTest is Test {
         assertEq(proposal.frxUsdKeeper(), deployment.frxUsdPegKeeper);
         assertEq(proposal.usdcKeeper(), deployment.usdcPegKeeper);
         assertEq(proposal.usdtKeeper(), deployment.usdtPegKeeper);
-        assertEq(proposal.factoryOwnershipNonce(), deployment.factoryOwnershipNonce);
-        assertEq(proposal.policyOwnershipNonce(), deployment.policyOwnershipNonce);
 
         vm.removeFile(TEST_OUTPUT);
     }

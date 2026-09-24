@@ -26,9 +26,6 @@ check:
 		out/PegKeeperV3.vy/PegKeeperV3.json \
 		out/IPegKeeperV3.sol/IPegKeeperV3.json
 	python3 scripts/check-vyper-solidity-abi.py \
-		out/PegKeeperV3Factory.vy/PegKeeperV3Factory.json \
-		out/IPegKeeperV3Factory.sol/IPegKeeperV3Factory.json
-	python3 scripts/check-vyper-solidity-abi.py \
 		out/PegKeeperPolicy.vy/PegKeeperPolicy.json \
 		out/IPegKeeperPolicy.sol/IPegKeeperPolicy.json
 	python3 scripts/check-vyper-solidity-abi.py \

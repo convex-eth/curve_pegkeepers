@@ -3,7 +3,7 @@
 @title PegKeeper V3
 @license MIT
 @notice Adds and removes direct Curve liquidity to help keep crvUSD near its target price.
-@dev Holds LP backing, accounts crvUSD debt, and delegates admission to Factory policy.
+@dev Holds LP backing, accounts crvUSD debt, and delegates admission to a selected policy.
 """
 
 interface ERC20:
@@ -15,13 +15,6 @@ interface ERC20:
 interface ControllerFactory:
     def stablecoin() -> address: view
     def debt_ceiling(_account: address) -> uint256: view
-
-interface PegKeeperFactory:
-    def controllerFactory() -> address: view
-    def admin() -> address: view
-    def emergency_admin() -> address: view
-    def fee_receiver() -> address: view
-    def policy() -> address: view
 
 interface PegKeeperPolicy:
     def expansion_regime() -> bool: view
@@ -130,11 +123,31 @@ event PolicyUpdated:
 
 event InterventionPolicyUpdated:
     max_intervention_share_bps: uint256
-    min_intervention_delay: uint256
+    action_delay: uint256
 
 event BackingOraclePolicyUpdated:
     backing_oracle: indexed(address)
     min_backing_price: uint256
+
+
+event AdminUpdated:
+    old_admin: indexed(address)
+    new_admin: indexed(address)
+
+
+event EmergencyAdminUpdated:
+    old_emergency_admin: indexed(address)
+    new_emergency_admin: indexed(address)
+
+
+event FeeReceiverUpdated:
+    old_fee_receiver: indexed(address)
+    new_fee_receiver: indexed(address)
+
+
+event PolicyContractUpdated:
+    old_policy: indexed(address)
+    new_policy: indexed(address)
 
 
 
@@ -145,6 +158,8 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
+DEFAULT_MAX_INTERVENTION_SHARE_BPS: constant(uint256) = 2_000
+DEFAULT_ACTION_DELAY: constant(uint256) = 12
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
@@ -152,7 +167,6 @@ DIRECTION_ALL: constant(uint256) = 2
 
 crv_usd: public(immutable(ERC20))
 
-_factory: PegKeeperFactory
 _controller_factory: ControllerFactory
 _backing_asset: ERC20
 _paired_token: PairedToken
@@ -162,7 +176,11 @@ paired_token_is_erc4626: public(bool)
 backing_multiplier: uint256
 backing_oracle: public(PriceOracle)
 min_backing_oracle_price: public(uint256)
-initialized: public(bool)
+
+admin: public(address)
+emergency_admin: public(address)
+fee_receiver: public(address)
+policy: public(address)
 
 pool_crvusd_index: public(uint256)
 pool_paired_token_index: public(uint256)
@@ -171,7 +189,7 @@ entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
 max_deployed_crvusd: public(uint256)
 max_intervention_share_bps: public(uint256)
-min_intervention_delay: public(uint256)
+action_delay: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
 
@@ -183,18 +201,110 @@ all_execution_paused: public(bool)
 
 
 @deploy
-def __init__(_crv_usd: ERC20):
+def __init__(
+    _controller_factory: ControllerFactory,
+    _pool: Pool,
+    _paired_token_is_erc4626: bool,
+    _pool_uses_dynamic_arrays: bool,
+    _max_deployed_crvusd: uint256,
+    _keeper_index: uint256,
+    _backing_oracle: PriceOracle,
+    _entry_min_profit_ppm: uint256,
+    _normal_exit_min_profit_ppm: uint256,
+    _amm_execution_buffer_bps: uint256,
+    _admin: address,
+    _emergency_admin: address,
+    _fee_receiver: address,
+    _policy: address,
+):
     """
-    @notice Prevents the base contract from being set up as a keeper.
+    @notice Deploys one fully configured standalone keeper for one direct pool.
     """
-    assert _crv_usd.address != empty(address)
-    crv_usd = _crv_usd
+    assert _controller_factory.address != empty(address)
+    assert _controller_factory.address.codesize > 0
+    assert _pool.address != empty(address)
+    assert _pool.address.codesize > 0
+    assert _max_deployed_crvusd > 0
+    assert _keeper_index > 0
+    assert _backing_oracle.address != empty(address)
+    assert _backing_oracle.address.codesize > 0
+    assert _normal_exit_min_profit_ppm <= PPM
+    assert _amm_execution_buffer_bps <= BPS
+    assert _admin != empty(address)
+    assert _emergency_admin != empty(address)
+    assert _fee_receiver != empty(address)
+    assert _admin != _emergency_admin
+    assert _policy != empty(address) and _policy.codesize > 0
 
-    # Lock the standalone implementation. Proxies have independent zeroed storage.
-    self.initialized = True
-    self.expansion_paused = True
-    self.contraction_paused = True
-    self.all_execution_paused = True
+    crv_usd_address: address = staticcall _controller_factory.stablecoin()
+    assert crv_usd_address != empty(address) and crv_usd_address.codesize > 0
+    crv_usd = ERC20(crv_usd_address)
+
+    coin_0: address = staticcall _pool.coins(0)
+    coin_1: address = staticcall _pool.coins(1)
+    paired_token_address: address = empty(address)
+    if coin_0 == crv_usd_address and coin_1 != crv_usd_address:
+        self.pool_crvusd_index = 0
+        self.pool_paired_token_index = 1
+        paired_token_address = coin_1
+    elif coin_1 == crv_usd_address and coin_0 != crv_usd_address:
+        self.pool_crvusd_index = 1
+        self.pool_paired_token_index = 0
+        paired_token_address = coin_0
+    else:
+        raise
+
+    paired_token: PairedToken = PairedToken(paired_token_address)
+    backing_asset_address: address = paired_token_address
+    if _paired_token_is_erc4626:
+        backing_asset_address = staticcall paired_token.asset()
+        assert backing_asset_address != empty(address)
+        assert staticcall paired_token.convertToAssets(0) == 0
+        assert staticcall paired_token.convertToShares(0) == 0
+    backing_asset: ERC20 = ERC20(backing_asset_address)
+
+    crv_decimals: uint256 = staticcall ERC20(crv_usd_address).decimals()
+    backing_decimals: uint256 = staticcall backing_asset.decimals()
+    assert crv_decimals == 18
+    assert backing_decimals <= 18
+    assert staticcall ERC20(_pool.address).decimals() == 18
+    assert staticcall _pool.get_virtual_price() > 0
+
+    self._controller_factory = _controller_factory
+    extcall ERC20(crv_usd_address).approve(_controller_factory.address, max_value(uint256))
+    self._backing_asset = backing_asset
+    self._paired_token = paired_token
+    self.pool = _pool
+    self.pool_uses_dynamic_arrays = _pool_uses_dynamic_arrays
+    self.paired_token_is_erc4626 = _paired_token_is_erc4626
+    self.backing_multiplier = 10 ** (18 - backing_decimals)
+    self.backing_oracle = _backing_oracle
+    self.min_backing_oracle_price = DEFAULT_MIN_BACKING_ORACLE_PRICE
+
+    self.admin = _admin
+    self.emergency_admin = _emergency_admin
+    self.fee_receiver = _fee_receiver
+    self.policy = _policy
+
+    self.keeper_index = _keeper_index
+    self.name = concat("Pegkeeper ", uint2str(_keeper_index))
+    self.entry_min_profit_ppm = _entry_min_profit_ppm
+    self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
+    self.max_deployed_crvusd = _max_deployed_crvusd
+    self.max_intervention_share_bps = DEFAULT_MAX_INTERVENTION_SHARE_BPS
+    self.action_delay = DEFAULT_ACTION_DELAY
+    self.amm_execution_buffer_bps = _amm_execution_buffer_bps
+
+    self.expansion_paused = False
+    self.contraction_paused = False
+    self.all_execution_paused = False
+
+    log AdminUpdated(old_admin=empty(address), new_admin=_admin)
+    log EmergencyAdminUpdated(
+        old_emergency_admin=empty(address), new_emergency_admin=_emergency_admin
+    )
+    log FeeReceiverUpdated(old_fee_receiver=empty(address), new_fee_receiver=_fee_receiver)
+    log PolicyContractUpdated(old_policy=empty(address), new_policy=_policy)
 
 
 @external
@@ -207,93 +317,6 @@ def version() -> (uint256, uint256, uint256):
 
 
 @external
-def initialize(
-    _backing_asset: ERC20,
-    _paired_token: PairedToken,
-    _pool: Pool,
-    _pool_uses_dynamic_arrays: bool,
-    _max_deployed_crvusd: uint256,
-    _keeper_index: uint256,
-    _backing_oracle: PriceOracle,
-):
-    """
-    @notice Sets up a new keeper with one direct pool, its paired token, limits, and oracle.
-    """
-    assert not self.initialized
-    self.initialized = True
-    assert msg.sender.codesize > 0
-    assert _backing_asset.address != empty(address)
-    assert _paired_token.address != empty(address)
-    assert _pool.address != empty(address)
-    assert _pool.address.codesize > 0
-    assert _max_deployed_crvusd > 0
-    assert _keeper_index > 0
-    assert _backing_oracle.address != empty(address)
-    assert _backing_oracle.address.codesize > 0
-
-    controller_factory: address = staticcall PegKeeperFactory(msg.sender).controllerFactory()
-    assert controller_factory != empty(address)
-    assert staticcall ControllerFactory(controller_factory).stablecoin() == crv_usd.address
-    assert crv_usd.address != _paired_token.address
-    is_erc4626: bool = _paired_token.address != _backing_asset.address
-    if is_erc4626:
-        assert staticcall _paired_token.asset() == _backing_asset.address
-        assert staticcall _paired_token.convertToAssets(0) == 0
-        assert staticcall _paired_token.convertToShares(0) == 0
-
-    crv_decimals: uint256 = staticcall crv_usd.decimals()
-    backing_decimals: uint256 = staticcall _backing_asset.decimals()
-    assert crv_decimals == 18
-    assert backing_decimals <= 18
-    assert staticcall ERC20(_pool.address).decimals() == 18
-
-    coin_0: address = staticcall _pool.coins(0)
-    coin_1: address = staticcall _pool.coins(1)
-    if coin_0 == crv_usd.address and coin_1 == _paired_token.address:
-        self.pool_crvusd_index = 0
-        self.pool_paired_token_index = 1
-    elif coin_0 == _paired_token.address and coin_1 == crv_usd.address:
-        self.pool_crvusd_index = 1
-        self.pool_paired_token_index = 0
-    else:
-        raise
-    assert staticcall _pool.get_virtual_price() > 0
-
-    self._factory = PegKeeperFactory(msg.sender)
-    self._controller_factory = ControllerFactory(controller_factory)
-    extcall crv_usd.approve(controller_factory, max_value(uint256))
-    self._backing_asset = _backing_asset
-    self._paired_token = _paired_token
-    self.pool = _pool
-    self.pool_uses_dynamic_arrays = _pool_uses_dynamic_arrays
-    self.paired_token_is_erc4626 = is_erc4626
-    self.backing_multiplier = 10 ** (18 - backing_decimals)
-    self.backing_oracle = _backing_oracle
-    self.min_backing_oracle_price = DEFAULT_MIN_BACKING_ORACLE_PRICE
-
-    self.keeper_index = _keeper_index
-    self.name = concat("Pegkeeper ", uint2str(_keeper_index))
-    self.entry_min_profit_ppm = 10
-    self.normal_exit_min_profit_ppm = 500
-    self.max_deployed_crvusd = _max_deployed_crvusd
-    self.max_intervention_share_bps = 2_000
-    self.min_intervention_delay = 12
-
-    self.expansion_paused = False
-    self.contraction_paused = False
-    self.all_execution_paused = False
-
-
-@external
-@view
-def factory() -> address:
-    """
-    @notice Returns the factory that created this keeper.
-    """
-    return self._factory.address
-
-
-@external
 @view
 def controller_factory() -> address:
     """
@@ -302,37 +325,10 @@ def controller_factory() -> address:
     return self._controller_factory.address
 
 
-@external
-@view
-def admin() -> address:
-    """
-    @notice Returns the account allowed to change keeper settings.
-    """
-    return staticcall self._factory.admin()
-
-
-@external
-@view
-def emergency_admin() -> address:
-    """
-    @notice Returns the account allowed to pause keeper actions.
-    """
-    return staticcall self._factory.emergency_admin()
-
-
-@external
-@view
-def fee_receiver() -> address:
-    """
-    @notice Returns the account that receives withdrawn protocol profit.
-    """
-    return staticcall self._factory.fee_receiver()
-
-
 @internal
 @view
 def _is_admin(_account: address) -> bool:
-    return _account == staticcall self._factory.admin()
+    return _account == self.admin
 
 
 @external
@@ -453,7 +449,7 @@ def _backing_price() -> uint256:
 @internal
 @view
 def _policy_address() -> address:
-    policy: address = staticcall self._factory.policy()
+    policy: address = self.policy
     assert policy != empty(address) and policy.codesize > 0
     return policy
 
@@ -481,7 +477,7 @@ def _require_contraction_policy():
 @internal
 @view
 def _allocation_allowed() -> bool:
-    policy: address = staticcall self._factory.policy()
+    policy: address = self.policy
     if policy == empty(address) or policy.codesize == 0:
         return False
 
@@ -600,11 +596,11 @@ def _local_contraction_limit() -> uint256:
 
 @internal
 @view
-def _intervention_delay_elapsed() -> bool:
+def _action_delay_elapsed() -> bool:
     last_intervention_at: uint256 = self.last_intervention_at
     return (
         last_intervention_at == 0
-        or block.timestamp - last_intervention_at >= self.min_intervention_delay
+        or block.timestamp - last_intervention_at >= self.action_delay
     )
 
 
@@ -613,7 +609,7 @@ def _intervention_delay_elapsed() -> bool:
 def _available_expansion_without_policy() -> uint256:
     if self.all_execution_paused or self.expansion_paused:
         return 0
-    if not self._intervention_delay_elapsed():
+    if not self._action_delay_elapsed():
         return 0
 
     budget: uint256 = min(
@@ -631,7 +627,7 @@ def _available_expansion_without_policy() -> uint256:
 def _available_contraction_without_policy() -> uint256:
     if self.all_execution_paused or self.contraction_paused:
         return 0
-    if not self._intervention_delay_elapsed():
+    if not self._action_delay_elapsed():
         return 0
 
     held: uint256 = self._lp_inventory()
@@ -784,7 +780,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
         self.deployed_crvusd = 0
         self._transfer_exact_to(
             crv_usd,
-            staticcall self._factory.fee_receiver(),
+            self.fee_receiver,
             net_crv_usd - deployed_crv_usd,
         )
     else:
@@ -867,10 +863,7 @@ def set_amm_execution_buffer(_execution_buffer_bps: uint256):
     """
     @notice Changes the allowed LP-mint shortfall or LP-burn excess against AMM quotes.
     """
-    assert (
-        msg.sender == staticcall self._factory.admin()
-        or msg.sender == self._factory.address
-    )
+    assert self._is_admin(msg.sender)
     assert _execution_buffer_bps <= BPS
 
     self.amm_execution_buffer_bps = _execution_buffer_bps
@@ -1292,7 +1285,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
 
-    fee_receiver: address = staticcall self._factory.fee_receiver()
+    fee_receiver: address = self.fee_receiver
     self._transfer_exact_to(crv_usd, fee_receiver, crv_usd_transferred)
     crv_usd_balance_after: uint256 = staticcall crv_usd.balanceOf(self)
     assert crv_usd_balance_before >= crv_usd_balance_after
@@ -1382,7 +1375,7 @@ def update(_beneficiary: address = msg.sender) -> uint256:
     @notice Executes the sole canonical intervention and returns caller reward in crvUSD-value terms.
     """
     assert _beneficiary != empty(address)
-    if not self._intervention_delay_elapsed():
+    if not self._action_delay_elapsed():
         return 0
     if self._local_expansion_limit() > 0:
         crv_usd_deployed: uint256 = 0
@@ -1403,14 +1396,14 @@ def update(_beneficiary: address = msg.sender) -> uint256:
 @nonreentrant
 def borrow_crvusd(_amount: uint256, _receiver: address):
     """
-    @notice Gives a Factory-admin-selected receiver policy-approved crvUSD and records it as debt.
+    @notice Gives an admin-selected receiver policy-approved crvUSD and records it as debt.
     """
     assert self._is_admin(msg.sender)
     assert not self.all_execution_paused
     assert not self.expansion_paused
     assert _amount > 0 and _receiver != empty(address)
     self._require_expansion_policy()
-    assert self._intervention_delay_elapsed()
+    assert self._action_delay_elapsed()
     assert _amount <= self._local_expansion_limit()
     self._backing_price()
 
@@ -1476,22 +1469,79 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
 
 
 @external
+def set_admin(_new_admin: address):
+    """
+    @notice Replaces the account allowed to change keeper settings.
+    """
+    assert self._is_admin(msg.sender)
+    assert _new_admin != empty(address)
+    assert _new_admin != self.emergency_admin
+
+    old_admin: address = self.admin
+    self.admin = _new_admin
+    log AdminUpdated(old_admin=old_admin, new_admin=_new_admin)
+
+
+@external
+def set_emergency_admin(_new_emergency_admin: address):
+    """
+    @notice Replaces the account allowed to pause keeper actions.
+    """
+    assert self._is_admin(msg.sender)
+    assert _new_emergency_admin != empty(address)
+    assert _new_emergency_admin != self.admin
+
+    old_emergency_admin: address = self.emergency_admin
+    self.emergency_admin = _new_emergency_admin
+    log EmergencyAdminUpdated(
+        old_emergency_admin=old_emergency_admin,
+        new_emergency_admin=_new_emergency_admin,
+    )
+
+
+@external
+def set_fee_receiver(_new_fee_receiver: address):
+    """
+    @notice Replaces the account that receives withdrawn protocol profit.
+    """
+    assert self._is_admin(msg.sender)
+    assert _new_fee_receiver != empty(address)
+
+    old_fee_receiver: address = self.fee_receiver
+    self.fee_receiver = _new_fee_receiver
+    log FeeReceiverUpdated(old_fee_receiver=old_fee_receiver, new_fee_receiver=_new_fee_receiver)
+
+
+@external
+def set_policy_contract(_new_policy: address):
+    """
+    @notice Replaces the aggregate direction and admission policy used by this keeper.
+    """
+    assert self._is_admin(msg.sender)
+    assert _new_policy != empty(address) and _new_policy.codesize > 0
+
+    old_policy: address = self.policy
+    self.policy = _new_policy
+    log PolicyContractUpdated(old_policy=old_policy, new_policy=_new_policy)
+
+
+@external
 def set_intervention_policy(
     _max_intervention_share_bps: uint256,
-    _min_intervention_delay: uint256,
+    _action_delay: uint256,
 ):
     """
-    @notice Changes the local-imbalance share and minimum time between interventions.
+    @notice Changes the local-imbalance share and action delay.
     """
     assert self._is_admin(msg.sender)
     assert _max_intervention_share_bps > 0
     assert _max_intervention_share_bps <= BPS
 
     self.max_intervention_share_bps = _max_intervention_share_bps
-    self.min_intervention_delay = _min_intervention_delay
+    self.action_delay = _action_delay
     log InterventionPolicyUpdated(
         max_intervention_share_bps=_max_intervention_share_bps,
-        min_intervention_delay=_min_intervention_delay,
+        action_delay=_action_delay,
     )
 
 
@@ -1524,8 +1574,8 @@ def set_direction_paused(_direction: uint256, _paused: bool):
     """
     @notice Pauses or resumes expansion, contraction, or all execution.
     """
-    admin: address = staticcall self._factory.admin()
-    emergency_admin: address = staticcall self._factory.emergency_admin()
+    admin: address = self.admin
+    emergency_admin: address = self.emergency_admin
     assert msg.sender == admin or msg.sender == emergency_admin
     if msg.sender == emergency_admin:
         assert _paused
