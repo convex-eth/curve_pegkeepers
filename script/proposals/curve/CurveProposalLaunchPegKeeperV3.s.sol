@@ -17,7 +17,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
 
     uint256 public constant KEEPER_RUNTIME_SIZE = 17_019;
     bytes32 public constant EXPECTED_KEEPER_RUNTIME_HASH =
-        0x147f13c1e456fa7ff0fdda157ec3e68ab06b54eb6cc38eb43c10d5aa78c5257a;
+        0xe7c677f23c543e13aea315ca4384be7f7fa9c906532d4e90663bd528ac789cf8;
     uint256 public constant POLICY_RUNTIME_SIZE = 2_947;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0xe4388d617ce6babcb14d56859da66b68f4978dcf32c34adb8ac2f01559f279d0;
@@ -31,7 +31,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
+    uint256 public constant ACTION_DELAY_BPS = 2_000;
     uint256 public constant ACTION_DELAY = 12 seconds;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_CHAINLINK_MAX_DELAY = 26 hours;
@@ -231,7 +231,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");
         require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
-        require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
+        require(keeper.action_delay_bps() == ACTION_DELAY_BPS, "share cap");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(keeper.amm_execution_buffer_bps() == AMM_EXECUTION_BUFFER_BPS, "AMM buffer");
         require(keeper.admin() == CURVE_OWNERSHIP_AGENT, "keeper admin");

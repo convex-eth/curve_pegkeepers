@@ -39,7 +39,7 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant MAX_INTERVENTION_SHARE_BPS = 2_000;
+    uint256 public constant ACTION_DELAY_BPS = 2_000;
     uint256 public constant ACTION_DELAY = 12 seconds;
 
     struct Config {
@@ -337,7 +337,7 @@ contract DeployPegKeeperV3 is Script {
             "keeper reward policy mismatch"
         );
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
-        require(keeper.max_intervention_share_bps() == MAX_INTERVENTION_SHARE_BPS, "share cap");
+        require(keeper.action_delay_bps() == ACTION_DELAY_BPS, "share cap");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(
             keeper.amm_execution_buffer_bps() == config.ammExecutionBufferBps, "execution buffer"

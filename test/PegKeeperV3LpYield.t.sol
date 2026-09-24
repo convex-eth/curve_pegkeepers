@@ -17,7 +17,7 @@ interface ILpPegKeeperV3 {
     function deployed_crvusd() external view returns (uint256);
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
-    function max_intervention_share_bps() external view returns (uint256);
+    function action_delay_bps() external view returns (uint256);
     function action_delay() external view returns (uint256);
     function expansion_paused() external view returns (bool);
     function all_execution_paused() external view returns (bool);
@@ -43,7 +43,7 @@ interface ILpPegKeeperV3 {
         uint256 maxDeployedCrvUsd
     ) external;
 
-    function set_intervention_policy(uint256 maxInterventionShareBps, uint256 actionDelay) external;
+    function set_intervention_policy(uint256 actionDelayBps, uint256 actionDelay) external;
     function set_admin(address newAdmin) external;
     function set_emergency_admin(address newEmergencyAdmin) external;
     function set_fee_receiver(address newFeeReceiver) external;
@@ -758,7 +758,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_interventionPolicyDefaultsAndAdminCanSetZeroDelay() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
-        assertEq(keeper.max_intervention_share_bps(), 2_000);
+        assertEq(keeper.action_delay_bps(), 2_000);
         assertEq(keeper.action_delay(), 12);
         assertEq(keeper.last_intervention_at(), 0);
 
@@ -768,7 +768,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(governance);
         keeper.set_intervention_policy(5_000, 0);
-        assertEq(keeper.max_intervention_share_bps(), 5_000);
+        assertEq(keeper.action_delay_bps(), 5_000);
         assertEq(keeper.action_delay(), 0);
 
         vm.startPrank(governance);
@@ -777,6 +777,19 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.expectRevert();
         keeper.set_intervention_policy(10_001, 0);
         vm.stopPrank();
+    }
+
+    function test_actionDelayBpsReplacesMaxInterventionShareBpsGetter() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        (bool actionDelayBpsExists, bytes memory encodedBps) =
+            address(keeper).staticcall(abi.encodeWithSignature("action_delay_bps()"));
+        assertTrue(actionDelayBpsExists);
+        assertEq(abi.decode(encodedBps, (uint256)), 2_000);
+
+        (bool legacyGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("max_intervention_share_bps()"));
+        assertFalse(legacyGetterExists);
     }
 
     function test_actionDelayMatchesV2GetterAndLegacyNameIsAbsent() public {

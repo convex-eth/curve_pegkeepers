@@ -66,7 +66,7 @@ The Policy has no hard cross-keeper sequencing.
 |---|---:|---:|
 | `entryMinProfitPpm` | `10` (`0.1 bp`) | `300` (`3 bp`) |
 | `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `80` (`0.8 bp`) |
-| `maxInterventionShareBps` | `2_000` (`20%`) | `2_000` (`20%`) |
+| `actionDelayBps` | `2_000` (`20%`) | `2_000` (`20%`) |
 | `actionDelay` | `12` seconds | `12` seconds |
 | retained-backing floor | `0.999e18` | `0.999e18` |
 

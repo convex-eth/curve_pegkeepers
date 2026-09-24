@@ -122,7 +122,7 @@ event PolicyUpdated:
     max_deployed_crvusd: uint256
 
 event InterventionPolicyUpdated:
-    max_intervention_share_bps: uint256
+    action_delay_bps: uint256
     action_delay: uint256
 
 event BackingOraclePolicyUpdated:
@@ -158,7 +158,7 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
-DEFAULT_MAX_INTERVENTION_SHARE_BPS: constant(uint256) = 2_000
+DEFAULT_ACTION_DELAY_BPS: constant(uint256) = 2_000
 DEFAULT_ACTION_DELAY: constant(uint256) = 12
 
 DIRECTION_EXPANSION: constant(uint256) = 0
@@ -188,7 +188,7 @@ pool_paired_token_index: public(uint256)
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
 max_deployed_crvusd: public(uint256)
-max_intervention_share_bps: public(uint256)
+action_delay_bps: public(uint256)
 action_delay: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
@@ -291,7 +291,7 @@ def __init__(
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
     self.max_deployed_crvusd = _max_deployed_crvusd
-    self.max_intervention_share_bps = DEFAULT_MAX_INTERVENTION_SHARE_BPS
+    self.action_delay_bps = DEFAULT_ACTION_DELAY_BPS
     self.action_delay = DEFAULT_ACTION_DELAY
     self.amm_execution_buffer_bps = _amm_execution_buffer_bps
 
@@ -579,7 +579,7 @@ def _local_expansion_limit() -> uint256:
     )
     if paired_token_balance <= crv_usd_balance:
         return 0
-    return (paired_token_balance - crv_usd_balance) * self.max_intervention_share_bps // BPS
+    return (paired_token_balance - crv_usd_balance) * self.action_delay_bps // BPS
 
 
 @internal
@@ -591,7 +591,7 @@ def _local_contraction_limit() -> uint256:
     )
     if crv_usd_balance <= paired_token_balance:
         return 0
-    return (crv_usd_balance - paired_token_balance) * self.max_intervention_share_bps // BPS
+    return (crv_usd_balance - paired_token_balance) * self.action_delay_bps // BPS
 
 
 @internal
@@ -1527,20 +1527,20 @@ def set_policy_contract(_new_policy: address):
 
 @external
 def set_intervention_policy(
-    _max_intervention_share_bps: uint256,
+    _action_delay_bps: uint256,
     _action_delay: uint256,
 ):
     """
     @notice Changes the local-imbalance share and action delay.
     """
     assert self._is_admin(msg.sender)
-    assert _max_intervention_share_bps > 0
-    assert _max_intervention_share_bps <= BPS
+    assert _action_delay_bps > 0
+    assert _action_delay_bps <= BPS
 
-    self.max_intervention_share_bps = _max_intervention_share_bps
+    self.action_delay_bps = _action_delay_bps
     self.action_delay = _action_delay
     log InterventionPolicyUpdated(
-        max_intervention_share_bps=_max_intervention_share_bps,
+        action_delay_bps=_action_delay_bps,
         action_delay=_action_delay,
     )
 

@@ -186,9 +186,9 @@ runtime core:            16,987 bytes
 standalone runtime:      17,019 bytes
 EIP-170 headroom:         7,557 bytes
 runtime core hash:
-0x3ea6b15c5e12d39aecf1f98e99076598f8ff85cadba14cb29b403e61d8e0db34
+0x4fef80b3378ed9c00bafa476515296edc1b89224e983ae5a6b9cf26a3e9c3694
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0x147f13c1e456fa7ff0fdda157ec3e68ab06b54eb6cc38eb43c10d5aa78c5257a
+0xe7c677f23c543e13aea315ca4384be7f7fa9c906532d4e90663bd528ac789cf8
 
 PegKeeperPolicy runtime:   2,947 bytes
 policy hash:
