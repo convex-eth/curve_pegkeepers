@@ -24,7 +24,7 @@ The constructor:
 - derives the paired token from the pool;
 - optionally derives an ERC-4626 backing asset through `asset()`;
 - fixes the pool liquidity ABI mode, keeper index, backing oracle, cap, profit floors, keeper reward share, and execution buffer;
-- stores the final `admin`, `emergency_admin`, `fee_receiver`, and `policy` directly on that keeper;
+- stores the final `admin`, `emergency_admin`, and selected `policy` directly on that keeper;
 - grants the ControllerFactory unlimited crvUSD allowance for ceiling reductions and residual-allocation burning.
 
 ```text
@@ -55,7 +55,7 @@ policy.can_contract();
 policy.expansion_regime();
 ```
 
-The current `PegKeeperPolicy` owns only the aggregate crvUSD oracle. It does not own a keeper list or reward setting and does not call keepers for local conditions. Its current rulings use only aggregate price. The no-argument selectors deliberately preserve a replaceable Policy boundary: a future Policy can add global or caller-aware rules, using `msg.sender` as the querying keeper, without changing keeper bytecode.
+The current `PegKeeperPolicy` owns the aggregate crvUSD oracle and global `fee_receiver`. It does not own a keeper list or reward setting and does not call keepers for local conditions. Its current rulings use only aggregate price. The no-argument selectors deliberately preserve a replaceable Policy boundary: a future Policy can add global or caller-aware rules, using `msg.sender` as the querying keeper, without changing keeper bytecode.
 
 Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, reward accounting, and final solvency. `can_expand_without_policy()` exposes those local expansion checks for observation; the current Policy does not invoke it. One keeper's local state cannot block another through the current Policy.
 
@@ -92,17 +92,17 @@ Each keeper directly exposes:
 ```solidity
 admin();
 emergency_admin();
-fee_receiver();
 policy();
 keeper_profit_share_bps();
 set_admin(newAdmin);
 set_emergency_admin(newEmergencyAdmin);
-set_fee_receiver(newFeeReceiver);
 set_policy_contract(newPolicy);
 set_keeper_profit_share_bps(newKeeperProfitShareBps);
 ```
 
-Only the current keeper admin may update these values. Admin and emergency admin must remain distinct. A replacement Policy must contain code. Changing `policy` changes the global-ruling contract queried by that keeper. Registry enrollment is independent and requires no coordinated execution handoff.
+Only the current keeper admin may update these values. Admin and emergency admin must remain distinct. A replacement Policy must contain code. Changing `policy` changes both the global-ruling contract and global fee receiver queried by that keeper. Registry enrollment is independent and requires no coordinated execution handoff.
+
+The Policy owner controls `fee_receiver` once for all keepers selecting that Policy. The address must remain nonzero, and Policy configuration is frozen while an ownership handoff is pending.
 
 `admin` may configure policy parameters, execute recovery calls, pause or unpause, and use the policy-gated external draw. `emergency_admin` may only pause.
 
@@ -122,7 +122,7 @@ The draw cannot prove that an external module returns LP backing. A production i
 
 Loose paired-token donations can be swept into LP. Positive crvUSD matching requires the selected Policy's global expansion ruling. Under the current price-only Policy, donations are fully matched at or above `$1` and deposited one-sided below `$1`; keeper-local backing, capacity, balance, and solvency checks remain binding. Donation value is excluded from caller-profit attribution.
 
-`withdraw_profit()` first settles loose paired-token donations, then transfers all claimable idle crvUSD to the keeper's current local `fee_receiver`. The bounded overload performs the same accounting with a caller-supplied transfer cap. Both remain callable in contraction regimes.
+`withdraw_profit()` first settles loose paired-token donations, then transfers all claimable idle crvUSD to the selected Policy's current global `fee_receiver`. The bounded overload performs the same accounting with a caller-supplied transfer cap. Both remain callable in contraction regimes.
 
 Entry and normal-contraction floors apply to gross realized profit before keeper compensation and are independent:
 
@@ -175,18 +175,18 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      19,557 bytes
-runtime core:            16,885 bytes
-standalone runtime:      16,917 bytes
-EIP-170 headroom:         7,659 bytes
+standalone initcode:      19,458 bytes
+runtime core:            16,898 bytes
+standalone runtime:      16,930 bytes
+EIP-170 headroom:         7,646 bytes
 runtime core hash:
-0x9e1fd9f4249cc24b20281699acfc90631fcacf78d8f894eb47dafc440263e472
+0x8bf821239f16bf63632a2ab9084b608e70bcd1f8f22397fa96cfdc2792a87ff0
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0x4415dd1373f39d0d5bfc3270ef9497319d2f73086cf5bb921fbc5277e71f9ba2
+0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77
 
-PegKeeperPolicy runtime:   1,170 bytes
+PegKeeperPolicy runtime:   1,333 bytes
 policy hash:
-0xd92c5aa2de65d423c89d099c669b7e309b936e189a207a08907c8006d9de57d1
+0x0fa0919fe5fd739c535645ca9a4be505c314126efbbe536f89fdebd7ead1c640
 
 PegKeeperRegistry runtime: 1,609 bytes
 registry hash:

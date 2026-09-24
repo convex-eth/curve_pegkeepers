@@ -20,6 +20,7 @@ interface PegKeeperPolicy:
     def expansion_regime() -> bool: view
     def can_expand() -> bool: view
     def can_contract() -> bool: view
+    def fee_receiver() -> address: view
 
 interface Pool:
     def coins(_index: uint256) -> address: view
@@ -126,7 +127,7 @@ event KeeperProfitShareUpdated:
 
 
 event InterventionPolicyUpdated:
-    action_delay_bps: uint256
+    action_imbalance_bps: uint256
     action_delay: uint256
 
 event BackingOraclePolicyUpdated:
@@ -144,11 +145,6 @@ event EmergencyAdminUpdated:
     new_emergency_admin: indexed(address)
 
 
-event FeeReceiverUpdated:
-    old_fee_receiver: indexed(address)
-    new_fee_receiver: indexed(address)
-
-
 event PolicyContractUpdated:
     old_policy: indexed(address)
     new_policy: indexed(address)
@@ -162,7 +158,7 @@ BPS: constant(uint256) = 10_000
 PPM: constant(uint256) = 1_000_000
 PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
-DEFAULT_ACTION_DELAY_BPS: constant(uint256) = 2_000
+DEFAULT_ACTION_IMBALANCE_BPS: constant(uint256) = 2_000
 DEFAULT_ACTION_DELAY: constant(uint256) = 12
 
 DIRECTION_EXPANSION: constant(uint256) = 0
@@ -183,7 +179,6 @@ min_backing_oracle_price: public(uint256)
 
 admin: public(address)
 emergency_admin: public(address)
-fee_receiver: public(address)
 policy: public(address)
 
 pool_crvusd_index: public(uint256)
@@ -193,7 +188,7 @@ entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
 max_deployed_crvusd: public(uint256)
 keeper_profit_share_bps: public(uint256)
-action_delay_bps: public(uint256)
+action_imbalance_bps: public(uint256)
 action_delay: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
@@ -220,7 +215,6 @@ def __init__(
     _keeper_profit_share_bps: uint256,
     _admin: address,
     _emergency_admin: address,
-    _fee_receiver: address,
     _policy: address,
 ):
     """
@@ -239,7 +233,6 @@ def __init__(
     assert _keeper_profit_share_bps <= BPS
     assert _admin != empty(address)
     assert _emergency_admin != empty(address)
-    assert _fee_receiver != empty(address)
     assert _admin != _emergency_admin
     assert _policy != empty(address) and _policy.codesize > 0
 
@@ -290,7 +283,6 @@ def __init__(
 
     self.admin = _admin
     self.emergency_admin = _emergency_admin
-    self.fee_receiver = _fee_receiver
     self.policy = _policy
 
     self.keeper_index = _keeper_index
@@ -299,7 +291,7 @@ def __init__(
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
     self.max_deployed_crvusd = _max_deployed_crvusd
     self.keeper_profit_share_bps = _keeper_profit_share_bps
-    self.action_delay_bps = DEFAULT_ACTION_DELAY_BPS
+    self.action_imbalance_bps = DEFAULT_ACTION_IMBALANCE_BPS
     self.action_delay = DEFAULT_ACTION_DELAY
     self.amm_execution_buffer_bps = _amm_execution_buffer_bps
 
@@ -311,7 +303,6 @@ def __init__(
     log EmergencyAdminUpdated(
         old_emergency_admin=empty(address), new_emergency_admin=_emergency_admin
     )
-    log FeeReceiverUpdated(old_fee_receiver=empty(address), new_fee_receiver=_fee_receiver)
     log PolicyContractUpdated(old_policy=empty(address), new_policy=_policy)
     log KeeperProfitShareUpdated(
         old_keeper_profit_share_bps=0,
@@ -468,6 +459,14 @@ def _policy_address() -> address:
 
 @internal
 @view
+def _fee_receiver() -> address:
+    receiver: address = staticcall PegKeeperPolicy(self._policy_address()).fee_receiver()
+    assert receiver != empty(address)
+    return receiver
+
+
+@internal
+@view
 def _keeper_reward(_gross_profit: uint256) -> uint256:
     return _gross_profit * self.keeper_profit_share_bps // BPS
 
@@ -568,7 +567,7 @@ def _local_expansion_limit() -> uint256:
     )
     if paired_token_balance <= crv_usd_balance:
         return 0
-    return (paired_token_balance - crv_usd_balance) * self.action_delay_bps // BPS
+    return (paired_token_balance - crv_usd_balance) * self.action_imbalance_bps // BPS
 
 
 @internal
@@ -580,7 +579,7 @@ def _local_contraction_limit() -> uint256:
     )
     if crv_usd_balance <= paired_token_balance:
         return 0
-    return (crv_usd_balance - paired_token_balance) * self.action_delay_bps // BPS
+    return (crv_usd_balance - paired_token_balance) * self.action_imbalance_bps // BPS
 
 
 @internal
@@ -769,7 +768,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
         self.deployed_crvusd = 0
         self._transfer_exact_to(
             crv_usd,
-            self.fee_receiver,
+            self._fee_receiver(),
             net_crv_usd - deployed_crv_usd,
         )
     else:
@@ -1275,7 +1274,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
     self.deployed_crvusd = deployed_crv_usd_after
 
-    fee_receiver: address = self.fee_receiver
+    fee_receiver: address = self._fee_receiver()
     self._transfer_exact_to(crv_usd, fee_receiver, crv_usd_transferred)
     crv_usd_balance_after: uint256 = staticcall crv_usd.balanceOf(self)
     assert crv_usd_balance_before >= crv_usd_balance_after
@@ -1490,19 +1489,6 @@ def set_emergency_admin(_new_emergency_admin: address):
 
 
 @external
-def set_fee_receiver(_new_fee_receiver: address):
-    """
-    @notice Replaces the account that receives withdrawn protocol profit.
-    """
-    assert self._is_admin(msg.sender)
-    assert _new_fee_receiver != empty(address)
-
-    old_fee_receiver: address = self.fee_receiver
-    self.fee_receiver = _new_fee_receiver
-    log FeeReceiverUpdated(old_fee_receiver=old_fee_receiver, new_fee_receiver=_new_fee_receiver)
-
-
-@external
 def set_policy_contract(_new_policy: address):
     """
     @notice Replaces the aggregate direction and admission policy used by this keeper.
@@ -1533,20 +1519,20 @@ def set_keeper_profit_share_bps(_new_keeper_profit_share_bps: uint256):
 
 @external
 def set_intervention_policy(
-    _action_delay_bps: uint256,
+    _action_imbalance_bps: uint256,
     _action_delay: uint256,
 ):
     """
     @notice Changes the local-imbalance share and action delay.
     """
     assert self._is_admin(msg.sender)
-    assert _action_delay_bps > 0
-    assert _action_delay_bps <= BPS
+    assert _action_imbalance_bps > 0
+    assert _action_imbalance_bps <= BPS
 
-    self.action_delay_bps = _action_delay_bps
+    self.action_imbalance_bps = _action_imbalance_bps
     self.action_delay = _action_delay
     log InterventionPolicyUpdated(
-        action_delay_bps=_action_delay_bps,
+        action_imbalance_bps=_action_imbalance_bps,
         action_delay=_action_delay,
     )
 

@@ -15,7 +15,7 @@ The constructor fixes or derives:
 - `backing_asset`: `paired_token`, or `paired_token.asset()` in ERC-4626 mode;
 - `backing_oracle`: an independent USD oracle for retained backing;
 - keeper index, local cap, entry/exit profit floors, keeper reward share, and execution buffer;
-- final local `admin`, `emergency_admin`, `fee_receiver`, and `policy`.
+- final local `admin`, `emergency_admin`, and selected `policy`.
 
 The constructor validates contract code, pool coin order, decimals, virtual price, role separation, Policy code, and parameter bounds. It grants the ControllerFactory unlimited crvUSD allowance for ceiling reductions and permissionless residual-allocation burning. The keeper starts unpaused, debt-free, and without ControllerFactory allocation.
 
@@ -37,7 +37,6 @@ Every keeper directly stores:
 ```solidity
 admin();
 emergency_admin();
-fee_receiver();
 policy();
 keeper_profit_share_bps();
 ```
@@ -47,12 +46,11 @@ Only the current keeper admin may call:
 ```solidity
 set_admin(address);
 set_emergency_admin(address);
-set_fee_receiver(address);
 set_policy_contract(address);
 set_keeper_profit_share_bps(uint256);
 ```
 
-Admin and emergency admin must be nonzero and distinct. Fee receiver must be nonzero. A replacement Policy must contain code. Role and Policy changes emit old/new events.
+Admin and emergency admin must be nonzero and distinct. A replacement Policy must contain code. Role and Policy changes emit old/new events.
 
 The admin may configure keeper parameters, pause or unpause, execute recovery calls, and perform the external draw. The emergency admin may only pause. There is no shared keeper-role owner.
 
@@ -66,7 +64,7 @@ can_contract();
 expansion_regime();
 ```
 
-The current `PegKeeperPolicy` stores only the aggregate crvUSD oracle. It owns no keeper list or reward parameter and never calls a keeper for local conditions. Its current executable rulings depend only on the exact aggregate-price boundary. Policy ownership uses a nonce-bound two-step transfer; oracle configuration freezes while a transfer is pending.
+The current `PegKeeperPolicy` stores the aggregate crvUSD oracle and global `fee_receiver`. It owns no keeper list or reward parameter and never calls a keeper for local conditions. Its current executable rulings depend only on the exact aggregate-price boundary. The Policy owner can replace the nonzero fee receiver once for every keeper selecting that Policy. Policy ownership uses a nonce-bound two-step transfer; oracle and fee-receiver configuration freeze while a transfer is pending.
 
 The no-argument ABI is intentionally replaceable rather than permanently price-only. A future Policy can add global or caller-aware rules while retaining these selectors; direct keeper calls expose the querying keeper as `msg.sender`. Governance can select a replacement with keeper-local `set_policy_contract`.
 
@@ -171,7 +169,7 @@ The entry floor applies to realized gross profit before caller compensation. Rew
 - consumes capacity only for actual matched crvUSD;
 - does not consume the monetary-intervention timer.
 
-`withdraw_profit()` settles donations and transfers all claimable idle crvUSD to the keeper's current `fee_receiver`. Its bounded overload applies a caller-supplied transfer cap.
+`withdraw_profit()` settles donations and transfers all claimable idle crvUSD to the selected Policy's current `fee_receiver`. Its bounded overload applies a caller-supplied transfer cap.
 
 ## 9. Canonical exact-output contraction
 
@@ -198,7 +196,7 @@ It requires:
 
 Preview uses expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, for gross profit and expected backing. The larger buffered maximum burn is execution-only. Execution independently rechecks actual burn, profit, debt reduction, and solvency.
 
-Contraction reduces debt by crvUSD retained after reward. Terminal value above remaining debt is sent to the local fee receiver.
+Contraction reduces debt by crvUSD retained after reward. Terminal value above remaining debt is sent to the selected Policy's global fee receiver.
 
 `update()` selects contraction when the pool has excess crvUSD and returns zero if the delay was consumed. `update(address beneficiary)` routes the physical reward to the selected nonzero beneficiary. `estimate_caller_profit()` returns zero when neither canonical direction is executable. `calc_profit()` aliases current protocol surplus in crvUSD-value terms.
 
@@ -232,7 +230,7 @@ Pause directions:
 2 all execution
 ```
 
-`action_delay_bps` controls the sole ordinary action size. `action_delay` controls frequency for expansion, contraction, `update`, and external draw. `keeper_profit_share_bps` is independently stored and admin-controlled on each keeper, bounded to `10_000 bps`. Donation and profit settlement remain outside the timer so donated dust cannot monopolize it.
+`action_imbalance_bps` controls the sole ordinary action size as a share of current normalized pool imbalance. `action_delay` controls elapsed-time frequency for expansion, contraction, `update`, and external draw. `keeper_profit_share_bps` is independently stored and admin-controlled on each keeper, bounded to `10_000 bps`. Donation and profit settlement remain outside the timer so donated dust cannot monopolize it.
 
 Every debt increase is bounded by both:
 
@@ -247,7 +245,7 @@ ControllerFactory.debt_ceiling(keeper)
 
 The environment-free deployment script performs eight monotonic CREATEs:
 
-1. `PegKeeperPolicy`, owned directly by the Curve Ownership Agent;
+1. `PegKeeperPolicy`, owned directly by the Curve Ownership Agent and initialized with the global fee receiver;
 2. `PegKeeperRegistry`, owned directly by the Curve Ownership Agent;
 3. frxUSD/USD adapter;
 4. USDC/USD adapter;
@@ -282,18 +280,18 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      19,557 bytes
-runtime core:            16,885 bytes
-standalone runtime:      16,917 bytes
-EIP-170 headroom:         7,659 bytes
+standalone initcode:      19,458 bytes
+runtime core:            16,898 bytes
+standalone runtime:      16,930 bytes
+EIP-170 headroom:         7,646 bytes
 runtime core hash:
-0x9e1fd9f4249cc24b20281699acfc90631fcacf78d8f894eb47dafc440263e472
+0x8bf821239f16bf63632a2ab9084b608e70bcd1f8f22397fa96cfdc2792a87ff0
 mainnet runtime hash:
-0x4415dd1373f39d0d5bfc3270ef9497319d2f73086cf5bb921fbc5277e71f9ba2
+0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77
 
-PegKeeperPolicy runtime:   1,170 bytes
+PegKeeperPolicy runtime:   1,333 bytes
 policy hash:
-0xd92c5aa2de65d423c89d099c669b7e309b936e189a207a08907c8006d9de57d1
+0x0fa0919fe5fd739c535645ca9a4be505c314126efbbe536f89fdebd7ead1c640
 
 PegKeeperRegistry runtime: 1,609 bytes
 registry hash:

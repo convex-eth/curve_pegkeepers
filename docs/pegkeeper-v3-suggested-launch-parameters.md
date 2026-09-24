@@ -28,15 +28,15 @@ USDT    0xdAC17F958D2ee523a2206206994597C13D831ec7
 | ControllerFactory | `0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC` |
 | Policy owner / Registry owner / keeper admin | Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
 | keeper emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
-| keeper fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
+| Policy fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
 | AMM execution buffer | `3 bps` |
 | aggregate crvUSD oracle | `0x18672b1b0c623a30089A280Ed9256379fb0E4E62` |
 
-Every keeper stores the final admin, emergency admin, fee receiver, and Policy directly at construction. The deployment sender receives no protocol role and performs no post-deploy keeper configuration.
+Every keeper stores the final admin, emergency admin, and selected Policy directly at construction. Policy stores the one global fee receiver used by every keeper selecting it. The deployment sender receives no protocol role and performs no post-deploy keeper configuration.
 
 ## Global Policy and independent Registry
 
-The current `PegKeeperPolicy` answers global executable rulings from aggregate crvUSD price only. It has no keeper list, reward parameter, local-condition callback, or hard cross-keeper sequencing. Keepers call no-argument `can_expand()` and `can_contract()` selectors; a future replacement Policy can add global or caller-aware rules through the same ABI, with the querying keeper available as `msg.sender`.
+The current `PegKeeperPolicy` answers global executable rulings from aggregate crvUSD price only and owns the global fee receiver. It has no keeper list, reward parameter, local-condition callback, or hard cross-keeper sequencing. Keepers call no-argument `can_expand()` and `can_contract()` selectors; a future replacement Policy can add global or caller-aware rules through the same ABI, with the querying keeper available as `msg.sender`.
 
 Every keeper enforces its own pause, delay, imbalance, backing, capacity, execution-profit, reward, and solvency conditions. No keeper's local utilization, pause state, oracle, delay, imbalance, or profitability blocks another through the current Policy. AMM fees and keeper-local gross-profit floors provide soft economic preference: frxUSD enters at `0.1 bp`, while USDC and USDT require `3 bp`.
 
@@ -45,6 +45,7 @@ Every keeper enforces its own pause, delay, imbalance, backing, capacity, execut
 | Global component | Launch value |
 |---|---:|
 | Policy aggregate crvUSD oracle | `0x18672b1b0c623a30089A280Ed9256379fb0E4E62` |
+| Policy fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
 | Registry maximum list length | `32` |
 | Registry launch list | frxUSD, USDC, USDT |
 
@@ -55,7 +56,7 @@ Every keeper enforces its own pause, delay, imbalance, backing, capacity, execut
 | `entryMinProfitPpm` | `10` (`0.1 bp`) | `300` (`3 bp`) |
 | `normalExitMinProfitPpm` | `150` (`1.5 bp`) | `80` (`0.8 bp`) |
 | `keeperProfitShareBps` | `3_000` | `3_000` |
-| `actionDelayBps` | `2_000` (`20%`) | `2_000` (`20%`) |
+| `actionImbalanceBps` | `2_000` (`20%`) | `2_000` (`20%`) |
 | `actionDelay` | `12` seconds | `12` seconds |
 | retained-backing floor | `0.999e18` | `0.999e18` |
 
@@ -63,7 +64,7 @@ Both profit floors apply to gross realized profit before keeper compensation. Wi
 
 Entry and exit floors are independent. The launch profiles make USDC/USDT exposure harder to create and economically easier to unwind than frxUSD exposure. Pool state can still change actual executability.
 
-The `20%` intervention share defines the sole ordinary action amount. Callers cannot select dust clips. `update()` selects direction, `update(address beneficiary)` routes reward to a nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions.
+The `20%` `actionImbalanceBps` share defines the sole ordinary action amount from current normalized pool imbalance. Callers cannot select dust clips. `update()` selects direction, `update(address beneficiary)` routes reward to a nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions.
 
 `actionDelay` is shared across expansion, contraction, `update`, and `borrow_crvusd`. Donation and profit settlement remain timer-independent. Keeper-local and ControllerFactory ceilings independently bound total exposure.
 
@@ -100,7 +101,7 @@ The draw is Policy-gated, cap/ceiling/balance bounded, and recorded as debt befo
 
 Deployment performs eight CREATEs in fixed order:
 
-1. deploy `PegKeeperPolicy` with Curve Ownership Agent as owner;
+1. deploy `PegKeeperPolicy` with Curve Ownership Agent as owner and the global fee receiver;
 2. deploy `PegKeeperRegistry` with Curve Ownership Agent as owner;
 3. deploy frxUSD/USD adapter;
 4. deploy USDC/USD adapter;

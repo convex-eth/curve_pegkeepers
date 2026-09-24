@@ -54,13 +54,12 @@ interface IPegKeeperV3 {
     event KeeperProfitShareUpdated(
         uint256 oldKeeperProfitShareBps, uint256 newKeeperProfitShareBps
     );
-    event InterventionPolicyUpdated(uint256 actionDelayBps, uint256 actionDelay);
+    event InterventionPolicyUpdated(uint256 actionImbalanceBps, uint256 actionDelay);
     event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
     event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
     event EmergencyAdminUpdated(
         address indexed oldEmergencyAdmin, address indexed newEmergencyAdmin
     );
-    event FeeReceiverUpdated(address indexed oldFeeReceiver, address indexed newFeeReceiver);
     event PolicyContractUpdated(address indexed oldPolicy, address indexed newPolicy);
 
     function version() external view returns (uint256 major, uint256 minor, uint256 patch);
@@ -78,7 +77,6 @@ interface IPegKeeperV3 {
     function paired_token_units(uint256 assets) external view returns (uint256);
     function backing_oracle() external view returns (address);
     function min_backing_oracle_price() external view returns (uint256);
-    function fee_receiver() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
     function policy() external view returns (address);
@@ -97,7 +95,7 @@ interface IPegKeeperV3 {
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function max_deployed_crvusd() external view returns (uint256);
     function keeper_profit_share_bps() external view returns (uint256);
-    function action_delay_bps() external view returns (uint256);
+    function action_imbalance_bps() external view returns (uint256);
     function action_delay() external view returns (uint256);
     function last_intervention_at() external view returns (uint256);
     function amm_execution_buffer_bps() external view returns (uint256);
@@ -113,7 +111,6 @@ interface IPegKeeperV3 {
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function set_admin(address newAdmin) external;
     function set_emergency_admin(address newEmergencyAdmin) external;
-    function set_fee_receiver(address newFeeReceiver) external;
     function set_policy_contract(address newPolicy) external;
     function set_policy(
         uint256 entryMinProfitPpm,
@@ -121,7 +118,7 @@ interface IPegKeeperV3 {
         uint256 maxDeployedCrvUsd
     ) external;
     function set_keeper_profit_share_bps(uint256 newKeeperProfitShareBps) external;
-    function set_intervention_policy(uint256 actionDelayBps, uint256 actionDelay) external;
+    function set_intervention_policy(uint256 actionImbalanceBps, uint256 actionDelay) external;
 
     /// @notice Reports local expansion viability without querying the selected Policy.
     function can_expand_without_policy() external view returns (bool);

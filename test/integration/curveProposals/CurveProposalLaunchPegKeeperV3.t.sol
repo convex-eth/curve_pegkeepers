@@ -174,6 +174,14 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         proposal.buildProposalActions();
     }
 
+    function test_proposalRejectsWrongGlobalPolicyFeeReceiver() public {
+        vm.prank(OWNERSHIP_AGENT);
+        keeperPolicy.set_fee_receiver(makeAddr("wrong fee receiver"));
+
+        vm.expectRevert(bytes("fee receiver"));
+        proposal.buildProposalActions();
+    }
+
     function test_proposalRejectsPausedOrPrefundedCandidate() public {
         vm.prank(OWNERSHIP_AGENT);
         IPegKeeperV3(expectedFrxUsdKeeper).set_direction_paused(0, true);

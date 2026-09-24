@@ -52,6 +52,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(policy.owner(), config.admin);
         assertEq(policy.pendingOwner(), address(0));
         assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
+        assertEq(policy.fee_receiver(), config.feeReceiver);
         assertTrue(policy.can_expand());
         assertTrue(policy.can_contract());
         assertEq(registry.owner(), config.admin);
@@ -136,7 +137,6 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(keeper.controller_factory(), config.controllerFactory);
         assertEq(keeper.admin(), config.admin);
         assertEq(keeper.emergency_admin(), config.emergencyAdmin);
-        assertEq(keeper.fee_receiver(), config.feeReceiver);
         assertEq(keeper.keeper_index(), index);
         assertEq(keeper.entry_min_profit_ppm(), entryProfit);
         assertEq(keeper.normal_exit_min_profit_ppm(), exitProfit);

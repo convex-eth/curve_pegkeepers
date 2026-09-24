@@ -40,7 +40,7 @@ contract DeployPegKeeperV3 is Script {
     uint256 public constant STABLECOIN_ENTRY_MIN_PROFIT_PPM = 300;
     uint256 public constant STABLECOIN_EXIT_MIN_PROFIT_PPM = 80;
     uint256 public constant KEEPER_PROFIT_SHARE_BPS = 3_000;
-    uint256 public constant ACTION_DELAY_BPS = 2_000;
+    uint256 public constant ACTION_IMBALANCE_BPS = 2_000;
     uint256 public constant ACTION_DELAY = 12 seconds;
 
     struct Config {
@@ -199,10 +199,12 @@ contract DeployPegKeeperV3 is Script {
 
     function _deployPolicy(Config memory config) internal returns (address) {
         bytes memory creationCode = vm.getCode("out/PegKeeperPolicy.vy/PegKeeperPolicy.json");
-        return
-            _create(
-                bytes.concat(creationCode, abi.encode(config.admin, config.aggregateCrvUsdOracle))
-            );
+        return _create(
+            bytes.concat(
+                creationCode,
+                abi.encode(config.admin, config.aggregateCrvUsdOracle, config.feeReceiver)
+            )
+        );
     }
 
     function _deployRegistry(Config memory config) internal returns (address) {
@@ -231,7 +233,6 @@ contract DeployPegKeeperV3 is Script {
             config.keeperProfitShareBps,
             config.admin,
             config.emergencyAdmin,
-            config.feeReceiver,
             policy
         );
         return _create(bytes.concat(creationCode, coreConfig, governanceConfig));
@@ -271,6 +272,7 @@ contract DeployPegKeeperV3 is Script {
             policy.aggregateCrvUsdOracle() == config.aggregateCrvUsdOracle,
             "aggregate oracle mismatch"
         );
+        require(policy.fee_receiver() == config.feeReceiver, "fee receiver mismatch");
         IPegKeeperRegistry registry = IPegKeeperRegistry(deployment.registry);
         require(registry.owner() == config.admin, "registry owner mismatch");
         require(registry.pendingOwner() == address(0), "unexpected registry pending owner");
@@ -346,14 +348,13 @@ contract DeployPegKeeperV3 is Script {
             "keeper profit share mismatch"
         );
         require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
-        require(keeper.action_delay_bps() == ACTION_DELAY_BPS, "share cap");
+        require(keeper.action_imbalance_bps() == ACTION_IMBALANCE_BPS, "imbalance share");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(
             keeper.amm_execution_buffer_bps() == config.ammExecutionBufferBps, "execution buffer"
         );
         require(keeper.admin() == config.admin, "keeper admin mismatch");
         require(keeper.emergency_admin() == config.emergencyAdmin, "emergency admin mismatch");
-        require(keeper.fee_receiver() == config.feeReceiver, "fee receiver mismatch");
         require(!keeper.expansion_paused(), "expansion paused");
         require(!keeper.contraction_paused(), "contraction paused");
         require(!keeper.all_execution_paused(), "execution paused");

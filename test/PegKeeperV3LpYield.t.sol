@@ -18,7 +18,7 @@ interface ILpPegKeeperV3 {
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
     function keeper_profit_share_bps() external view returns (uint256);
-    function action_delay_bps() external view returns (uint256);
+    function action_imbalance_bps() external view returns (uint256);
     function action_delay() external view returns (uint256);
     function expansion_paused() external view returns (bool);
     function all_execution_paused() external view returns (bool);
@@ -35,7 +35,7 @@ interface ILpPegKeeperV3 {
     function policy() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
-    function fee_receiver() external view returns (address);
+
     function min_backing_oracle_price() external view returns (uint256);
     function set_backing_oracle_policy(address yieldOracle, uint256 minYieldPrice) external;
     function set_policy(
@@ -45,10 +45,10 @@ interface ILpPegKeeperV3 {
     ) external;
     function set_keeper_profit_share_bps(uint256 keeperProfitShareBps) external;
 
-    function set_intervention_policy(uint256 actionDelayBps, uint256 actionDelay) external;
+    function set_intervention_policy(uint256 actionImbalanceBps, uint256 actionDelay) external;
     function set_admin(address newAdmin) external;
     function set_emergency_admin(address newEmergencyAdmin) external;
-    function set_fee_receiver(address newFeeReceiver) external;
+
     function set_policy_contract(address newPolicy) external;
     function set_direction_paused(uint256 direction, bool paused) external;
     function expand_supply()
@@ -508,19 +508,14 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.startPrank(governance);
         keeper.set_emergency_admin(nextEmergencyAdmin);
-        keeper.set_fee_receiver(nextFeeReceiver);
         keeper.set_policy_contract(address(nextPolicy));
         keeper.set_admin(nextAdmin);
         vm.stopPrank();
 
         assertEq(keeper.admin(), nextAdmin);
         assertEq(keeper.emergency_admin(), nextEmergencyAdmin);
-        assertEq(keeper.fee_receiver(), nextFeeReceiver);
         assertEq(keeper.policy(), address(nextPolicy));
-
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.set_fee_receiver(feeReceiver);
+        assertEq(nextPolicy.fee_receiver(), nextFeeReceiver);
     }
 
     function test_versionIsNumericThreeZeroZeroTuple() public {
@@ -742,7 +737,7 @@ contract PegKeeperV3LpYieldTest is Test {
     function test_interventionPolicyDefaultsAndAdminCanSetZeroDelay() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
-        assertEq(keeper.action_delay_bps(), 2_000);
+        assertEq(keeper.action_imbalance_bps(), 2_000);
         assertEq(keeper.action_delay(), 12);
         assertEq(keeper.last_intervention_at(), 0);
 
@@ -752,7 +747,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(governance);
         keeper.set_intervention_policy(5_000, 0);
-        assertEq(keeper.action_delay_bps(), 5_000);
+        assertEq(keeper.action_imbalance_bps(), 5_000);
         assertEq(keeper.action_delay(), 0);
 
         vm.startPrank(governance);
@@ -763,17 +758,32 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.stopPrank();
     }
 
-    function test_actionDelayBpsReplacesMaxInterventionShareBpsGetter() public {
+    function test_actionImbalanceBpsReplacesMisleadingDelayBpsGetter() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
 
-        (bool actionDelayBpsExists, bytes memory encodedBps) =
-            address(keeper).staticcall(abi.encodeWithSignature("action_delay_bps()"));
-        assertTrue(actionDelayBpsExists);
+        (bool actionImbalanceBpsExists, bytes memory encodedBps) =
+            address(keeper).staticcall(abi.encodeWithSignature("action_imbalance_bps()"));
+        assertTrue(actionImbalanceBpsExists);
         assertEq(abi.decode(encodedBps, (uint256)), 2_000);
 
+        (bool oldDelayBpsGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("action_delay_bps()"));
+        assertFalse(oldDelayBpsGetterExists);
         (bool legacyGetterExists,) =
             address(keeper).staticcall(abi.encodeWithSignature("max_intervention_share_bps()"));
         assertFalse(legacyGetterExists);
+    }
+
+    function test_feeReceiverSurfaceLivesOnlyOnSelectedPolicy() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        (bool getterExists,) = address(keeper).staticcall(abi.encodeWithSignature("fee_receiver()"));
+        assertFalse(getterExists);
+
+        vm.prank(governance);
+        (bool setterExists,) = address(keeper)
+            .call(abi.encodeWithSignature("set_fee_receiver(address)", makeAddr("keeper receiver")));
+        assertFalse(setterExists);
     }
 
     function test_actionDelayMatchesV2GetterAndLegacyNameIsAbsent() public {
@@ -1470,8 +1480,7 @@ contract PegKeeperV3LpYieldTest is Test {
 
         crvUsd.mint(address(keeper), 100e18);
         address newFeeReceiver = makeAddr("new fee receiver");
-        vm.prank(governance);
-        keeper.set_fee_receiver(newFeeReceiver);
+        controllerAndPolicy.setFeeReceiver(newFeeReceiver);
 
         uint256 idleBefore = crvUsd.balanceOf(address(keeper));
         (uint256 expectedCrvUsd,, uint256 keeperReward) = keeper.preview_contraction();
@@ -1980,12 +1989,46 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldToken.mint(address(keeper), 10_000e18);
         aggregateCrvUsdOracle.setPrice(1e18 - 1);
 
+        address updatedFeeReceiver = makeAddr("updated fee receiver");
+        controllerAndPolicy.setFeeReceiver(updatedFeeReceiver);
+
         vm.expectEmit(true, true, false, true, address(keeper));
-        emit ProfitWithdrawn(address(this), feeReceiver, 10_000e18, 10_000e18);
+        emit ProfitWithdrawn(address(this), updatedFeeReceiver, 10_000e18, 10_000e18);
         uint256 withdrawn = keeper.withdraw_profit();
 
         assertEq(withdrawn, 10_000e18);
-        assertEq(crvUsd.balanceOf(feeReceiver), 10_000e18);
+        assertEq(crvUsd.balanceOf(updatedFeeReceiver), 10_000e18);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
+        assertEq(yieldToken.balanceOf(address(keeper)), 0);
+        assertEq(keeper.deployed_crvusd(), 10_000e18);
+    }
+
+    function test_withdrawProfitUsesReplacementPolicyFeeReceiver() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        crvUsd.mint(address(yieldAmm), 50_000e18);
+        yieldToken.mint(address(yieldAmm), 45_000e18);
+        crvUsd.mint(address(keeper), 15_000e18);
+        yieldToken.mint(address(keeper), 10_000e18);
+        aggregateCrvUsdOracle.setPrice(1e18 - 1);
+
+        address replacementFeeReceiver = makeAddr("replacement policy fee receiver");
+        LpYieldControllerAndPolicy replacementPolicy = new LpYieldControllerAndPolicy(
+            address(crvUsd),
+            governance,
+            emergencyAdmin,
+            replacementFeeReceiver,
+            address(aggregateCrvUsdOracle)
+        );
+        vm.prank(governance);
+        keeper.set_policy_contract(address(replacementPolicy));
+
+        vm.expectEmit(true, true, false, true, address(keeper));
+        emit ProfitWithdrawn(address(this), replacementFeeReceiver, 10_000e18, 10_000e18);
+        uint256 withdrawn = keeper.withdraw_profit();
+
+        assertEq(withdrawn, 10_000e18);
+        assertEq(crvUsd.balanceOf(replacementFeeReceiver), 10_000e18);
+        assertEq(crvUsd.balanceOf(feeReceiver), 0);
         assertEq(yieldToken.balanceOf(address(keeper)), 0);
         assertEq(keeper.deployed_crvusd(), 10_000e18);
     }
@@ -2109,16 +2152,7 @@ contract PegKeeperV3LpYieldTest is Test {
                 1,
                 address(yieldOracle)
             ),
-            abi.encode(
-                10,
-                500,
-                3,
-                3_000,
-                governance,
-                emergencyAdmin,
-                feeReceiver,
-                address(controllerAndPolicy)
-            )
+            abi.encode(10, 500, 3, 3_000, governance, emergencyAdmin, address(controllerAndPolicy))
         );
         address deployed;
         assembly ("memory-safe") {

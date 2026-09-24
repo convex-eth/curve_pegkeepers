@@ -9,7 +9,6 @@ interface IKeeperTestConfigProvider {
     function stablecoin() external view returns (address);
     function admin() external view returns (address);
     function emergency_admin() external view returns (address);
-    function fee_receiver() external view returns (address);
     function policy() external view returns (address);
 }
 
@@ -74,16 +73,7 @@ library PegKeeperV3TestDeployer {
                 keeperIndex,
                 yieldOracle
             ),
-            abi.encode(
-                10,
-                500,
-                0,
-                3_000,
-                config.admin(),
-                config.emergency_admin(),
-                config.fee_receiver(),
-                config.policy()
-            )
+            abi.encode(10, 500, 0, 3_000, config.admin(), config.emergency_admin(), config.policy())
         );
         address deployed;
         assembly ("memory-safe") {

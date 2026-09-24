@@ -40,7 +40,10 @@ contract PegKeeperPolicyTest is Test {
     function setUp() public {
         oracle = new PolicyPriceOracleMock();
         policy = IPegKeeperPolicy(
-            vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle)))
+            vm.deployCode(
+                "PegKeeperPolicy.vy",
+                abi.encode(address(this), address(oracle), makeAddr("feeReceiver"))
+            )
         );
     }
 
@@ -125,6 +128,33 @@ contract PegKeeperPolicyTest is Test {
         policy.set_aggregate_crvusd_oracle(makeAddr("no code"));
     }
 
+    function test_policyOwnsGlobalFeeReceiver() public {
+        address initialFeeReceiver = makeAddr("initialFeeReceiver");
+        IPegKeeperPolicy receiverPolicy = IPegKeeperPolicy(
+            vm.deployCode(
+                "PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), initialFeeReceiver)
+            )
+        );
+
+        assertEq(receiverPolicy.fee_receiver(), initialFeeReceiver);
+
+        vm.prank(makeAddr("not owner"));
+        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
+        receiverPolicy.set_fee_receiver(makeAddr("unauthorized receiver"));
+
+        address nextFeeReceiver = makeAddr("nextFeeReceiver");
+        receiverPolicy.set_fee_receiver(nextFeeReceiver);
+        assertEq(receiverPolicy.fee_receiver(), nextFeeReceiver);
+
+        vm.expectRevert(IPegKeeperPolicy.InvalidFeeReceiver.selector);
+        receiverPolicy.set_fee_receiver(address(0));
+    }
+
+    function test_policyConstructorRejectsZeroFeeReceiver() public {
+        vm.expectRevert();
+        vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), address(0)));
+    }
+
     function test_pendingOwnershipHandoffFreezesOracleConfigurationUntilAcceptance() public {
         address nextOwner = makeAddr("nextOwner");
         address correctedOwner = makeAddr("correctedOwner");
@@ -133,6 +163,8 @@ contract PegKeeperPolicyTest is Test {
 
         vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
         policy.set_aggregate_crvusd_oracle(address(oracle));
+        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
+        policy.set_fee_receiver(makeAddr("frozen receiver"));
         policy.transferOwnership(correctedOwner);
         assertEq(policy.ownershipTransferNonce(), 2);
 

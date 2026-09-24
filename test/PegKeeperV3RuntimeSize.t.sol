@@ -15,13 +15,13 @@ contract PegKeeperV3RuntimeSizeTest is Test {
     address internal constant CRVUSD = 0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E;
     uint256 internal constant EIP_170_RUNTIME_LIMIT = 24_576;
     uint256 internal constant EIP_3860_INITCODE_LIMIT = 49_152;
-    uint256 internal constant RELEASE_KEEPER_INITCODE_SIZE = 19_557;
-    uint256 internal constant RELEASE_KEEPER_CORE_SIZE = 16_885;
+    uint256 internal constant RELEASE_KEEPER_INITCODE_SIZE = 19_458;
+    uint256 internal constant RELEASE_KEEPER_CORE_SIZE = 16_898;
     bytes32 internal constant RELEASE_KEEPER_CORE_HASH =
-        0x9e1fd9f4249cc24b20281699acfc90631fcacf78d8f894eb47dafc440263e472;
-    uint256 internal constant RELEASE_KEEPER_RUNTIME_SIZE = 16_917;
+        0x8bf821239f16bf63632a2ab9084b608e70bcd1f8f22397fa96cfdc2792a87ff0;
+    uint256 internal constant RELEASE_KEEPER_RUNTIME_SIZE = 16_930;
     bytes32 internal constant RELEASE_KEEPER_RUNTIME_HASH =
-        0x4415dd1373f39d0d5bfc3270ef9497319d2f73086cf5bb921fbc5277e71f9ba2;
+        0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77;
 
     function test_standaloneKeeperFitsProtocolLimits() public {
         LpYieldToken crvUsd = new LpYieldToken(18);
@@ -44,14 +44,7 @@ contract PegKeeperV3RuntimeSizeTest is Test {
                 address(oracle)
             ),
             abi.encode(
-                10,
-                150,
-                3,
-                3_000,
-                address(this),
-                address(0xBEEF),
-                address(0xFEE),
-                address(controllerFactory)
+                10, 150, 3, 3_000, address(this), address(0xBEEF), address(controllerFactory)
             )
         );
         assertEq(keeperInitCode.length, RELEASE_KEEPER_INITCODE_SIZE, "keeper initcode drift");
