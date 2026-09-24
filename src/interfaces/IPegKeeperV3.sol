@@ -34,23 +34,18 @@ interface IPegKeeperV3 {
         address indexed caller,
         address indexed receiver,
         uint256 crvUsdTransferred,
-        uint256 deployedCrvUsdAfter
+        uint256 debtAfter
     );
     event DebtReduced(
         address indexed caller,
         uint256 requestedReduction,
         uint256 actualReduction,
-        uint256 deployedCrvUsdAfter
+        uint256 debtAfter
     );
     event CrvUsdBorrowed(
-        address indexed caller,
-        address indexed receiver,
-        uint256 amount,
-        uint256 deployedCrvUsdAfter
+        address indexed caller, address indexed receiver, uint256 amount, uint256 debtAfter
     );
-    event PolicyUpdated(
-        uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDeployedCrvUsd
-    );
+    event PolicyUpdated(uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDebt);
     event KeeperProfitShareUpdated(
         uint256 oldKeeperProfitShareBps, uint256 newKeeperProfitShareBps
     );
@@ -93,7 +88,7 @@ interface IPegKeeperV3 {
 
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
-    function max_deployed_crvusd() external view returns (uint256);
+    function max_debt() external view returns (uint256);
     function keeper_profit_share_bps() external view returns (uint256);
     function action_imbalance_bps() external view returns (uint256);
     function action_delay() external view returns (uint256);
@@ -101,7 +96,6 @@ interface IPegKeeperV3 {
     function amm_execution_buffer_bps() external view returns (uint256);
 
     function debt() external view returns (uint256);
-    function deployed_crvusd() external view returns (uint256);
 
     function expansion_paused() external view returns (bool);
     function contraction_paused() external view returns (bool);
@@ -112,11 +106,8 @@ interface IPegKeeperV3 {
     function set_admin(address newAdmin) external;
     function set_emergency_admin(address newEmergencyAdmin) external;
     function set_policy_contract(address newPolicy) external;
-    function set_policy(
-        uint256 entryMinProfitPpm,
-        uint256 normalExitMinProfitPpm,
-        uint256 maxDeployedCrvUsd
-    ) external;
+    function set_policy(uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDebt)
+        external;
     function set_keeper_profit_share_bps(uint256 newKeeperProfitShareBps) external;
     function set_intervention_policy(uint256 actionImbalanceBps, uint256 actionDelay) external;
 
@@ -169,7 +160,7 @@ interface IPegKeeperV3 {
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
     /// @notice Gives keeper-admin-approved crvUSD to a receiver and records it as keeper debt.
     function borrow_crvusd(uint256 amount, address receiver) external;
-    function reduce_deployed_crvusd(uint256 amount) external;
+    function reduce_debt(uint256 amount) external;
     function execute(address target, uint256 value, bytes calldata data)
         external
         payable

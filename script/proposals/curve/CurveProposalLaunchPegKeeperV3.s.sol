@@ -16,12 +16,12 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant KEEPER_RUNTIME_SIZE = 16_930;
+    uint256 public constant KEEPER_RUNTIME_SIZE = 16_618;
     bytes32 public constant EXPECTED_KEEPER_RUNTIME_HASH =
-        0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77;
-    uint256 public constant POLICY_RUNTIME_SIZE = 1_333;
+        0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543;
+    uint256 public constant POLICY_RUNTIME_SIZE = 1_218;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x0fa0919fe5fd739c535645ca9a4be505c314126efbbe536f89fdebd7ead1c640;
+        0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6;
     uint256 public constant REGISTRY_RUNTIME_SIZE = 1_609;
     bytes32 public constant EXPECTED_REGISTRY_RUNTIME_HASH =
         0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab;
@@ -237,7 +237,7 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.entry_min_profit_ppm() == expectedEntryProfit, "entry profit");
         require(keeper.normal_exit_min_profit_ppm() == expectedExitProfit, "exit profit");
         require(keeper.keeper_profit_share_bps() == KEEPER_PROFIT_SHARE_BPS, "profit share");
-        require(keeper.max_deployed_crvusd() == expectedLocalCap, "local cap");
+        require(keeper.max_debt() == expectedLocalCap, "local cap");
         require(keeper.action_imbalance_bps() == ACTION_IMBALANCE_BPS, "imbalance share");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(keeper.amm_execution_buffer_bps() == AMM_EXECUTION_BUFFER_BPS, "AMM buffer");

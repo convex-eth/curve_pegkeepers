@@ -32,7 +32,7 @@ contract DeployPegKeeperV3 is Script {
     address public constant USDT_CRVUSD_POOL = 0x390f3595bCa2Df7d23783dFd126427CCeb997BF4;
 
     uint256 public constant RECOMMENDED_CHAINLINK_MAX_DELAY = 26 hours;
-    uint256 public constant INITIAL_MAX_DEPLOYED_CRVUSD = 150_000_000e18;
+    uint256 public constant INITIAL_MAX_DEBT = 150_000_000e18;
     uint256 public constant AMM_EXECUTION_BUFFER_BPS = 3;
     uint256 public constant MIN_BACKING_ORACLE_PRICE = 999_000_000_000_000_000;
     uint256 public constant FRXUSD_ENTRY_MIN_PROFIT_PPM = 10;
@@ -50,7 +50,7 @@ contract DeployPegKeeperV3 is Script {
         address emergencyAdmin;
         address feeReceiver;
         uint256 keeperProfitShareBps;
-        uint256 maxDeployedCrvUsd;
+        uint256 maxDebt;
         uint256 ammExecutionBufferBps;
         address frxUsdProxy;
         uint256 frxUsdMaxDelay;
@@ -103,7 +103,7 @@ contract DeployPegKeeperV3 is Script {
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
         config.keeperProfitShareBps = KEEPER_PROFIT_SHARE_BPS;
-        config.maxDeployedCrvUsd = INITIAL_MAX_DEPLOYED_CRVUSD;
+        config.maxDebt = INITIAL_MAX_DEBT;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
         config.frxUsdProxy = FRXUSD_USD_PROXY;
         config.frxUsdMaxDelay = RECOMMENDED_CHAINLINK_MAX_DELAY;
@@ -222,7 +222,7 @@ contract DeployPegKeeperV3 is Script {
             keeperConfig.pool,
             keeperConfig.pairedTokenIsErc4626,
             keeperConfig.poolUsesDynamicArrays,
-            config.maxDeployedCrvUsd,
+            config.maxDebt,
             keeperConfig.keeperIndex,
             keeperConfig.backingOracle
         );
@@ -347,7 +347,7 @@ contract DeployPegKeeperV3 is Script {
             keeper.keeper_profit_share_bps() == config.keeperProfitShareBps,
             "keeper profit share mismatch"
         );
-        require(keeper.max_deployed_crvusd() == config.maxDeployedCrvUsd, "local cap");
+        require(keeper.max_debt() == config.maxDebt, "local cap");
         require(keeper.action_imbalance_bps() == ACTION_IMBALANCE_BPS, "imbalance share");
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(
@@ -385,7 +385,7 @@ contract DeployPegKeeperV3 is Script {
         console2.log("Emergency admin", config.emergencyAdmin);
         console2.log("Fee receiver", config.feeReceiver);
         console2.log("Keeper profit share (bps)", config.keeperProfitShareBps);
-        console2.log("Initial max deployed crvUSD", config.maxDeployedCrvUsd);
+        console2.log("Initial max debt", config.maxDebt);
         console2.log("AMM execution buffer (bps)", config.ammExecutionBufferBps);
         console2.log("frxUSD Chainlink proxy", config.frxUsdProxy);
         console2.log("USDC Chainlink proxy", config.usdcProxy);

@@ -141,13 +141,6 @@ def _check_owner():
 @internal
 @view
 def _aggregate_crvusd_price() -> uint256:
-    response: Bytes[64] = raw_call(
-        self.aggregateCrvUsdOracle,
-        method_id("price()"),
-        max_outsize=64,
-        is_static_call=True,
-    )
-    assert len(response) == 32
-    price: uint256 = convert(slice(response, 0, 32), uint256)
+    price: uint256 = staticcall PriceOracle(self.aggregateCrvUsdOracle).price()
     assert price > 0
     return price

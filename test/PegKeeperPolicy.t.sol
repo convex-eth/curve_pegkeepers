@@ -94,7 +94,7 @@ contract PegKeeperPolicyTest is Test {
         policy.expansion_regime();
     }
 
-    function test_zeroAndOversizedAggregateOracleResponsesFailClosed() public {
+    function test_zeroAggregateOracleResponseFailsClosed() public {
         oracle.setPrice(0);
         vm.expectRevert();
         policy.can_expand();
@@ -102,15 +102,15 @@ contract PegKeeperPolicyTest is Test {
         policy.can_contract();
         vm.expectRevert();
         policy.expansion_regime();
+    }
 
+    function test_typedAggregateOracleCallUsesDeclaredPriceInterface() public {
         OversizedPolicyPriceOracle oversized = new OversizedPolicyPriceOracle();
         policy.set_aggregate_crvusd_oracle(address(oversized));
-        vm.expectRevert();
-        policy.can_expand();
-        vm.expectRevert();
-        policy.can_contract();
-        vm.expectRevert();
-        policy.expansion_regime();
+
+        assertTrue(policy.can_expand());
+        assertTrue(policy.can_contract());
+        assertTrue(policy.expansion_regime());
     }
 
     function test_onlyOwnerCanSetAggregateOracle() public {

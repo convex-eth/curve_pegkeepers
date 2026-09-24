@@ -96,7 +96,7 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
     PegKeeperV3LpYieldHandler internal handler;
 
     address internal constant GOVERNANCE = address(0xA11CE);
-    uint256 internal constant MAX_DEPLOYED = 25_000_000e18;
+    uint256 internal constant MAX_DEBT = 25_000_000e18;
 
     function setUp() public {
         crvUsd = new LpYieldToken(18);
@@ -112,11 +112,11 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
             address(yieldToken),
             address(yieldToken),
             address(yieldAmm),
-            MAX_DEPLOYED,
+            MAX_DEBT,
             1,
             address(oracle)
         );
-        controllerAndPolicy.setDebtCeiling(address(keeper), MAX_DEPLOYED);
+        controllerAndPolicy.setDebtCeiling(address(keeper), MAX_DEBT);
 
         vm.startPrank(GOVERNANCE);
         keeper.set_amm_execution_buffer(0);
@@ -136,12 +136,12 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
     }
 
     function invariant_lpBackingAlwaysCoversRecordedExposure() public view {
-        assertGe(keeper.trusted_backing_value(), keeper.deployed_crvusd());
+        assertGe(keeper.trusted_backing_value(), keeper.debt());
     }
 
     function invariant_exposureNeverExceedsLocalOrControllerCapacity() public view {
-        assertLe(keeper.deployed_crvusd(), keeper.max_deployed_crvusd());
-        assertLe(keeper.deployed_crvusd(), controllerAndPolicy.debt_ceiling(address(keeper)));
+        assertLe(keeper.debt(), keeper.max_debt());
+        assertLe(keeper.debt(), controllerAndPolicy.debt_ceiling(address(keeper)));
     }
 
     function invariant_ammAllowancesAreAlwaysZero() public view {

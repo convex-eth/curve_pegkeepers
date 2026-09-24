@@ -38,7 +38,7 @@ library PegKeeperV3TestDeployer {
         address backingAsset,
         address yieldToken,
         address yieldAmm,
-        uint256 maxDeployed,
+        uint256 maxDebt,
         uint256 keeperIndex
     ) internal returns (IPegKeeperV3 keeper) {
         return deploy(
@@ -46,7 +46,7 @@ library PegKeeperV3TestDeployer {
             backingAsset,
             yieldToken,
             yieldAmm,
-            maxDeployed,
+            maxDebt,
             keeperIndex,
             address(new PegKeeperV3TestOracle())
         );
@@ -57,7 +57,7 @@ library PegKeeperV3TestDeployer {
         address backingAsset,
         address yieldToken,
         address yieldAmm,
-        uint256 maxDeployed,
+        uint256 maxDebt,
         uint256 keeperIndex,
         address yieldOracle
     ) internal returns (IPegKeeperV3 keeper) {
@@ -69,7 +69,7 @@ library PegKeeperV3TestDeployer {
                 yieldAmm,
                 backingAsset != yieldToken,
                 true,
-                maxDeployed,
+                maxDebt,
                 keeperIndex,
                 yieldOracle
             ),

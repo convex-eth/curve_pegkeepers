@@ -74,7 +74,7 @@ aggregate price = 1e18: can_expand = true;  can_contract = true
 aggregate price > 1e18: can_expand = true;  can_contract = false
 ```
 
-The aggregate oracle is read with exact 32-byte returndata checks. Oracle failure or a zero price fails closed.
+Policy and keeper oracle reads use the declared `price()` interface directly. Oracle failure or a zero aggregate price fails closed.
 
 ## 4. Keeper-local admission
 
@@ -126,7 +126,7 @@ The call:
 6. measures exact crvUSD, paired-token, and LP deltas;
 7. computes gross action profit before caller reward;
 8. pays reward in LP;
-9. increases `deployed_crvusd` by actual matched crvUSD;
+9. increases `debt` by actual matched crvUSD;
 10. checks final retained backing and records intervention time.
 
 `preview_expansion()` applies the same accounting and safety predicates without state changes. No ordinary expansion function accepts a caller-selected amount. `update()` dispatches to this canonical action when local balance calls for expansion.
@@ -218,7 +218,7 @@ It requires:
 - resulting debt within local cap and ControllerFactory ceiling;
 - sufficient idle crvUSD.
 
-It increments debt, records intervention time, transfers exactly `amount`, and emits `CrvUsdBorrowed`. External execution and backing return must be atomic at the module/governance transaction layer. `reduce_deployed_crvusd(amount)` is the admin-only inverse bookkeeping operation.
+It increments debt, records intervention time, transfers exactly `amount`, and emits `CrvUsdBorrowed`. External execution and backing return must be atomic at the module/governance transaction layer. `reduce_debt(amount)` is the admin-only inverse bookkeeping operation.
 
 ## 11. Pauses, capacity, and timing
 
@@ -235,7 +235,7 @@ Pause directions:
 Every debt increase is bounded by both:
 
 ```text
-keeper.max_deployed_crvusd()
+keeper.max_debt()
 ControllerFactory.debt_ceiling(keeper)
 ```
 
@@ -280,18 +280,18 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      19,458 bytes
-runtime core:            16,898 bytes
-standalone runtime:      16,930 bytes
-EIP-170 headroom:         7,646 bytes
+standalone initcode:      19,148 bytes
+runtime core:            16,586 bytes
+standalone runtime:      16,618 bytes
+EIP-170 headroom:         7,958 bytes
 runtime core hash:
-0x8bf821239f16bf63632a2ab9084b608e70bcd1f8f22397fa96cfdc2792a87ff0
+0xd5be0097682e2eaf9ceb75c057699a117c6d41459be6f1df16131fc87eae0c7a
 mainnet runtime hash:
-0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77
+0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543
 
-PegKeeperPolicy runtime:   1,333 bytes
+PegKeeperPolicy runtime:   1,218 bytes
 policy hash:
-0x0fa0919fe5fd739c535645ca9a4be505c314126efbbe536f89fdebd7ead1c640
+0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6
 
 PegKeeperRegistry runtime: 1,609 bytes
 registry hash:

@@ -84,9 +84,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(pegKeeper.last_intervention_at() == block.timestamp, "expansion timestamp");
         require(pegKeeper.accounted_lp_tokens() > 0, "LP accounting missing");
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "loose frxUSD");
-        require(
-            pegKeeper.trusted_backing_value() >= pegKeeper.deployed_crvusd(), "principal invariant"
-        );
+        require(pegKeeper.trusted_backing_value() >= pegKeeper.debt(), "principal invariant");
         require(
             IERC20(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
             "AMM crvUSD allowance"
@@ -104,7 +102,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         _setDebtCeiling(pegKeeper, 0);
         require(
             IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper))
-                == pegKeeper.deployed_crvusd(),
+                == pegKeeper.debt(),
             "idle allocation burn"
         );
         deal(CRVUSD, CANARY_TRADER, CONTRACTION_MARKET_TRADE);
@@ -154,7 +152,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         config.admin = CANARY_ADMIN;
         config.emergencyAdmin = EMERGENCY_ADMIN;
         config.feeReceiver = FEE_SPLITTER;
-        config.maxDeployedCrvUsd = ALLOCATION;
+        config.maxDebt = ALLOCATION;
         config.ammExecutionBufferBps = AMM_EXECUTION_BUFFER_BPS;
         DeployPegKeeperV3.Deployment memory deployment = deployer.deploy(config);
 
@@ -166,7 +164,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
     }
 
     function _sweepDonationAsKeeper(IPegKeeperV3 pegKeeper) internal returns (uint256 lpReceived) {
-        uint256 debtBefore = pegKeeper.deployed_crvusd();
+        uint256 debtBefore = pegKeeper.debt();
         uint256 interventionBefore = pegKeeper.last_intervention_at();
         deal(FRXUSD, CANARY_TRADER, DONATION_SWEEP_AMOUNT);
         vm.prank(CANARY_TRADER);
@@ -180,7 +178,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(swept == DONATION_SWEEP_AMOUNT, "donation sweep amount");
         require(matched == DONATION_SWEEP_AMOUNT, "donation match amount");
         require(sweepLp > 0, "donation sweep LP");
-        require(pegKeeper.deployed_crvusd() == debtBefore + matched, "donation debt");
+        require(pegKeeper.debt() == debtBefore + matched, "donation debt");
         require(
             pegKeeper.last_intervention_at() == interventionBefore, "donation intervention time"
         );
@@ -222,7 +220,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         internal
         returns (uint256 lpBurned, uint256 crvUsdReceived, uint256 burnedCrvUsd)
     {
-        uint256 debtBefore = pegKeeper.deployed_crvusd();
+        uint256 debtBefore = pegKeeper.debt();
         uint256 residualBefore =
             IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper));
         require(residualBefore == debtBefore, "pre-contraction residual");
@@ -230,9 +228,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         (lpBurned, crvUsdReceived) = _contractAsKeeper(pegKeeper);
         burnedCrvUsd = IERC20(CRVUSD).balanceOf(address(pegKeeper));
         require(burnedCrvUsd > 0, "no returned crvUSD to burn");
-        require(
-            pegKeeper.deployed_crvusd() == debtBefore - burnedCrvUsd, "contraction debt reduction"
-        );
+        require(pegKeeper.debt() == debtBefore - burnedCrvUsd, "contraction debt reduction");
 
         uint256 supplyBefore = IERC20(CRVUSD).totalSupply();
         vm.prank(CANARY_KEEPER);
@@ -246,7 +242,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         );
         require(
             IControllerFactory(CONTROLLER_FACTORY).debt_ceiling_residual(address(pegKeeper))
-                == pegKeeper.deployed_crvusd(),
+                == pegKeeper.debt(),
             "residual debt reconciliation"
         );
         require(

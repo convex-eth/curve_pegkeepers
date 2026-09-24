@@ -30,7 +30,8 @@ owner: public(address)
 pendingOwner: public(address)
 ownershipTransferNonce: public(uint256)
 peg_keepers: public(DynArray[address, MAX_KEEPERS])
-_pegKeeperIndexPlusOne: HashMap[address, uint256]
+# Stores each array index plus one so zero remains the missing sentinel.
+_pegKeeperIndex: HashMap[address, uint256]
 
 
 @deploy
@@ -51,7 +52,7 @@ def peg_keeper_count() -> uint256:
 @external
 @view
 def is_active(_keeper: address) -> bool:
-    return self._pegKeeperIndexPlusOne[_keeper] != 0
+    return self._pegKeeperIndex[_keeper] != 0
 
 
 @external
@@ -60,11 +61,11 @@ def add_peg_keepers(_peg_keepers: DynArray[address, MAX_KEEPERS]):
     for keeper: address in _peg_keepers:
         if keeper == empty(address) or keeper.codesize == 0:
             raw_revert(method_id("InvalidKeeper()"))
-        if self._pegKeeperIndexPlusOne[keeper] != 0:
+        if self._pegKeeperIndex[keeper] != 0:
             raw_revert(method_id("DuplicateKeeper()"))
 
         self.peg_keepers.append(keeper)
-        self._pegKeeperIndexPlusOne[keeper] = len(self.peg_keepers)
+        self._pegKeeperIndex[keeper] = len(self.peg_keepers)
         log PegKeeperAdded(pegKeeper=keeper)
 
 
@@ -72,19 +73,19 @@ def add_peg_keepers(_peg_keepers: DynArray[address, MAX_KEEPERS]):
 def remove_peg_keepers(_peg_keepers: DynArray[address, MAX_KEEPERS]):
     self._check_owner()
     for keeper: address in _peg_keepers:
-        index_plus_one: uint256 = self._pegKeeperIndexPlusOne[keeper]
-        if index_plus_one == 0:
+        stored_index: uint256 = self._pegKeeperIndex[keeper]
+        if stored_index == 0:
             raw_revert(method_id("InvalidKeeper()"))
 
-        index: uint256 = index_plus_one - 1
+        index: uint256 = stored_index - 1
         last_index: uint256 = len(self.peg_keepers) - 1
         if index != last_index:
             moved: address = self.peg_keepers[last_index]
             self.peg_keepers[index] = moved
-            self._pegKeeperIndexPlusOne[moved] = index + 1
+            self._pegKeeperIndex[moved] = index + 1
 
         self.peg_keepers.pop()
-        self._pegKeeperIndexPlusOne[keeper] = 0
+        self._pegKeeperIndex[keeper] = 0
         log PegKeeperRemoved(pegKeeper=keeper)
 
 

@@ -100,25 +100,25 @@ event ProfitWithdrawn:
     caller: indexed(address)
     receiver: indexed(address)
     crv_usd_transferred: uint256
-    deployed_crv_usd_after: uint256
+    debt_after: uint256
 
 event DebtReduced:
     caller: indexed(address)
     requested_reduction: uint256
     actual_reduction: uint256
-    deployed_crv_usd_after: uint256
+    debt_after: uint256
 
 event CrvUsdBorrowed:
     caller: indexed(address)
     receiver: indexed(address)
     amount: uint256
-    deployed_crv_usd_after: uint256
+    debt_after: uint256
 
 
 event PolicyUpdated:
     entry_min_profit_ppm: uint256
     normal_exit_min_profit_ppm: uint256
-    max_deployed_crvusd: uint256
+    max_debt: uint256
 
 
 event KeeperProfitShareUpdated:
@@ -186,14 +186,14 @@ pool_paired_token_index: public(uint256)
 
 entry_min_profit_ppm: public(uint256)
 normal_exit_min_profit_ppm: public(uint256)
-max_deployed_crvusd: public(uint256)
+max_debt: public(uint256)
 keeper_profit_share_bps: public(uint256)
 action_imbalance_bps: public(uint256)
 action_delay: public(uint256)
 last_intervention_at: public(uint256)
 amm_execution_buffer_bps: public(uint256)
 
-deployed_crvusd: public(uint256)
+debt: public(uint256)
 
 expansion_paused: public(bool)
 contraction_paused: public(bool)
@@ -206,7 +206,7 @@ def __init__(
     _pool: Pool,
     _paired_token_is_erc4626: bool,
     _pool_uses_dynamic_arrays: bool,
-    _max_deployed_crvusd: uint256,
+    _max_debt: uint256,
     _keeper_index: uint256,
     _backing_oracle: PriceOracle,
     _entry_min_profit_ppm: uint256,
@@ -224,7 +224,7 @@ def __init__(
     assert _controller_factory.address.codesize > 0
     assert _pool.address != empty(address)
     assert _pool.address.codesize > 0
-    assert _max_deployed_crvusd > 0
+    assert _max_debt > 0
     assert _keeper_index > 0
     assert _backing_oracle.address != empty(address)
     assert _backing_oracle.address.codesize > 0
@@ -289,7 +289,7 @@ def __init__(
     self.name = concat("Pegkeeper ", uint2str(_keeper_index))
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
-    self.max_deployed_crvusd = _max_deployed_crvusd
+    self.max_debt = _max_debt
     self.keeper_profit_share_bps = _keeper_profit_share_bps
     self.action_imbalance_bps = DEFAULT_ACTION_IMBALANCE_BPS
     self.action_delay = DEFAULT_ACTION_DELAY
@@ -433,18 +433,7 @@ def _oracle_value(_value: uint256, _price: uint256) -> uint256:
 @internal
 @view
 def _backing_price() -> uint256:
-    ok: bool = False
-    response: Bytes[64] = empty(Bytes[64])
-    ok, response = raw_call(
-        self.backing_oracle.address,
-        method_id("price()"),
-        max_outsize=64,
-        is_static_call=True,
-        revert_on_failure=False,
-    )
-    if not ok or len(response) != 32:
-        raise
-    price: uint256 = convert(slice(response, 0, 32), uint256)
+    price: uint256 = staticcall self.backing_oracle.price()
     assert price >= self.min_backing_oracle_price
     return price
 
@@ -518,8 +507,8 @@ def protocol_surplus() -> uint256:
     @notice Returns backing value above the crvUSD amount this keeper must cover.
     """
     trusted_value: uint256 = self._trusted_backing_value()
-    if trusted_value > self.deployed_crvusd:
-        return trusted_value - self.deployed_crvusd
+    if trusted_value > self.debt:
+        return trusted_value - self.debt
     return 0
 
 
@@ -530,32 +519,23 @@ def calc_profit() -> uint256:
     @notice Returns current protocol surplus in crvUSD-value terms for V2 tooling compatibility.
     """
     trusted_value: uint256 = self._trusted_backing_value()
-    if trusted_value > self.deployed_crvusd:
-        return trusted_value - self.deployed_crvusd
+    if trusted_value > self.debt:
+        return trusted_value - self.debt
     return 0
-
-
-@external
-@view
-def debt() -> uint256:
-    """
-    @notice Returns the recorded crvUSD amount for compatibility with existing tools.
-    """
-    return self.deployed_crvusd
 
 
 @internal
 @view
 def _remaining_exposure_capacity() -> uint256:
-    deployed: uint256 = self.deployed_crvusd
-    if self.max_deployed_crvusd <= deployed:
+    current_debt: uint256 = self.debt
+    if self.max_debt <= current_debt:
         return 0
-    local_capacity: uint256 = self.max_deployed_crvusd - deployed
+    local_capacity: uint256 = self.max_debt - current_debt
 
     factory_allocation: uint256 = staticcall self._controller_factory.debt_ceiling(self)
-    if factory_allocation <= deployed:
+    if factory_allocation <= current_debt:
         return 0
-    return min(local_capacity, factory_allocation - deployed)
+    return min(local_capacity, factory_allocation - current_debt)
 
 
 @internal
@@ -642,18 +622,7 @@ def can_expand_without_policy() -> bool:
     if cap == 0:
         return False
 
-    ok: bool = False
-    oracle_response: Bytes[64] = empty(Bytes[64])
-    ok, oracle_response = raw_call(
-        self.backing_oracle.address,
-        method_id("price()"),
-        max_outsize=64,
-        is_static_call=True,
-        revert_on_failure=False,
-    )
-    if not ok or len(oracle_response) != 32:
-        return False
-    if convert(slice(oracle_response, 0, 32), uint256) < self.min_backing_oracle_price:
+    if staticcall self.backing_oracle.price() < self.min_backing_oracle_price:
         return False
 
     return self._expansion_preview_viable(cap)
@@ -721,8 +690,8 @@ def _realized_contraction_profit(
     _trusted_backing_after: uint256,
 ) -> uint256:
     principal_recovery: uint256 = _trusted_value_removed
-    if self.deployed_crvusd > _trusted_backing_after:
-        solvency_recovery: uint256 = self.deployed_crvusd - _trusted_backing_after
+    if self.debt > _trusted_backing_after:
+        solvency_recovery: uint256 = self.debt - _trusted_backing_after
         if solvency_recovery > principal_recovery:
             principal_recovery = solvency_recovery
 
@@ -763,16 +732,16 @@ def _settle_keeper_contraction_and_reduce_exposure(
     assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
     net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
 
-    deployed_crv_usd: uint256 = self.deployed_crvusd
-    if net_crv_usd > deployed_crv_usd:
-        self.deployed_crvusd = 0
+    current_debt: uint256 = self.debt
+    if net_crv_usd > current_debt:
+        self.debt = 0
         self._transfer_exact_to(
             crv_usd,
             self._fee_receiver(),
-            net_crv_usd - deployed_crv_usd,
+            net_crv_usd - current_debt,
         )
     else:
-        self.deployed_crvusd = deployed_crv_usd - net_crv_usd
+        self.debt = current_debt - net_crv_usd
     return gross_profit, keeper_reward
 
 
@@ -806,10 +775,10 @@ def preview_contraction() -> (uint256, uint256, uint256):
     keeper_reward: uint256 = self._keeper_reward(gross_profit)
     net_crv_usd: uint256 = expected_crv_usd - keeper_reward
 
-    deployed_after: uint256 = 0
-    if self.deployed_crvusd > net_crv_usd:
-        deployed_after = self.deployed_crvusd - net_crv_usd
-    assert trusted_after >= deployed_after
+    debt_after: uint256 = 0
+    if self.debt > net_crv_usd:
+        debt_after = self.debt - net_crv_usd
+    assert trusted_after >= debt_after
     return expected_crv_usd, gross_profit, keeper_reward
 
 
@@ -936,10 +905,10 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
 
     if crv_usd_deployed > staticcall crv_usd.balanceOf(self):
         return False
-    deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
-    if deployed_after > self.max_deployed_crvusd:
+    debt_after: uint256 = self.debt + crv_usd_deployed
+    if debt_after > self.max_debt:
         return False
-    if deployed_after > staticcall self._controller_factory.debt_ceiling(self):
+    if debt_after > staticcall self._controller_factory.debt_ceiling(self):
         return False
 
     lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
@@ -962,7 +931,7 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
         return False
     if not self._meets_entry_floor(gross_profit, crv_usd_deployed):
         return False
-    return retained_value >= deployed_after
+    return retained_value >= debt_after
 
 
 @internal
@@ -979,9 +948,9 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     accounting_baseline: uint256 = lp_value_before + donated_value
 
     assert crv_usd_deployed <= staticcall crv_usd.balanceOf(self)
-    deployed_after: uint256 = self.deployed_crvusd + crv_usd_deployed
-    assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
+    debt_after: uint256 = self.debt + crv_usd_deployed
+    assert debt_after <= self.max_debt
+    assert debt_after <= staticcall self._controller_factory.debt_ceiling(self)
 
     lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
     lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
@@ -995,7 +964,7 @@ def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, 
     retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
     assert retained_value >= accounting_baseline
     assert self._meets_entry_floor(gross_profit, crv_usd_deployed)
-    assert retained_value >= deployed_after
+    assert retained_value >= debt_after
     return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
 
 
@@ -1105,8 +1074,8 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         lp_received,
         _reward_recipient,
     )
-    self.deployed_crvusd += crv_usd_deployed
-    assert self._trusted_backing_value() >= self.deployed_crvusd
+    self.debt += crv_usd_deployed
+    assert self._trusted_backing_value() >= self.debt
     self.last_intervention_at = block.timestamp
 
     log Expanded(
@@ -1185,8 +1154,8 @@ def _settle_donated_paired_token(
         msg.sender,
     )
 
-    self.deployed_crvusd += crv_usd_matched
-    assert self._trusted_backing_value() >= self.deployed_crvusd
+    self.debt += crv_usd_matched
+    assert self._trusted_backing_value() >= self.debt
 
     log DonatedPairedTokenSwept(
         keeper=msg.sender,
@@ -1234,8 +1203,8 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         backing_price,
     )
     potential_surplus: uint256 = 0
-    if backing_before_sweep > self.deployed_crvusd:
-        potential_surplus = backing_before_sweep - self.deployed_crvusd
+    if backing_before_sweep > self.debt:
+        potential_surplus = backing_before_sweep - self.debt
     donated_paired_token_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
     potential_surplus += self._oracle_value(donated_paired_token_value, backing_price)
 
@@ -1257,8 +1226,8 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         self._backing_price(),
     )
     surplus: uint256 = 0
-    if trusted_backing > self.deployed_crvusd:
-        surplus = trusted_backing - self.deployed_crvusd
+    if trusted_backing > self.debt:
+        surplus = trusted_backing - self.debt
 
     crv_usd_balance_before: uint256 = staticcall crv_usd.balanceOf(self)
     exposure_capacity: uint256 = self._remaining_exposure_capacity()
@@ -1271,8 +1240,8 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         crv_usd_transferred = exposure_capacity
     assert crv_usd_transferred > 0
 
-    deployed_crv_usd_after: uint256 = self.deployed_crvusd + crv_usd_transferred
-    self.deployed_crvusd = deployed_crv_usd_after
+    debt_after: uint256 = self.debt + crv_usd_transferred
+    self.debt = debt_after
 
     fee_receiver: address = self._fee_receiver()
     self._transfer_exact_to(crv_usd, fee_receiver, crv_usd_transferred)
@@ -1280,13 +1249,13 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     assert crv_usd_balance_before >= crv_usd_balance_after
     assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
 
-    assert self._trusted_backing_value() >= deployed_crv_usd_after
+    assert self._trusted_backing_value() >= debt_after
 
     log ProfitWithdrawn(
         caller=msg.sender,
         receiver=fee_receiver,
         crv_usd_transferred=crv_usd_transferred,
-        deployed_crv_usd_after=deployed_crv_usd_after,
+        debt_after=debt_after,
     )
     return crv_usd_transferred
 
@@ -1335,7 +1304,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         trusted_backing_after,
         _reward_recipient,
     )
-    assert self._trusted_backing_value() >= self.deployed_crvusd
+    assert self._trusted_backing_value() >= self.debt
     self.last_intervention_at = block.timestamp
 
     log Contracted(
@@ -1396,36 +1365,36 @@ def borrow_crvusd(_amount: uint256, _receiver: address):
     assert _amount <= self._local_expansion_limit()
     self._backing_price()
 
-    deployed_after: uint256 = self.deployed_crvusd + _amount
-    assert deployed_after <= self.max_deployed_crvusd
-    assert deployed_after <= staticcall self._controller_factory.debt_ceiling(self)
+    debt_after: uint256 = self.debt + _amount
+    assert debt_after <= self.max_debt
+    assert debt_after <= staticcall self._controller_factory.debt_ceiling(self)
     assert _amount <= staticcall crv_usd.balanceOf(self)
 
-    self.deployed_crvusd = deployed_after
+    self.debt = debt_after
     self.last_intervention_at = block.timestamp
     self._transfer_exact_to(crv_usd, _receiver, _amount)
     log CrvUsdBorrowed(
         caller=msg.sender,
         receiver=_receiver,
         amount=_amount,
-        deployed_crv_usd_after=deployed_after,
+        debt_after=debt_after,
     )
 
 
 @external
-def reduce_deployed_crvusd(_amount: uint256):
+def reduce_debt(_amount: uint256):
     """
-    @notice Lets the admin reduce the recorded externalized crvUSD amount, clamped at zero.
+    @notice Lets the admin reduce recorded debt, clamped at zero.
     """
     assert self._is_admin(msg.sender)
 
-    reduction: uint256 = min(_amount, self.deployed_crvusd)
-    self.deployed_crvusd -= reduction
+    reduction: uint256 = min(_amount, self.debt)
+    self.debt -= reduction
     log DebtReduced(
         caller=msg.sender,
         requested_reduction=_amount,
         actual_reduction=reduction,
-        deployed_crv_usd_after=self.deployed_crvusd,
+        debt_after=self.debt,
     )
 
 
@@ -1541,23 +1510,23 @@ def set_intervention_policy(
 def set_policy(
     _entry_min_profit_ppm: uint256,
     _normal_exit_min_profit_ppm: uint256,
-    _max_deployed_crvusd: uint256,
+    _max_debt: uint256,
 ):
     """
     @notice Changes local profit and crvUSD limits.
     """
     assert self._is_admin(msg.sender)
     assert _normal_exit_min_profit_ppm <= PPM
-    assert _max_deployed_crvusd > 0
+    assert _max_debt > 0
 
     self.entry_min_profit_ppm = _entry_min_profit_ppm
     self.normal_exit_min_profit_ppm = _normal_exit_min_profit_ppm
-    self.max_deployed_crvusd = _max_deployed_crvusd
+    self.max_debt = _max_debt
 
     log PolicyUpdated(
         entry_min_profit_ppm=_entry_min_profit_ppm,
         normal_exit_min_profit_ppm=_normal_exit_min_profit_ppm,
-        max_deployed_crvusd=_max_deployed_crvusd,
+        max_debt=_max_debt,
     )
 
 

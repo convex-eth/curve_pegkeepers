@@ -384,7 +384,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.backing_oracle(), oracle);
         assertEq(keeper.min_backing_oracle_price(), proposal.MIN_BACKING_ORACLE_PRICE());
         assertEq(keeper.keeper_profit_share_bps(), proposal.KEEPER_PROFIT_SHARE_BPS());
-        assertEq(keeper.max_deployed_crvusd(), CAP);
+        assertEq(keeper.max_debt(), CAP);
         assertEq(keeper.debt(), 0);
         assertTrue(keeperRegistry.is_active(keeperAddress));
         assertFalse(keeper.expansion_paused());

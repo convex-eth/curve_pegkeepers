@@ -110,7 +110,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(config.emergencyAdmin, deployer.EMERGENCY_ADMIN());
         assertEq(config.feeReceiver, deployer.FEE_SPLITTER());
         assertEq(config.keeperProfitShareBps, 3_000);
-        assertEq(config.maxDeployedCrvUsd, 150_000_000e18);
+        assertEq(config.maxDebt, 150_000_000e18);
         assertEq(config.ammExecutionBufferBps, 3);
         assertEq(config.frxUsdProxy, deployer.FRXUSD_USD_PROXY());
         assertEq(config.usdcProxy, deployer.USDC_USD_PROXY());
@@ -141,7 +141,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(keeper.entry_min_profit_ppm(), entryProfit);
         assertEq(keeper.normal_exit_min_profit_ppm(), exitProfit);
         assertEq(keeper.keeper_profit_share_bps(), config.keeperProfitShareBps);
-        assertEq(keeper.max_deployed_crvusd(), config.maxDeployedCrvUsd);
+        assertEq(keeper.max_debt(), config.maxDebt);
         assertEq(keeper.amm_execution_buffer_bps(), config.ammExecutionBufferBps);
         assertEq(keeper.pool_uses_dynamic_arrays(), dynamicArrays);
         assertFalse(keeper.expansion_paused());
@@ -175,7 +175,7 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         config.emergencyAdmin = makeAddr("emergencyAdmin");
         config.feeReceiver = makeAddr("feeReceiver");
         config.keeperProfitShareBps = 3_000;
-        config.maxDeployedCrvUsd = 2_500_000e18;
+        config.maxDebt = 2_500_000e18;
         config.ammExecutionBufferBps = 7;
         config.frxUsdProxy = address(chainlinkProxy);
         config.frxUsdMaxDelay = 26 hours;

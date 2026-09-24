@@ -83,7 +83,7 @@ aggregate price = 1e18: expansion and contraction allowed
 aggregate price > 1e18: expansion allowed; contraction denied
 ```
 
-Malformed or reverting aggregate-oracle responses fail closed.
+Policy and keeper oracle reads use the declared `price()` interface directly. Reverting calls or zero aggregate prices fail closed.
 
 ## Keeper-local governance
 
@@ -116,7 +116,7 @@ borrow_crvusd(uint256 amount, address receiver)
 
 The draw requires Policy expansion admission, open pauses, elapsed delay, healthy retained backing, a requested amount within local imbalance, sufficient idle crvUSD, and resulting debt within both the keeper cap and ControllerFactory ceiling. It records debt and updates the shared intervention timestamp before transferring exactly the requested amount.
 
-The draw cannot prove that an external module returns LP backing. A production integration must make the draw, external execution, backing return, and postconditions atomic. `reduce_deployed_crvusd(amount)` is the keeper-admin inverse bookkeeping operation.
+The draw cannot prove that an external module returns LP backing. A production integration must make the draw, external execution, backing return, and postconditions atomic. `reduce_debt(amount)` is the keeper-admin inverse bookkeeping operation.
 
 ## Donations, profit, and surplus
 
@@ -175,18 +175,18 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      19,458 bytes
-runtime core:            16,898 bytes
-standalone runtime:      16,930 bytes
-EIP-170 headroom:         7,646 bytes
+standalone initcode:      19,148 bytes
+runtime core:            16,586 bytes
+standalone runtime:      16,618 bytes
+EIP-170 headroom:         7,958 bytes
 runtime core hash:
-0x8bf821239f16bf63632a2ab9084b608e70bcd1f8f22397fa96cfdc2792a87ff0
+0xd5be0097682e2eaf9ceb75c057699a117c6d41459be6f1df16131fc87eae0c7a
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0x3ed876705a1e18070f312ba0f0329132268be95956ab02f0ec52441506302e77
+0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543
 
-PegKeeperPolicy runtime:   1,333 bytes
+PegKeeperPolicy runtime:   1,218 bytes
 policy hash:
-0x0fa0919fe5fd739c535645ca9a4be505c314126efbbe536f89fdebd7ead1c640
+0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6
 
 PegKeeperRegistry runtime: 1,609 bytes
 registry hash:
