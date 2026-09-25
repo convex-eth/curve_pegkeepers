@@ -26,7 +26,7 @@ USDT    0xdAC17F958D2ee523a2206206994597C13D831ec7
 | Parameter | Candidate value |
 |---|---:|
 | ControllerFactory | `0xC9332fdCB1C491Dcc683bAe86Fe3cb70360738BC` |
-| Policy owner / Registry owner / keeper admin | Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
+| Policy admin / Registry admin / keeper admin | Curve Ownership Agent `0x40907540d8a6C65c637785e8f8B742ae6b0b9968` |
 | keeper emergency admin | `0x467947EE34aF926cF1DCac093870f613C96B1E0c` |
 | Policy fee receiver | `0x2dFd89449faff8a532790667baB21cF733C064f2` |
 | AMM execution buffer | `3 bps` |
@@ -40,7 +40,7 @@ The current `PegKeeperPolicy` answers global executable rulings from aggregate c
 
 Every keeper enforces its own pause, delay, imbalance, backing, capacity, execution-profit, reward, and solvency conditions. No keeper's local utilization, pause state, oracle, delay, imbalance, or profitability blocks another through the current Policy. AMM fees and keeper-local gross-profit floors provide soft economic preference: frxUSD enters at `0.1 bp`, while USDC and USDT require `3 bp`.
 
-`PegKeeperRegistry` separately maintains the governance-selected discovery list. Its deterministic maximum is 32; owner-only batch add/remove uses duplicate and missing-entry rejection, 1-based indices, pop-and-swap removal, moved-index repair, and clean re-addition. Policy and keepers do not query Registry during execution, so enrollment is informational rather than an execution permission.
+`PegKeeperRegistry` separately maintains the governance-selected discovery list. Its deterministic maximum is 32; admin-only batch add/remove uses duplicate and missing-entry rejection, 1-based indices, pop-and-swap removal, moved-index repair, and clean re-addition. Policy and keepers do not query Registry during execution, so enrollment is informational rather than an execution permission.
 
 | Global component | Launch value |
 |---|---:|
@@ -101,8 +101,8 @@ The draw is Policy-gated, cap/ceiling/balance bounded, and recorded as debt befo
 
 Deployment performs eight CREATEs in fixed order:
 
-1. deploy `PegKeeperPolicy` with Curve Ownership Agent as owner and the global fee receiver;
-2. deploy `PegKeeperRegistry` with Curve Ownership Agent as owner;
+1. deploy `PegKeeperPolicy` with Curve Ownership Agent as admin and the global fee receiver;
+2. deploy `PegKeeperRegistry` with Curve Ownership Agent as admin;
 3. deploy frxUSD/USD adapter;
 4. deploy USDC/USD adapter;
 5. deploy USDT/USD adapter;
@@ -116,7 +116,7 @@ Post-deployment state:
 - keepers unpaused and debt-free;
 - ControllerFactory ceilings zero;
 - unlimited keeper allowances to ControllerFactory present;
-- no pending ownership or setup transaction.
+- no pending admin commitment or setup transaction.
 
 The governance proposal contains ten actions:
 
@@ -125,7 +125,7 @@ The governance proposal contains ten actions:
 3. register each in the legacy aggregate monetary policy;
 4. assign 150 million crvUSD ControllerFactory ceilings to each.
 
-This is one Registry action, six registration actions, and three ceiling actions. The proposal does not deploy or configure keepers, accept ownership, toggle pauses, remove V2 keepers, change the V2 regulator, or edit aggregate-oracle membership.
+This is one Registry action, six registration actions, and three ceiling actions. The proposal does not deploy or configure keepers, apply administration, toggle pauses, remove V2 keepers, change the V2 regulator, or edit aggregate-oracle membership.
 
 ## V2 coexistence and later removal
 
@@ -149,7 +149,7 @@ Before authorization:
 1. Reconfirm Policy, Registry, keeper, and adapter runtime identities.
 2. Reconfirm pool coin order, ABI mode, rates, virtual prices, fees, balances, and exact-output behavior.
 3. Reassess local maxima and ControllerFactory ceilings against current depth.
-4. Confirm Policy and Registry ownership, empty pre-proposal Registry, direct keeper roles/Policy selection, local reward shares, unpaused/debt-free state, zero ceilings, and unlimited ControllerFactory allowances.
+4. Confirm Policy and Registry administration, empty pre-proposal Registry, direct keeper roles/Policy selection, local reward shares, unpaused/debt-free state, zero ceilings, and unlimited ControllerFactory allowances.
 5. Simulate the exact ten-action vote and verify Registry enrollment precedes monetary-policy registrations and ceilings.
 6. Immediately after execution, run bounded expansion/contraction canaries and reconcile every balance/debt delta.
 7. Retire V2 only under separate authorization.

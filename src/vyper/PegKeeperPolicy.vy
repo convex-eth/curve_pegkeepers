@@ -20,42 +20,41 @@ event FeeReceiverUpdated:
     newFeeReceiver: indexed(address)
 
 
-event OwnershipTransferStarted:
-    owner: indexed(address)
-    pendingOwner: indexed(address)
+event CommitNewAdmin:
+    admin: address
 
 
-event OwnershipTransferred:
-    oldOwner: indexed(address)
-    newOwner: indexed(address)
+event ApplyNewAdmin:
+    admin: address
 
 
 PRECISION: constant(uint256) = 10 ** 18
+ADMIN_ACTIONS_DELAY: constant(uint256) = 3 * 86400
 
-owner: public(address)
-pendingOwner: public(address)
-ownershipTransferNonce: public(uint256)
+admin: public(address)
+future_admin: public(address)
+new_admin_deadline: public(uint256)
 aggregateCrvUsdOracle: public(address)
 fee_receiver: public(address)
 
 
 @deploy
 def __init__(
-    _initial_owner: address,
+    _admin: address,
     _aggregate_crvusd_oracle: address,
     _fee_receiver: address,
 ):
-    if _initial_owner == empty(address):
-        raw_revert(method_id("InvalidOwner()"))
+    if _admin == empty(address):
+        raw_revert(method_id("InvalidAdmin()"))
     if _aggregate_crvusd_oracle == empty(address) or _aggregate_crvusd_oracle.codesize == 0:
         raw_revert(method_id("InvalidOracle()"))
     if _fee_receiver == empty(address):
         raw_revert(method_id("InvalidFeeReceiver()"))
 
-    self.owner = _initial_owner
+    self.admin = _admin
     self.aggregateCrvUsdOracle = _aggregate_crvusd_oracle
     self.fee_receiver = _fee_receiver
-    log OwnershipTransferred(oldOwner=empty(address), newOwner=_initial_owner)
+    log ApplyNewAdmin(admin=_admin)
     log AggregateCrvUsdOracleUpdated(
         oldOracle=empty(address), newOracle=_aggregate_crvusd_oracle
     )
@@ -64,7 +63,7 @@ def __init__(
 
 @external
 def set_aggregate_crvusd_oracle(_new_oracle: address):
-    self._check_owner()
+    self._check_admin()
     if _new_oracle == empty(address) or _new_oracle.codesize == 0:
         raw_revert(method_id("InvalidOracle()"))
 
@@ -75,7 +74,7 @@ def set_aggregate_crvusd_oracle(_new_oracle: address):
 
 @external
 def set_fee_receiver(_new_fee_receiver: address):
-    self._check_owner()
+    self._check_admin()
     if _new_fee_receiver == empty(address):
         raw_revert(method_id("InvalidFeeReceiver()"))
 
@@ -105,37 +104,43 @@ def can_contract() -> bool:
 
 
 @external
-def transferOwnership(_new_owner: address):
-    if msg.sender != self.owner:
-        raw_revert(method_id("NotOwner()"))
-    if _new_owner == empty(address) or _new_owner == self.owner:
-        raw_revert(method_id("InvalidOwner()"))
+@nonpayable
+def commit_new_admin(_new_admin: address):
+    """
+    @notice Commit new admin of the Policy.
+    @dev In order to revert, commit_new_admin(current_admin) may be called.
+    @param _new_admin Address of the new admin.
+    """
+    assert msg.sender == self.admin
+    assert _new_admin != empty(address)
 
-    self.pendingOwner = _new_owner
-    self.ownershipTransferNonce += 1
-    log OwnershipTransferStarted(owner=self.owner, pendingOwner=_new_owner)
+    self.new_admin_deadline = block.timestamp + ADMIN_ACTIONS_DELAY
+    self.future_admin = _new_admin
+    log CommitNewAdmin(admin=_new_admin)
 
 
 @external
-def acceptOwnership(_expected_nonce: uint256):
-    if msg.sender != self.pendingOwner:
-        raw_revert(method_id("NotPendingOwner()"))
-    if _expected_nonce != self.ownershipTransferNonce:
-        raw_revert(method_id("InvalidOwnershipTransferNonce()"))
+@nonpayable
+def apply_new_admin():
+    """
+    @notice Apply new admin of the Policy.
+    @dev Should be executed from new admin.
+    """
+    new_admin: address = self.future_admin
+    new_admin_deadline: uint256 = self.new_admin_deadline
+    assert msg.sender == new_admin
+    assert block.timestamp >= new_admin_deadline
+    assert new_admin_deadline != 0
 
-    old_owner: address = self.owner
-    self.owner = msg.sender
-    self.pendingOwner = empty(address)
-    log OwnershipTransferred(oldOwner=old_owner, newOwner=msg.sender)
+    self.admin = new_admin
+    self.new_admin_deadline = 0
+    log ApplyNewAdmin(admin=new_admin)
 
 
 @internal
 @view
-def _check_owner():
-    if msg.sender != self.owner:
-        raw_revert(method_id("NotOwner()"))
-    if self.pendingOwner != empty(address):
-        raw_revert(method_id("OwnershipHandoffPending()"))
+def _check_admin():
+    assert msg.sender == self.admin
 
 
 @internal

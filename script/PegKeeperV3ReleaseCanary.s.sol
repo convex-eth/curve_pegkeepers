@@ -82,7 +82,7 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(lpReceived > 0, "no LP received");
         // forge-lint: disable-next-line(block-timestamp)
         require(pegKeeper.last_intervention_at() == block.timestamp, "expansion timestamp");
-        require(pegKeeper.accounted_lp_tokens() > 0, "LP accounting missing");
+        require(pegKeeper.lp_balance() > 0, "LP accounting missing");
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "loose frxUSD");
         require(pegKeeper.trusted_backing_value() >= pegKeeper.debt(), "principal invariant");
         require(

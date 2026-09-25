@@ -49,14 +49,16 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertGt(deployment.frxUsdPegKeeper.code.length, 45);
         assertGt(deployment.usdcPegKeeper.code.length, 45);
         assertGt(deployment.usdtPegKeeper.code.length, 45);
-        assertEq(policy.owner(), config.admin);
-        assertEq(policy.pendingOwner(), address(0));
+        assertEq(policy.admin(), config.admin);
+        assertEq(policy.future_admin(), address(0));
+        assertEq(policy.new_admin_deadline(), 0);
         assertEq(policy.aggregateCrvUsdOracle(), config.aggregateCrvUsdOracle);
         assertEq(policy.fee_receiver(), config.feeReceiver);
         assertTrue(policy.can_expand());
         assertTrue(policy.can_contract());
-        assertEq(registry.owner(), config.admin);
-        assertEq(registry.pendingOwner(), address(0));
+        assertEq(registry.admin(), config.admin);
+        assertEq(registry.future_admin(), address(0));
+        assertEq(registry.new_admin_deadline(), 0);
         assertEq(registry.peg_keeper_count(), 0);
         assertFalse(registry.is_active(deployment.frxUsdPegKeeper));
 
@@ -136,6 +138,8 @@ contract PegKeeperV3UnifiedDeploymentTest is Test {
         assertEq(keeper.policy(), policy);
         assertEq(keeper.controller_factory(), config.controllerFactory);
         assertEq(keeper.admin(), config.admin);
+        assertEq(keeper.future_admin(), address(0));
+        assertEq(keeper.new_admin_deadline(), 0);
         assertEq(keeper.emergency_admin(), config.emergencyAdmin);
         assertEq(keeper.keeper_index(), index);
         assertEq(keeper.entry_min_profit_ppm(), entryProfit);

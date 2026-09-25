@@ -266,16 +266,18 @@ contract DeployPegKeeperV3 is Script {
         require(deployment.usdtPegKeeper.code.length <= EIP_170_RUNTIME_LIMIT, "USDT too large");
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(deployment.policy);
-        require(policy.owner() == config.admin, "policy owner mismatch");
-        require(policy.pendingOwner() == address(0), "unexpected policy pending owner");
+        require(policy.admin() == config.admin, "policy admin mismatch");
+        require(policy.future_admin() == address(0), "unexpected policy future admin");
+        require(policy.new_admin_deadline() == 0, "unexpected policy admin deadline");
         require(
             policy.aggregateCrvUsdOracle() == config.aggregateCrvUsdOracle,
             "aggregate oracle mismatch"
         );
         require(policy.fee_receiver() == config.feeReceiver, "fee receiver mismatch");
         IPegKeeperRegistry registry = IPegKeeperRegistry(deployment.registry);
-        require(registry.owner() == config.admin, "registry owner mismatch");
-        require(registry.pendingOwner() == address(0), "unexpected registry pending owner");
+        require(registry.admin() == config.admin, "registry admin mismatch");
+        require(registry.future_admin() == address(0), "unexpected registry future admin");
+        require(registry.new_admin_deadline() == 0, "unexpected registry admin deadline");
         require(registry.peg_keeper_count() == 0, "registry not empty");
         _verifyChainlinkOracle(
             deployment.frxUsdUsdOracle, config.frxUsdProxy, config.frxUsdMaxDelay
@@ -354,6 +356,8 @@ contract DeployPegKeeperV3 is Script {
             keeper.amm_execution_buffer_bps() == config.ammExecutionBufferBps, "execution buffer"
         );
         require(keeper.admin() == config.admin, "keeper admin mismatch");
+        require(keeper.future_admin() == address(0), "unexpected keeper future admin");
+        require(keeper.new_admin_deadline() == 0, "unexpected keeper admin deadline");
         require(keeper.emergency_admin() == config.emergencyAdmin, "emergency admin mismatch");
         require(!keeper.expansion_paused(), "expansion paused");
         require(!keeper.contraction_paused(), "contraction paused");
@@ -379,7 +383,7 @@ contract DeployPegKeeperV3 is Script {
 
     function _logPlan(Config memory config) internal view {
         console2.log("Network chain id", block.chainid);
-        console2.log("Policy / Registry owner / keeper admin", config.admin);
+        console2.log("Policy / Registry / keeper admin", config.admin);
         console2.log("ControllerFactory", config.controllerFactory);
         console2.log("Aggregate crvUSD oracle", config.aggregateCrvUsdOracle);
         console2.log("Emergency admin", config.emergencyAdmin);

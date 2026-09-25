@@ -36,6 +36,8 @@ Every keeper directly stores:
 
 ```solidity
 admin();
+future_admin();
+new_admin_deadline();
 emergency_admin();
 policy();
 keeper_profit_share_bps();
@@ -44,13 +46,14 @@ keeper_profit_share_bps();
 Only the current keeper admin may call:
 
 ```solidity
-set_admin(address);
+commit_new_admin(address);
+apply_new_admin();
 set_emergency_admin(address);
 set_policy_contract(address);
 set_keeper_profit_share_bps(uint256);
 ```
 
-Admin and emergency admin must be nonzero and distinct. A replacement Policy must contain code. Role and Policy changes emit old/new events.
+Constructor admin and emergency-admin roles must be nonzero and distinct. Admin replacement follows Curve's three-day `commit_new_admin` / `apply_new_admin` flow. The current admin remains active during the delay and can overwrite or cancel a pending commitment by recommitting; only `future_admin` may apply after the deadline. `set_emergency_admin` can replace or revoke the emergency role. A replacement Policy must contain code.
 
 The admin may configure keeper parameters, pause or unpause, execute recovery calls, and perform the external draw. The emergency admin may only pause. There is no shared keeper-role owner.
 
@@ -64,7 +67,7 @@ can_contract();
 expansion_regime();
 ```
 
-The current `PegKeeperPolicy` stores the aggregate crvUSD oracle and global `fee_receiver`. It owns no keeper list or reward parameter and never calls a keeper for local conditions. Its current executable rulings depend only on the exact aggregate-price boundary. The Policy owner can replace the nonzero fee receiver once for every keeper selecting that Policy. Policy ownership uses a nonce-bound two-step transfer; oracle and fee-receiver configuration freeze while a transfer is pending.
+The current `PegKeeperPolicy` stores the aggregate crvUSD oracle and global `fee_receiver`. It owns no keeper list or reward parameter and never calls a keeper for local conditions. Its current executable rulings depend only on the exact aggregate-price boundary. The Policy admin can replace the nonzero fee receiver once for every keeper selecting that Policy. Policy administration uses the same three-day Curve handoff as keepers; the current admin remains active while a commitment is pending.
 
 The no-argument ABI is intentionally replaceable rather than permanently price-only. A future Policy can add global or caller-aware rules while retaining these selectors; direct keeper calls expose the querying keeper as `msg.sender`. Governance can select a replacement with keeper-local `set_policy_contract`.
 
@@ -92,7 +95,7 @@ Expected economic failure returns `false`. Execution and previews query the sele
 
 ## 5. PegKeeperRegistry and wind-down
 
-`PegKeeperRegistry` is an independently owned discovery and enumeration contract:
+`PegKeeperRegistry` is an independently administered discovery and enumeration contract:
 
 ```solidity
 peg_keeper_count();
@@ -102,7 +105,7 @@ add_peg_keepers(address[] keepers);
 remove_peg_keepers(address[] keepers);
 ```
 
-The deterministic list bound is 32. Addition is owner-only and rejects non-contract or duplicate entries. Removal is owner-only, rejects missing entries, pop-and-swaps the tail into the removed slot, repairs the moved keeper's 1-based index, and permits later re-addition.
+The deterministic list bound is 32. Addition is admin-only and rejects non-contract or duplicate entries. Removal is admin-only, rejects missing entries, pop-and-swaps the tail into the removed slot, repairs the moved keeper's 1-based index, and permits later re-addition. Registry administration uses the same three-day Curve handoff.
 
 Registry is not queried by Policy or keeper execution. Enrollment is therefore informational and governance-facing: it does not grant expansion authority, and removal does not block expansion or contraction. Wind-down remains controlled by keeper-local conditions plus the selected Policy's global contraction ruling.
 
@@ -245,8 +248,8 @@ ControllerFactory.debt_ceiling(keeper)
 
 The environment-free deployment script performs eight monotonic CREATEs:
 
-1. `PegKeeperPolicy`, owned directly by the Curve Ownership Agent and initialized with the global fee receiver;
-2. `PegKeeperRegistry`, owned directly by the Curve Ownership Agent;
+1. `PegKeeperPolicy`, administered directly by the Curve Ownership Agent and initialized with the global fee receiver;
+2. `PegKeeperRegistry`, administered directly by the Curve Ownership Agent;
 3. frxUSD/USD adapter;
 4. USDC/USD adapter;
 5. USDT/USD adapter;
@@ -254,7 +257,7 @@ The environment-free deployment script performs eight monotonic CREATEs:
 7. standalone USDC keeper;
 8. standalone USDT keeper.
 
-Every keeper is complete at construction with final roles and selected Policy. There is no implementation deployment, clone creation, temporary ownership, ownership acceptance, acceptance nonce, or post-deploy keeper configuration.
+Every keeper is complete at construction with final roles and selected Policy. There is no implementation deployment, clone creation, temporary administration, pending admin commitment, or post-deploy keeper configuration.
 
 The Registry remains empty after deployment. Every keeper is unpaused and has zero ControllerFactory allocation. Deployment alone therefore does not activate debt growth.
 
@@ -280,22 +283,22 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      19,148 bytes
-runtime core:            16,586 bytes
-standalone runtime:      16,618 bytes
-EIP-170 headroom:         7,958 bytes
+standalone initcode:      19,249 bytes
+keeper runtime core:       16,678 bytes
+standalone runtime:      16,710 bytes
+EIP-170 headroom:         7,866 bytes
 runtime core hash:
-0xd5be0097682e2eaf9ceb75c057699a117c6d41459be6f1df16131fc87eae0c7a
+0xf835e7415573c866384e6ffb2b46b95080c5845623407419db4f4e9507f226bf
 mainnet runtime hash:
-0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543
+0xb30253eac8052fada992aee0d22a1e3f2d5a51670e8b0df7438f5b7247fb99ae
 
-PegKeeperPolicy runtime:   1,218 bytes
+PegKeeperPolicy runtime:   905 bytes
 policy hash:
-0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6
+0xa11f74514ddad33cebd3ea933e1bf8d802b74107af7b3bc23b0bb6a0067a758c
 
-PegKeeperRegistry runtime: 1,609 bytes
+PegKeeperRegistry runtime: 1,296 bytes
 registry hash:
-0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab
+0xa8701fd3d6a78297bb59b5d1466c6e20e96e41959650282aa03b4e7b4015e8a8
 ```
 
 Vyper appends the canonical crvUSD immutable word to the Keeper runtime core. Tests pin the core and assert exact deployed-code composition before pinning the mainnet runtime hash.

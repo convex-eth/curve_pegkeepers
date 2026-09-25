@@ -91,18 +91,21 @@ Each keeper directly exposes:
 
 ```solidity
 admin();
+future_admin();
+new_admin_deadline();
 emergency_admin();
 policy();
 keeper_profit_share_bps();
-set_admin(newAdmin);
-set_emergency_admin(newEmergencyAdmin);
+commit_new_admin(newAdmin);
+apply_new_admin();
+set_emergency_admin(admin);
 set_policy_contract(newPolicy);
 set_keeper_profit_share_bps(newKeeperProfitShareBps);
 ```
 
-Only the current keeper admin may update these values. Admin and emergency admin must remain distinct. A replacement Policy must contain code. Changing `policy` changes both the global-ruling contract and global fee receiver queried by that keeper. Registry enrollment is independent and requires no coordinated execution handoff.
+Only the current keeper admin may update these values. Admin replacement follows Curve's three-day `commit_new_admin` / `apply_new_admin` flow: the current admin remains active during the delay and can replace or cancel a pending commitment by recommitting. After the deadline, only `future_admin` may apply. Constructor roles are nonzero and distinct; `set_emergency_admin` can later replace or revoke the emergency role. A replacement Policy must contain code. Changing `policy` changes both the global-ruling contract and global fee receiver queried by that keeper. Registry enrollment is independent and requires no coordinated execution handoff.
 
-The Policy owner controls `fee_receiver` once for all keepers selecting that Policy. The address must remain nonzero, and Policy configuration is frozen while an ownership handoff is pending.
+The Policy admin controls the nonzero `fee_receiver` once for all keepers selecting that Policy. Policy and Registry use the same three-day Curve admin transfer flow; their current admins remain active while a commitment is pending.
 
 `admin` may configure policy parameters, execute recovery calls, pause or unpause, and use the policy-gated external draw. `emergency_admin` may only pause.
 
@@ -139,8 +142,8 @@ At the initial keeper-local `3_000 bps` reward share, the `0.1 bp` frxUSD entry 
 
 The environment-free deployment script performs eight monotonic CREATEs:
 
-1. `PegKeeperPolicy` owned directly by the Curve Ownership Agent;
-2. `PegKeeperRegistry` owned directly by the Curve Ownership Agent;
+1. `PegKeeperPolicy` administered directly by the Curve Ownership Agent;
+2. `PegKeeperRegistry` administered directly by the Curve Ownership Agent;
 3. frxUSD/USD Chainlink adapter;
 4. USDC/USD Chainlink adapter;
 5. USDT/USD Chainlink adapter;
@@ -148,7 +151,7 @@ The environment-free deployment script performs eight monotonic CREATEs:
 7. standalone USDC PegKeeperV3;
 8. standalone USDT PegKeeperV3.
 
-Each keeper is complete at construction with final roles, local reward share, and selected Policy. There is no temporary implementation, deployer-owned configuration phase, ownership handoff, acceptance nonce, or post-deploy keeper setup transaction. The Registry is intentionally empty after deployment. Every keeper is unpaused, debt-free, and has a zero ControllerFactory allocation until governance acts.
+Each keeper is complete at construction with final roles, local reward share, and selected Policy. There is no temporary implementation, deployer-controlled configuration phase, pending admin commitment, or post-deploy keeper setup transaction. The Registry is intentionally empty after deployment. Every keeper is unpaused, debt-free, and has a zero ControllerFactory allocation until governance acts.
 
 The deployment JSON records the Policy, Registry, three oracle adapters, and three keeper addresses.
 
@@ -175,22 +178,22 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      19,148 bytes
-runtime core:            16,586 bytes
-standalone runtime:      16,618 bytes
-EIP-170 headroom:         7,958 bytes
+standalone initcode:      19,249 bytes
+keeper runtime core:       16,678 bytes
+standalone runtime:      16,710 bytes
+EIP-170 headroom:         7,866 bytes
 runtime core hash:
-0xd5be0097682e2eaf9ceb75c057699a117c6d41459be6f1df16131fc87eae0c7a
+0xf835e7415573c866384e6ffb2b46b95080c5845623407419db4f4e9507f226bf
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543
+0xb30253eac8052fada992aee0d22a1e3f2d5a51670e8b0df7438f5b7247fb99ae
 
-PegKeeperPolicy runtime:   1,218 bytes
+PegKeeperPolicy runtime:   905 bytes
 policy hash:
-0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6
+0xa11f74514ddad33cebd3ea933e1bf8d802b74107af7b3bc23b0bb6a0067a758c
 
-PegKeeperRegistry runtime: 1,609 bytes
+PegKeeperRegistry runtime: 1,296 bytes
 registry hash:
-0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab
+0xa8701fd3d6a78297bb59b5d1466c6e20e96e41959650282aa03b4e7b4015e8a8
 ```
 
 ## Verification

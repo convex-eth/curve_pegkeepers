@@ -62,7 +62,7 @@ contract PegKeeperV3LpYieldHandler is Test {
     }
 
     function contractLp(uint256 seed) external {
-        uint256 held = keeper.accounted_lp_tokens();
+        uint256 held = keeper.lp_balance();
         if (held == 0) return;
         yieldAmm.setBalances(bound(seed, 1, 100_000_000e18), 0);
         vm.warp(block.timestamp + keeper.action_delay());

@@ -37,7 +37,10 @@ event SetKilled:
     is_killed: Killed
     by: address
 
-event SetAdmin:
+event CommitNewAdmin:
+    admin: address
+
+event ApplyNewAdmin:
     admin: address
 
 event SetEmergencyAdmin:
@@ -54,6 +57,7 @@ flag Killed:
     Withdraw  # 2
 
 MAX_LEN: constant(uint256) = 32
+ADMIN_ACTIONS_DELAY: constant(uint256) = 3 * 86400
 
 peg_keepers: public(DynArray[PegKeeperInfo, MAX_LEN])  # PKs registered for offboarding
 peg_keeper_i: HashMap[PegKeeper,  uint256]  # 1 + index of peg keeper in a list
@@ -62,6 +66,8 @@ fee_receiver: public(address)
 
 is_killed: public(Killed)
 admin: public(address)
+future_admin: public(address)
+new_admin_deadline: public(uint256)
 emergency_admin: public(address)
 
 
@@ -71,7 +77,7 @@ def __init__(_fee_receiver: address, _admin: address, _emergency_admin: address)
     self.admin = _admin
     self.emergency_admin = _emergency_admin
     log SetFeeReceiver(fee_receiver=_fee_receiver)
-    log SetAdmin(admin=_admin)
+    log ApplyNewAdmin(admin=_admin)
     log SetEmergencyAdmin(admin=_emergency_admin)
 
 
@@ -171,12 +177,37 @@ def set_killed(_is_killed: Killed):
 
 
 @external
-def set_admin(_admin: address):
-    # We are not doing commit / apply because the owner will be a voting DAO anyway
-    # which has vote delays
+@nonpayable
+def commit_new_admin(_new_admin: address):
+    """
+    @notice Commit new admin of the Peg Keeper.
+    @dev In order to revert, commit_new_admin(current_admin) may be called.
+    @param _new_admin Address of the new admin.
+    """
     assert msg.sender == self.admin
-    self.admin = _admin
-    log SetAdmin(admin=_admin)
+    assert _new_admin != empty(address)
+
+    self.new_admin_deadline = block.timestamp + ADMIN_ACTIONS_DELAY
+    self.future_admin = _new_admin
+    log CommitNewAdmin(admin=_new_admin)
+
+
+@external
+@nonpayable
+def apply_new_admin():
+    """
+    @notice Apply new admin of the Peg Keeper.
+    @dev Should be executed from new admin.
+    """
+    new_admin: address = self.future_admin
+    new_admin_deadline: uint256 = self.new_admin_deadline
+    assert msg.sender == new_admin
+    assert block.timestamp >= new_admin_deadline
+    assert new_admin_deadline != 0
+
+    self.admin = new_admin
+    self.new_admin_deadline = 0
+    log ApplyNewAdmin(admin=new_admin)
 
 
 @external

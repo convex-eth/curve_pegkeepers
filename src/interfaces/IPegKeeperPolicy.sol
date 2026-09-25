@@ -3,22 +3,18 @@ pragma solidity ^0.8.30;
 
 /// @notice Replaceable global execution policy shared by standalone PegKeeperV3 contracts.
 interface IPegKeeperPolicy {
-    error NotOwner();
-    error NotPendingOwner();
-    error OwnershipHandoffPending();
-    error InvalidOwnershipTransferNonce();
-    error InvalidOwner();
+    error InvalidAdmin();
     error InvalidOracle();
     error InvalidFeeReceiver();
 
     event AggregateCrvUsdOracleUpdated(address indexed oldOracle, address indexed newOracle);
     event FeeReceiverUpdated(address indexed oldFeeReceiver, address indexed newFeeReceiver);
-    event OwnershipTransferStarted(address indexed owner, address indexed pendingOwner);
-    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+    event CommitNewAdmin(address admin);
+    event ApplyNewAdmin(address admin);
 
-    function owner() external view returns (address);
-    function pendingOwner() external view returns (address);
-    function ownershipTransferNonce() external view returns (uint256);
+    function admin() external view returns (address);
+    function future_admin() external view returns (address);
+    function new_admin_deadline() external view returns (uint256);
     function aggregateCrvUsdOracle() external view returns (address);
     function fee_receiver() external view returns (address);
 
@@ -28,7 +24,6 @@ interface IPegKeeperPolicy {
 
     function set_aggregate_crvusd_oracle(address newOracle) external;
     function set_fee_receiver(address newFeeReceiver) external;
-    /// @notice Freezes configuration and increments the acceptance nonce for `newOwner`.
-    function transferOwnership(address newOwner) external;
-    function acceptOwnership(uint256 expectedNonce) external;
+    function commit_new_admin(address newAdmin) external;
+    function apply_new_admin() external;
 }

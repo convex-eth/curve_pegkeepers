@@ -2,37 +2,18 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-
-interface IPegKeeperRegistryTest {
-    error NotOwner();
-    error NotPendingOwner();
-    error OwnershipHandoffPending();
-    error InvalidOwnershipTransferNonce();
-    error InvalidOwner();
-    error InvalidKeeper();
-    error DuplicateKeeper();
-
-    function owner() external view returns (address);
-    function pendingOwner() external view returns (address);
-    function ownershipTransferNonce() external view returns (uint256);
-    function peg_keeper_count() external view returns (uint256);
-    function peg_keepers(uint256 index) external view returns (address);
-    function is_active(address pegKeeper) external view returns (bool);
-    function add_peg_keepers(address[] calldata pegKeepers) external;
-    function remove_peg_keepers(address[] calldata pegKeepers) external;
-    function transferOwnership(address newOwner) external;
-    function acceptOwnership(uint256 expectedNonce) external;
-}
+import {IPegKeeperRegistry} from "../src/interfaces/IPegKeeperRegistry.sol";
 
 contract RegistryKeeperMock {}
 
 contract PegKeeperRegistryTest is Test {
-    IPegKeeperRegistryTest internal registry;
+    uint256 internal constant ADMIN_ACTIONS_DELAY = 3 days;
+
+    IPegKeeperRegistry internal registry;
 
     function setUp() public {
-        registry = IPegKeeperRegistryTest(
-            vm.deployCode("PegKeeperRegistry.vy", abi.encode(address(this)))
-        );
+        registry =
+            IPegKeeperRegistry(vm.deployCode("PegKeeperRegistry.vy", abi.encode(address(this))));
     }
 
     function test_registryUsesPopAndSwapAndSupportsReadding() public {
@@ -69,19 +50,19 @@ contract PegKeeperRegistryTest is Test {
         one[0] = keeper;
         registry.add_peg_keepers(one);
 
-        vm.expectRevert(IPegKeeperRegistryTest.DuplicateKeeper.selector);
+        vm.expectRevert(IPegKeeperRegistry.DuplicateKeeper.selector);
         registry.add_peg_keepers(one);
 
         one[0] = address(new RegistryKeeperMock());
-        vm.expectRevert(IPegKeeperRegistryTest.InvalidKeeper.selector);
+        vm.expectRevert(IPegKeeperRegistry.InvalidKeeper.selector);
         registry.remove_peg_keepers(one);
 
         one[0] = address(0);
-        vm.expectRevert(IPegKeeperRegistryTest.InvalidKeeper.selector);
+        vm.expectRevert(IPegKeeperRegistry.InvalidKeeper.selector);
         registry.add_peg_keepers(one);
 
         one[0] = makeAddr("no code");
-        vm.expectRevert(IPegKeeperRegistryTest.InvalidKeeper.selector);
+        vm.expectRevert(IPegKeeperRegistry.InvalidKeeper.selector);
         registry.add_peg_keepers(one);
     }
 
@@ -102,40 +83,82 @@ contract PegKeeperRegistryTest is Test {
         assertFalse(registry.is_active(thirtyThird));
     }
 
-    function test_onlyOwnerCanMutateRegistry() public {
+    function test_onlyAdminCanMutateRegistry() public {
         address[] memory one = new address[](1);
         one[0] = address(new RegistryKeeperMock());
 
-        vm.startPrank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperRegistryTest.NotOwner.selector);
+        vm.startPrank(makeAddr("not admin"));
+        vm.expectRevert();
         registry.add_peg_keepers(one);
-        vm.expectRevert(IPegKeeperRegistryTest.NotOwner.selector);
+        vm.expectRevert();
         registry.remove_peg_keepers(one);
         vm.stopPrank();
     }
 
-    function test_pendingOwnershipHandoffFreezesRegistryUntilNonceBoundAcceptance() public {
-        address nextOwner = makeAddr("nextOwner");
-        address correctedOwner = makeAddr("correctedOwner");
-        registry.transferOwnership(nextOwner);
-        assertEq(registry.ownershipTransferNonce(), 1);
+    function test_curveAdminCommitCanBeOverwrittenAndLegacyOwnershipSelectorsAreAbsent() public {
+        address firstAdmin = makeAddr("firstAdmin");
+        address correctedAdmin = makeAddr("correctedAdmin");
+
+        registry.commit_new_admin(firstAdmin);
+        uint256 firstDeadline = registry.new_admin_deadline();
+        vm.warp(block.timestamp + 1 days);
+        registry.commit_new_admin(correctedAdmin);
+        assertEq(registry.future_admin(), correctedAdmin);
+        assertGt(registry.new_admin_deadline(), firstDeadline);
+
+        vm.expectRevert();
+        registry.commit_new_admin(address(0));
+
+        (bool transferOwnershipExists,) = address(registry)
+            .call(abi.encodeWithSignature("transferOwnership(address)", correctedAdmin));
+        assertFalse(transferOwnershipExists);
+        (bool acceptOwnershipExists,) =
+            address(registry).call(abi.encodeWithSignature("acceptOwnership(uint256)", 1));
+        assertFalse(acceptOwnershipExists);
+        (bool ownerGetterExists,) = address(registry).staticcall(abi.encodeWithSignature("owner()"));
+        assertFalse(ownerGetterExists);
+        (bool pendingOwnerGetterExists,) =
+            address(registry).staticcall(abi.encodeWithSignature("pendingOwner()"));
+        assertFalse(pendingOwnerGetterExists);
+        (bool ownershipNonceGetterExists,) =
+            address(registry).staticcall(abi.encodeWithSignature("ownershipTransferNonce()"));
+        assertFalse(ownershipNonceGetterExists);
+    }
+
+    function test_curveAdminTransferKeepsCurrentAdminActiveDuringDelay() public {
+        address nextAdmin = makeAddr("nextAdmin");
+        uint256 committedAt = block.timestamp;
+        registry.commit_new_admin(nextAdmin);
+
+        assertEq(registry.admin(), address(this));
+        assertEq(registry.future_admin(), nextAdmin);
+        assertEq(registry.new_admin_deadline(), committedAt + ADMIN_ACTIONS_DELAY);
 
         address[] memory one = new address[](1);
         one[0] = address(new RegistryKeeperMock());
-        vm.expectRevert(IPegKeeperRegistryTest.OwnershipHandoffPending.selector);
         registry.add_peg_keepers(one);
+        assertTrue(registry.is_active(one[0]));
 
-        registry.transferOwnership(correctedOwner);
-        assertEq(registry.ownershipTransferNonce(), 2);
-        vm.prank(nextOwner);
-        vm.expectRevert(IPegKeeperRegistryTest.NotPendingOwner.selector);
-        registry.acceptOwnership(1);
-        vm.prank(correctedOwner);
-        vm.expectRevert(IPegKeeperRegistryTest.InvalidOwnershipTransferNonce.selector);
-        registry.acceptOwnership(1);
-        vm.prank(correctedOwner);
-        registry.acceptOwnership(2);
-        assertEq(registry.owner(), correctedOwner);
-        assertEq(registry.pendingOwner(), address(0));
+        vm.prank(nextAdmin);
+        vm.expectRevert();
+        registry.apply_new_admin();
+        vm.warp(registry.new_admin_deadline());
+        vm.prank(makeAddr("wrongAdmin"));
+        vm.expectRevert();
+        registry.apply_new_admin();
+        vm.prank(nextAdmin);
+        registry.apply_new_admin();
+
+        assertEq(registry.admin(), nextAdmin);
+        assertEq(registry.future_admin(), nextAdmin);
+        assertEq(registry.new_admin_deadline(), 0);
+
+        address[] memory second = new address[](1);
+        second[0] = address(new RegistryKeeperMock());
+        vm.expectRevert();
+        registry.add_peg_keepers(second);
+        vm.prank(nextAdmin);
+        registry.add_peg_keepers(second);
+        assertTrue(registry.is_active(second[0]));
     }
 }

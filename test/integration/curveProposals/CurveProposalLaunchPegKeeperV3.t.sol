@@ -205,15 +205,21 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             _firstThreeEmptySlots(IAggMonetaryPolicy(MONETARY_POLICY));
         uint256[3] memory legacySlots =
             _firstThreeEmptySlots(IAggMonetaryPolicy(LEGACY_MONETARY_POLICY));
-        assertEq(keeperPolicy.owner(), OWNERSHIP_AGENT);
-        assertEq(keeperPolicy.pendingOwner(), address(0));
-        assertEq(keeperRegistry.owner(), OWNERSHIP_AGENT);
-        assertEq(keeperRegistry.pendingOwner(), address(0));
+        assertEq(keeperPolicy.admin(), OWNERSHIP_AGENT);
+        assertEq(keeperPolicy.future_admin(), address(0));
+        assertEq(keeperPolicy.new_admin_deadline(), 0);
+        assertEq(keeperRegistry.admin(), OWNERSHIP_AGENT);
+        assertEq(keeperRegistry.future_admin(), address(0));
+        assertEq(keeperRegistry.new_admin_deadline(), 0);
         assertEq(keeperRegistry.peg_keeper_count(), 0);
         _executeProposal();
 
-        assertEq(keeperPolicy.owner(), OWNERSHIP_AGENT);
-        assertEq(keeperPolicy.pendingOwner(), address(0));
+        assertEq(keeperPolicy.admin(), OWNERSHIP_AGENT);
+        assertEq(keeperPolicy.future_admin(), address(0));
+        assertEq(keeperPolicy.new_admin_deadline(), 0);
+        assertEq(keeperRegistry.admin(), OWNERSHIP_AGENT);
+        assertEq(keeperRegistry.future_admin(), address(0));
+        assertEq(keeperRegistry.new_admin_deadline(), 0);
         assertEq(keeperRegistry.peg_keeper_count(), 3);
         assertEq(keeperRegistry.peg_keepers(0), expectedFrxUsdKeeper);
         assertEq(keeperRegistry.peg_keepers(1), expectedUsdcKeeper);
@@ -386,6 +392,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(keeper.keeper_profit_share_bps(), proposal.KEEPER_PROFIT_SHARE_BPS());
         assertEq(keeper.max_debt(), CAP);
         assertEq(keeper.debt(), 0);
+        assertEq(keeper.admin(), OWNERSHIP_AGENT);
+        assertEq(keeper.future_admin(), address(0));
+        assertEq(keeper.new_admin_deadline(), 0);
+        assertEq(keeper.emergency_admin(), proposal.CURVE_EMERGENCY_ADMIN());
         assertTrue(keeperRegistry.is_active(keeperAddress));
         assertFalse(keeper.expansion_paused());
         assertFalse(keeper.contraction_paused());

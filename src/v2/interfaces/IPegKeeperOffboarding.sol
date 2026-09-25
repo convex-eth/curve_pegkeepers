@@ -2,6 +2,10 @@
 pragma solidity ^0.8.30;
 
 interface IPegKeeperOffboarding {
+    event CommitNewAdmin(address admin);
+    event ApplyNewAdmin(address admin);
+    event SetEmergencyAdmin(address admin);
+
     struct PegKeeperInfo {
         address pegKeeper;
         address pool;
@@ -13,6 +17,8 @@ interface IPegKeeperOffboarding {
     function fee_receiver() external view returns (address);
     function is_killed() external view returns (uint256);
     function admin() external view returns (address);
+    function future_admin() external view returns (address);
+    function new_admin_deadline() external view returns (uint256);
     function emergency_admin() external view returns (address);
 
     function provide_allowed() external view returns (uint256);
@@ -25,6 +31,7 @@ interface IPegKeeperOffboarding {
     function remove_peg_keepers(address[] calldata pegKeepers) external;
     function set_fee_receiver(address feeReceiver) external;
     function set_killed(uint256 killed) external;
-    function set_admin(address admin_) external;
+    function commit_new_admin(address newAdmin) external;
+    function apply_new_admin() external;
     function set_emergency_admin(address emergencyAdmin) external;
 }

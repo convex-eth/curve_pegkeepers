@@ -85,6 +85,50 @@ contract PegKeeperLifecycleTest is Test {
         );
     }
 
+    function test_offboardingUsesCurveDelayedAdminTransfer() public {
+        IPegKeeperOffboarding offboarding = IPegKeeperOffboarding(
+            _deployVyper(
+                "out/PegKeeperOffboarding.vy/PegKeeperOffboarding.json",
+                abi.encode(regulator.fee_receiver(), OWNERSHIP_AGENT, EMERGENCY_ADMIN)
+            )
+        );
+        address nextAdmin = makeAddr("nextAdmin");
+        uint256 committedAt = block.timestamp;
+
+        vm.prank(OWNERSHIP_AGENT);
+        offboarding.commit_new_admin(nextAdmin);
+        assertEq(offboarding.future_admin(), nextAdmin);
+        assertEq(offboarding.new_admin_deadline(), committedAt + 3 days);
+
+        address nextFeeReceiver = makeAddr("nextFeeReceiver");
+        vm.prank(OWNERSHIP_AGENT);
+        offboarding.set_fee_receiver(nextFeeReceiver);
+        assertEq(offboarding.fee_receiver(), nextFeeReceiver);
+
+        vm.prank(nextAdmin);
+        vm.expectRevert();
+        offboarding.apply_new_admin();
+        vm.warp(offboarding.new_admin_deadline());
+        vm.prank(makeAddr("wrongAdmin"));
+        vm.expectRevert();
+        offboarding.apply_new_admin();
+        vm.prank(nextAdmin);
+        offboarding.apply_new_admin();
+
+        assertEq(offboarding.admin(), nextAdmin);
+        assertEq(offboarding.future_admin(), nextAdmin);
+        assertEq(offboarding.new_admin_deadline(), 0);
+
+        vm.prank(OWNERSHIP_AGENT);
+        vm.expectRevert();
+        offboarding.set_fee_receiver(makeAddr("oldAdminReceiver"));
+
+        vm.prank(nextAdmin);
+        (bool legacySetterExists,) = address(offboarding)
+            .call(abi.encodeWithSignature("set_admin(address)", OWNERSHIP_AGENT));
+        assertFalse(legacySetterExists);
+    }
+
     function test_globalProvideKillRetiresV2WithoutRegulatorListRemoval() public {
         address[] memory pegKeepers = _currentPegKeepers();
         _globallyDisableV2Provision(pegKeepers);

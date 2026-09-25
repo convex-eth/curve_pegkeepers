@@ -16,15 +16,15 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant KEEPER_RUNTIME_SIZE = 16_618;
+    uint256 public constant KEEPER_RUNTIME_SIZE = 16_710;
     bytes32 public constant EXPECTED_KEEPER_RUNTIME_HASH =
-        0xf121f6c673356b96855c0885acdf2864ba73e7ad15158ba373b84e36f2641543;
-    uint256 public constant POLICY_RUNTIME_SIZE = 1_218;
+        0xb30253eac8052fada992aee0d22a1e3f2d5a51670e8b0df7438f5b7247fb99ae;
+    uint256 public constant POLICY_RUNTIME_SIZE = 905;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
-        0x8f210b4ae4a5d89f7e881139c422282d1e45e280ebf8a98fddfcb8410a058fb6;
-    uint256 public constant REGISTRY_RUNTIME_SIZE = 1_609;
+        0xa11f74514ddad33cebd3ea933e1bf8d802b74107af7b3bc23b0bb6a0067a758c;
+    uint256 public constant REGISTRY_RUNTIME_SIZE = 1_296;
     bytes32 public constant EXPECTED_REGISTRY_RUNTIME_HASH =
-        0xae791b2cbcb3e30404e6ce90a9471ab0db6ab7e539d216b04b32293572b019ab;
+        0xa8701fd3d6a78297bb59b5d1466c6e20e96e41959650282aa03b4e7b4015e8a8;
     uint256 public constant CHAINLINK_ORACLE_CORE_SIZE = 431;
     uint256 public constant CHAINLINK_ORACLE_RUNTIME_SIZE = 527;
     bytes32 public constant EXPECTED_CHAINLINK_ORACLE_CORE_HASH =
@@ -160,16 +160,18 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(pegKeeperRegistry != address(0), "registry not set");
 
         IPegKeeperPolicy policy = IPegKeeperPolicy(pegKeeperPolicy);
-        require(policy.owner() == CURVE_OWNERSHIP_AGENT, "policy owner");
-        require(policy.pendingOwner() == address(0), "policy pending owner");
+        require(policy.admin() == CURVE_OWNERSHIP_AGENT, "policy admin");
+        require(policy.future_admin() == address(0), "policy future admin");
+        require(policy.new_admin_deadline() == 0, "policy admin deadline");
         require(policy.aggregateCrvUsdOracle() == CRVUSD_AGGREGATE_ORACLE, "aggregate oracle");
         require(policy.fee_receiver() == FEE_SPLITTER, "fee receiver");
         require(pegKeeperPolicy.code.length == POLICY_RUNTIME_SIZE, "policy size");
         require(pegKeeperPolicy.codehash == EXPECTED_POLICY_RUNTIME_HASH, "policy hash");
 
         IPegKeeperRegistry registry = IPegKeeperRegistry(pegKeeperRegistry);
-        require(registry.owner() == CURVE_OWNERSHIP_AGENT, "registry owner");
-        require(registry.pendingOwner() == address(0), "registry pending owner");
+        require(registry.admin() == CURVE_OWNERSHIP_AGENT, "registry admin");
+        require(registry.future_admin() == address(0), "registry future admin");
+        require(registry.new_admin_deadline() == 0, "registry admin deadline");
         require(registry.peg_keeper_count() == 0, "registry keeper count");
         require(!registry.is_active(frxUsdKeeper), "frxUSD already registered");
         require(!registry.is_active(usdcKeeper), "USDC already registered");
@@ -242,6 +244,8 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
         require(keeper.action_delay() == ACTION_DELAY, "action delay");
         require(keeper.amm_execution_buffer_bps() == AMM_EXECUTION_BUFFER_BPS, "AMM buffer");
         require(keeper.admin() == CURVE_OWNERSHIP_AGENT, "keeper admin");
+        require(keeper.future_admin() == address(0), "keeper future admin");
+        require(keeper.new_admin_deadline() == 0, "keeper admin deadline");
         require(keeper.emergency_admin() == CURVE_EMERGENCY_ADMIN, "keeper emergency admin");
         require(!keeper.expansion_paused(), "keeper expansion paused");
         require(!keeper.contraction_paused(), "keeper contraction paused");

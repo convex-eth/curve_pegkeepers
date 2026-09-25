@@ -34,6 +34,8 @@ contract OversizedPolicyPriceOracle {
 }
 
 contract PegKeeperPolicyTest is Test {
+    uint256 internal constant ADMIN_ACTIONS_DELAY = 3 days;
+
     PolicyPriceOracleMock internal oracle;
     IPegKeeperPolicy internal policy;
 
@@ -113,10 +115,10 @@ contract PegKeeperPolicyTest is Test {
         assertTrue(policy.expansion_regime());
     }
 
-    function test_onlyOwnerCanSetAggregateOracle() public {
+    function test_onlyAdminCanSetAggregateOracle() public {
         PolicyPriceOracleMock replacement = new PolicyPriceOracleMock();
-        vm.prank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
+        vm.prank(makeAddr("not admin"));
+        vm.expectRevert();
         policy.set_aggregate_crvusd_oracle(address(replacement));
 
         policy.set_aggregate_crvusd_oracle(address(replacement));
@@ -138,8 +140,8 @@ contract PegKeeperPolicyTest is Test {
 
         assertEq(receiverPolicy.fee_receiver(), initialFeeReceiver);
 
-        vm.prank(makeAddr("not owner"));
-        vm.expectRevert(IPegKeeperPolicy.NotOwner.selector);
+        vm.prank(makeAddr("not admin"));
+        vm.expectRevert();
         receiverPolicy.set_fee_receiver(makeAddr("unauthorized receiver"));
 
         address nextFeeReceiver = makeAddr("nextFeeReceiver");
@@ -155,29 +157,71 @@ contract PegKeeperPolicyTest is Test {
         vm.deployCode("PegKeeperPolicy.vy", abi.encode(address(this), address(oracle), address(0)));
     }
 
-    function test_pendingOwnershipHandoffFreezesOracleConfigurationUntilAcceptance() public {
-        address nextOwner = makeAddr("nextOwner");
-        address correctedOwner = makeAddr("correctedOwner");
-        policy.transferOwnership(nextOwner);
-        assertEq(policy.ownershipTransferNonce(), 1);
+    function test_curveAdminTransferKeepsCurrentAdminActiveDuringDelay() public {
+        IPegKeeperPolicy authority = policy;
+        address nextAdmin = makeAddr("nextAdmin");
+        PolicyPriceOracleMock replacement = new PolicyPriceOracleMock();
+        uint256 committedAt = block.timestamp;
 
-        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_aggregate_crvusd_oracle(address(oracle));
-        vm.expectRevert(IPegKeeperPolicy.OwnershipHandoffPending.selector);
-        policy.set_fee_receiver(makeAddr("frozen receiver"));
-        policy.transferOwnership(correctedOwner);
-        assertEq(policy.ownershipTransferNonce(), 2);
+        authority.commit_new_admin(nextAdmin);
+        assertEq(authority.admin(), address(this));
+        assertEq(authority.future_admin(), nextAdmin);
+        assertEq(authority.new_admin_deadline(), committedAt + ADMIN_ACTIONS_DELAY);
 
-        vm.prank(nextOwner);
-        vm.expectRevert(IPegKeeperPolicy.NotPendingOwner.selector);
-        policy.acceptOwnership(1);
-        vm.prank(correctedOwner);
-        vm.expectRevert(IPegKeeperPolicy.InvalidOwnershipTransferNonce.selector);
-        policy.acceptOwnership(1);
-        vm.prank(correctedOwner);
-        policy.acceptOwnership(2);
-        assertEq(policy.owner(), correctedOwner);
-        assertEq(policy.pendingOwner(), address(0));
+        policy.set_aggregate_crvusd_oracle(address(replacement));
+        assertEq(policy.aggregateCrvUsdOracle(), address(replacement));
+
+        vm.prank(nextAdmin);
+        vm.expectRevert();
+        authority.apply_new_admin();
+        vm.warp(authority.new_admin_deadline());
+        vm.prank(makeAddr("wrongAdmin"));
+        vm.expectRevert();
+        authority.apply_new_admin();
+        vm.prank(nextAdmin);
+        authority.apply_new_admin();
+
+        assertEq(authority.admin(), nextAdmin);
+        assertEq(authority.future_admin(), nextAdmin);
+        assertEq(authority.new_admin_deadline(), 0);
+
+        vm.expectRevert();
+        policy.set_fee_receiver(makeAddr("oldAdminReceiver"));
+        address nextFeeReceiver = makeAddr("nextAdminReceiver");
+        vm.prank(nextAdmin);
+        policy.set_fee_receiver(nextFeeReceiver);
+        assertEq(policy.fee_receiver(), nextFeeReceiver);
+    }
+
+    function test_curveAdminCommitCanBeOverwrittenAndLegacyOwnershipSelectorsAreAbsent() public {
+        IPegKeeperPolicy authority = policy;
+        address firstAdmin = makeAddr("firstAdmin");
+        address correctedAdmin = makeAddr("correctedAdmin");
+
+        authority.commit_new_admin(firstAdmin);
+        uint256 firstDeadline = authority.new_admin_deadline();
+        vm.warp(block.timestamp + 1 days);
+        authority.commit_new_admin(correctedAdmin);
+        assertEq(authority.future_admin(), correctedAdmin);
+        assertGt(authority.new_admin_deadline(), firstDeadline);
+
+        vm.expectRevert();
+        authority.commit_new_admin(address(0));
+
+        (bool transferOwnershipExists,) = address(policy)
+            .call(abi.encodeWithSignature("transferOwnership(address)", correctedAdmin));
+        assertFalse(transferOwnershipExists);
+        (bool acceptOwnershipExists,) =
+            address(policy).call(abi.encodeWithSignature("acceptOwnership(uint256)", 1));
+        assertFalse(acceptOwnershipExists);
+        (bool ownerGetterExists,) = address(policy).staticcall(abi.encodeWithSignature("owner()"));
+        assertFalse(ownerGetterExists);
+        (bool pendingOwnerGetterExists,) =
+            address(policy).staticcall(abi.encodeWithSignature("pendingOwner()"));
+        assertFalse(pendingOwnerGetterExists);
+        (bool ownershipNonceGetterExists,) =
+            address(policy).staticcall(abi.encodeWithSignature("ownershipTransferNonce()"));
+        assertFalse(ownershipNonceGetterExists);
     }
 
     function _assertStaticCallFails(bytes memory data) internal view {

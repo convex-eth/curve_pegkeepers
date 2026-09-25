@@ -51,10 +51,9 @@ interface IPegKeeperV3 {
     );
     event InterventionPolicyUpdated(uint256 actionImbalanceBps, uint256 actionDelay);
     event BackingOraclePolicyUpdated(address indexed backingOracle, uint256 minBackingPrice);
-    event AdminUpdated(address indexed oldAdmin, address indexed newAdmin);
-    event EmergencyAdminUpdated(
-        address indexed oldEmergencyAdmin, address indexed newEmergencyAdmin
-    );
+    event CommitNewAdmin(address admin);
+    event ApplyNewAdmin(address admin);
+    event SetEmergencyAdmin(address admin);
     event PolicyContractUpdated(address indexed oldPolicy, address indexed newPolicy);
 
     function version() external view returns (uint256 major, uint256 minor, uint256 patch);
@@ -73,6 +72,8 @@ interface IPegKeeperV3 {
     function backing_oracle() external view returns (address);
     function min_backing_oracle_price() external view returns (uint256);
     function admin() external view returns (address);
+    function future_admin() external view returns (address);
+    function new_admin_deadline() external view returns (uint256);
     function emergency_admin() external view returns (address);
     function policy() external view returns (address);
     function pool_crvusd_index() external view returns (uint256);
@@ -84,7 +85,7 @@ interface IPegKeeperV3 {
     function trusted_backing_value() external view returns (uint256);
     function protocol_surplus() external view returns (uint256);
     function calc_profit() external view returns (uint256);
-    function accounted_lp_tokens() external view returns (uint256);
+    function lp_balance() external view returns (uint256);
 
     function entry_min_profit_ppm() external view returns (uint256);
     function normal_exit_min_profit_ppm() external view returns (uint256);
@@ -103,8 +104,9 @@ interface IPegKeeperV3 {
     function set_direction_paused(uint256 direction, bool paused) external;
     function set_backing_oracle_policy(address backingOracle, uint256 minBackingPrice) external;
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
-    function set_admin(address newAdmin) external;
-    function set_emergency_admin(address newEmergencyAdmin) external;
+    function commit_new_admin(address newAdmin) external;
+    function apply_new_admin() external;
+    function set_emergency_admin(address admin) external;
     function set_policy_contract(address newPolicy) external;
     function set_policy(uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDebt)
         external;

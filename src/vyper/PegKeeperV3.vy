@@ -135,14 +135,16 @@ event BackingOraclePolicyUpdated:
     min_backing_price: uint256
 
 
-event AdminUpdated:
-    old_admin: indexed(address)
-    new_admin: indexed(address)
+event CommitNewAdmin:
+    admin: address
 
 
-event EmergencyAdminUpdated:
-    old_emergency_admin: indexed(address)
-    new_emergency_admin: indexed(address)
+event ApplyNewAdmin:
+    admin: address
+
+
+event SetEmergencyAdmin:
+    admin: address
 
 
 event PolicyContractUpdated:
@@ -160,6 +162,7 @@ PRECISION: constant(uint256) = 10 ** 18
 DEFAULT_MIN_BACKING_ORACLE_PRICE: constant(uint256) = 999_000_000_000_000_000
 DEFAULT_ACTION_IMBALANCE_BPS: constant(uint256) = 2_000
 DEFAULT_ACTION_DELAY: constant(uint256) = 12
+ADMIN_ACTIONS_DELAY: constant(uint256) = 3 * 86400
 
 DIRECTION_EXPANSION: constant(uint256) = 0
 DIRECTION_CONTRACTION: constant(uint256) = 1
@@ -178,6 +181,8 @@ backing_oracle: public(PriceOracle)
 min_backing_oracle_price: public(uint256)
 
 admin: public(address)
+future_admin: public(address)
+new_admin_deadline: public(uint256)
 emergency_admin: public(address)
 policy: public(address)
 
@@ -299,10 +304,8 @@ def __init__(
     self.contraction_paused = False
     self.all_execution_paused = False
 
-    log AdminUpdated(old_admin=empty(address), new_admin=_admin)
-    log EmergencyAdminUpdated(
-        old_emergency_admin=empty(address), new_emergency_admin=_emergency_admin
-    )
+    log ApplyNewAdmin(admin=_admin)
+    log SetEmergencyAdmin(admin=_emergency_admin)
     log PolicyContractUpdated(old_policy=empty(address), new_policy=_policy)
     log KeeperProfitShareUpdated(
         old_keeper_profit_share_bps=0,
@@ -382,13 +385,13 @@ def paired_token_units(_assets: uint256) -> uint256:
 
 @internal
 @view
-def _paired_token_inventory() -> uint256:
+def _paired_token_balance() -> uint256:
     return staticcall self._paired_token.balanceOf(self)
 
 
 @internal
 @view
-def _lp_inventory() -> uint256:
+def _lp_balance() -> uint256:
     return staticcall self.pool.balanceOf(self)
 
 
@@ -404,11 +407,11 @@ def _lp_value(_lp_tokens: uint256) -> uint256:
 
 @external
 @view
-def accounted_lp_tokens() -> uint256:
+def lp_balance() -> uint256:
     """
     @notice Returns the complete held balance of pool LP tokens.
     """
-    return self._lp_inventory()
+    return self._lp_balance()
 
 
 @external
@@ -482,7 +485,7 @@ def _meets_entry_floor(_gross_profit: uint256, _principal: uint256) -> bool:
 @internal
 @view
 def _trusted_backing_value() -> uint256:
-    return self._lp_value(self._lp_inventory())
+    return self._lp_value(self._lp_balance())
 
 
 @internal
@@ -584,7 +587,7 @@ def _available_expansion_without_policy() -> uint256:
         staticcall crv_usd.balanceOf(self),
         self._remaining_exposure_capacity(),
     )
-    donated_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
+    donated_value: uint256 = self._trusted_paired_token_value(self._paired_token_balance())
     if budget <= donated_value:
         return 0
     return min(self._local_expansion_limit(), budget - donated_value)
@@ -598,7 +601,7 @@ def _available_contraction_without_policy() -> uint256:
     if not self._action_delay_elapsed():
         return 0
 
-    held: uint256 = self._lp_inventory()
+    held: uint256 = self._lp_balance()
     if held == 0:
         return 0
     inventory_output: uint256 = staticcall self.pool.calc_withdraw_one_coin(
@@ -755,7 +758,7 @@ def preview_contraction() -> (uint256, uint256, uint256):
     expected_crv_usd: uint256 = self._available_contraction_without_policy()
     assert expected_crv_usd > 0
 
-    accounted: uint256 = self._lp_inventory()
+    accounted: uint256 = self._lp_balance()
     quoted_lp_burn: uint256 = self._calc_lp_burn(expected_crv_usd)
     expected_lp_burn: uint256 = quoted_lp_burn + 1
     maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
@@ -896,10 +899,10 @@ def _remove_exact_crv_usd(_crv_usd_amount: uint256, _maximum_lp_tokens: uint256)
 @internal
 @view
 def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
-    lp_before: uint256 = self._lp_inventory()
+    lp_before: uint256 = self._lp_balance()
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_paired_token: uint256 = self._paired_token_inventory()
+    donated_paired_token: uint256 = self._paired_token_balance()
     donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
 
@@ -939,10 +942,10 @@ def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
 def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256):
     self._backing_price()
 
-    lp_before: uint256 = self._lp_inventory()
+    lp_before: uint256 = self._lp_balance()
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_paired_token: uint256 = self._paired_token_inventory()
+    donated_paired_token: uint256 = self._paired_token_balance()
     donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
     crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
     accounting_baseline: uint256 = lp_value_before + donated_value
@@ -978,7 +981,7 @@ def _deposit_to_pool(
 
     crv_usd_before: uint256 = staticcall crv_usd.balanceOf(self)
     paired_token_before: uint256 = staticcall self._paired_token.balanceOf(self)
-    lp_before: uint256 = self._lp_inventory()
+    lp_before: uint256 = self._lp_balance()
 
     extcall crv_usd.approve(self.pool.address, 0)
     extcall crv_usd.approve(self.pool.address, _crv_usd_amount)
@@ -999,7 +1002,7 @@ def _deposit_to_pool(
 
     assert crv_usd_before - staticcall crv_usd.balanceOf(self) == _crv_usd_amount
     assert paired_token_before - staticcall self._paired_token.balanceOf(self) == _paired_token_amount
-    lp_received: uint256 = self._lp_inventory() - lp_before
+    lp_received: uint256 = self._lp_balance() - lp_before
     assert lp_received >= min_lp
     return lp_received
 
@@ -1014,7 +1017,7 @@ def _settle_lp_expansion(
     _lp_received: uint256,
     _reward_recipient: address,
 ) -> (uint256, uint256):
-    lp_after_deposit: uint256 = self._lp_inventory()
+    lp_after_deposit: uint256 = self._lp_balance()
     assert lp_after_deposit - _lp_before == _lp_received
     virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
@@ -1033,7 +1036,7 @@ def _settle_lp_expansion(
     assert keeper_reward <= _lp_received
     self._transfer_exact_to(ERC20(self.pool.address), _reward_recipient, keeper_reward)
 
-    retained_value: uint256 = self._lp_value(self._lp_inventory())
+    retained_value: uint256 = self._lp_value(self._lp_balance())
     assert retained_value >= entry_baseline
     return gross_profit, keeper_reward
 
@@ -1047,8 +1050,8 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     self._backing_price()
 
     crv_usd_before: uint256 = staticcall crv_usd.balanceOf(self)
-    paired_token_before: uint256 = self._paired_token_inventory()
-    lp_before: uint256 = self._lp_inventory()
+    paired_token_before: uint256 = self._paired_token_balance()
+    lp_before: uint256 = self._lp_balance()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     donated_paired_token_value: uint256 = self._trusted_paired_token_value(paired_token_before)
@@ -1121,7 +1124,7 @@ def _settle_donated_paired_token(
     _max_paired_token_amount: uint256,
     _matching_budget: uint256,
 ) -> (uint256, uint256, uint256, uint256):
-    paired_token_swept: uint256 = min(_max_paired_token_amount, self._paired_token_inventory())
+    paired_token_swept: uint256 = min(_max_paired_token_amount, self._paired_token_balance())
     if paired_token_swept == 0:
         return 0, 0, 0, 0
 
@@ -1135,7 +1138,7 @@ def _settle_donated_paired_token(
         assert crv_usd_matched <= staticcall crv_usd.balanceOf(self)
         assert crv_usd_matched <= self._remaining_exposure_capacity()
 
-    lp_before: uint256 = self._lp_inventory()
+    lp_before: uint256 = self._lp_balance()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     lp_received: uint256 = self._deposit_to_pool(
@@ -1205,7 +1208,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     potential_surplus: uint256 = 0
     if backing_before_sweep > self.debt:
         potential_surplus = backing_before_sweep - self.debt
-    donated_paired_token_value: uint256 = self._trusted_paired_token_value(self._paired_token_inventory())
+    donated_paired_token_value: uint256 = self._trusted_paired_token_value(self._paired_token_balance())
     potential_surplus += self._oracle_value(donated_paired_token_value, backing_price)
 
     available_budget: uint256 = min(
@@ -1217,7 +1220,7 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
         min(potential_surplus, available_budget),
     )
     self._settle_donated_paired_token(
-        self._paired_token_inventory(),
+        self._paired_token_balance(),
         available_budget - withdrawal_reserve,
     )
 
@@ -1267,7 +1270,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     crv_usd_amount: uint256 = self._available_contraction_without_policy()
     assert crv_usd_amount > 0
 
-    lp_before: uint256 = self._lp_inventory()
+    lp_before: uint256 = self._lp_balance()
     virtual_price_before: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_before: uint256 = self._lp_value_at(lp_before, virtual_price_before)
     quoted_lp_burn: uint256 = self._calc_lp_burn(crv_usd_amount)
@@ -1280,7 +1283,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         maximum_lp_burn,
     )
 
-    lp_after: uint256 = self._lp_inventory()
+    lp_after: uint256 = self._lp_balance()
     lp_burned: uint256 = lp_before - lp_after
     assert lp_burned > 0 and lp_burned <= maximum_lp_burn
     assert reported_lp_burn == lp_burned
@@ -1427,34 +1430,47 @@ def execute(_target: address, _value: uint256, _data: Bytes[65535]) -> Bytes[655
 
 
 @external
-def set_admin(_new_admin: address):
+@nonpayable
+def commit_new_admin(_new_admin: address):
     """
-    @notice Replaces the account allowed to change keeper settings.
+    @notice Commit new admin of the Peg Keeper.
+    @dev In order to revert, commit_new_admin(current_admin) may be called.
+    @param _new_admin Address of the new admin.
     """
-    assert self._is_admin(msg.sender)
+    assert msg.sender == self.admin
     assert _new_admin != empty(address)
-    assert _new_admin != self.emergency_admin
 
-    old_admin: address = self.admin
-    self.admin = _new_admin
-    log AdminUpdated(old_admin=old_admin, new_admin=_new_admin)
+    self.new_admin_deadline = block.timestamp + ADMIN_ACTIONS_DELAY
+    self.future_admin = _new_admin
+    log CommitNewAdmin(admin=_new_admin)
 
 
 @external
-def set_emergency_admin(_new_emergency_admin: address):
+@nonpayable
+def apply_new_admin():
+    """
+    @notice Apply new admin of the Peg Keeper.
+    @dev Should be executed from new admin.
+    """
+    new_admin: address = self.future_admin
+    new_admin_deadline: uint256 = self.new_admin_deadline
+    assert msg.sender == new_admin
+    assert block.timestamp >= new_admin_deadline
+    assert new_admin_deadline != 0
+
+    self.admin = new_admin
+    self.new_admin_deadline = 0
+    log ApplyNewAdmin(admin=new_admin)
+
+
+@external
+def set_emergency_admin(_admin: address):
     """
     @notice Replaces the account allowed to pause keeper actions.
     """
-    assert self._is_admin(msg.sender)
-    assert _new_emergency_admin != empty(address)
-    assert _new_emergency_admin != self.admin
-
-    old_emergency_admin: address = self.emergency_admin
-    self.emergency_admin = _new_emergency_admin
-    log EmergencyAdminUpdated(
-        old_emergency_admin=old_emergency_admin,
-        new_emergency_admin=_new_emergency_admin,
-    )
+    assert msg.sender == self.admin
+    self.emergency_admin = _admin
+    log SetEmergencyAdmin(admin=_admin)
 
 
 @external

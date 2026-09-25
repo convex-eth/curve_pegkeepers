@@ -12,7 +12,7 @@ interface ILpPegKeeperV3 {
     function pool_uses_dynamic_arrays() external view returns (bool);
     function pool_crvusd_index() external view returns (uint256);
     function pool_paired_token_index() external view returns (uint256);
-    function accounted_lp_tokens() external view returns (uint256);
+    function lp_balance() external view returns (uint256);
     function trusted_backing_value() external view returns (uint256);
     function debt() external view returns (uint256);
     function entry_min_profit_ppm() external view returns (uint256);
@@ -43,8 +43,11 @@ interface ILpPegKeeperV3 {
     function set_keeper_profit_share_bps(uint256 keeperProfitShareBps) external;
 
     function set_intervention_policy(uint256 actionImbalanceBps, uint256 actionDelay) external;
-    function set_admin(address newAdmin) external;
-    function set_emergency_admin(address newEmergencyAdmin) external;
+    function future_admin() external view returns (address);
+    function new_admin_deadline() external view returns (uint256);
+    function commit_new_admin(address newAdmin) external;
+    function apply_new_admin() external;
+    function set_emergency_admin(address admin) external;
 
     function set_policy_contract(address newPolicy) external;
     function set_direction_paused(uint256 direction, bool paused) external;
@@ -430,6 +433,11 @@ contract LpYieldAmm is LpYieldToken {
 
 contract PegKeeperV3LpYieldTest is Test {
     uint256 internal constant MAX_DEBT = 25_000_000e18;
+    uint256 internal constant ADMIN_ACTIONS_DELAY = 3 days;
+
+    event CommitNewAdmin(address admin);
+    event ApplyNewAdmin(address admin);
+    event SetEmergencyAdmin(address admin);
 
     event ProfitWithdrawn(
         address indexed caller,
@@ -469,7 +477,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertTrue(keeper.pool_uses_dynamic_arrays());
         assertEq(keeper.pool_crvusd_index(), 0);
         assertEq(keeper.pool_paired_token_index(), 1);
-        assertEq(keeper.accounted_lp_tokens(), 0);
+        assertEq(keeper.lp_balance(), 0);
         assertEq(keeper.trusted_backing_value(), 0);
     }
 
@@ -487,7 +495,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(initializedGetterExists);
     }
 
-    function test_adminControlsKeeperLocalRolesAndPolicy() public {
+    function test_curveAdminTransferRequiresDelayAndFutureAdminAcceptance() public {
         ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
         address nextAdmin = makeAddr("next admin");
         address nextEmergencyAdmin = makeAddr("next emergency admin");
@@ -502,18 +510,79 @@ contract PegKeeperV3LpYieldTest is Test {
 
         vm.prank(makeAddr("not admin"));
         vm.expectRevert();
-        keeper.set_admin(nextAdmin);
+        keeper.commit_new_admin(nextAdmin);
 
-        vm.startPrank(governance);
-        keeper.set_emergency_admin(nextEmergencyAdmin);
+        uint256 committedAt = block.timestamp;
+        vm.expectEmit(false, false, false, true, address(keeper));
+        emit CommitNewAdmin(nextAdmin);
+        vm.prank(governance);
+        keeper.commit_new_admin(nextAdmin);
+        assertEq(keeper.future_admin(), nextAdmin);
+        assertEq(keeper.new_admin_deadline(), committedAt + ADMIN_ACTIONS_DELAY);
+
+        vm.prank(governance);
         keeper.set_policy_contract(address(nextPolicy));
-        keeper.set_admin(nextAdmin);
-        vm.stopPrank();
+        assertEq(keeper.policy(), address(nextPolicy));
+
+        vm.prank(nextAdmin);
+        vm.expectRevert();
+        keeper.apply_new_admin();
+
+        vm.warp(keeper.new_admin_deadline());
+        vm.prank(makeAddr("wrong admin"));
+        vm.expectRevert();
+        keeper.apply_new_admin();
+        vm.expectEmit(false, false, false, true, address(keeper));
+        emit ApplyNewAdmin(nextAdmin);
+        vm.prank(nextAdmin);
+        keeper.apply_new_admin();
 
         assertEq(keeper.admin(), nextAdmin);
-        assertEq(keeper.emergency_admin(), nextEmergencyAdmin);
-        assertEq(keeper.policy(), address(nextPolicy));
+        assertEq(keeper.future_admin(), nextAdmin);
+        assertEq(keeper.new_admin_deadline(), 0);
         assertEq(nextPolicy.fee_receiver(), nextFeeReceiver);
+
+        vm.expectEmit(false, false, false, true, address(keeper));
+        emit SetEmergencyAdmin(nextEmergencyAdmin);
+        vm.prank(nextAdmin);
+        keeper.set_emergency_admin(nextEmergencyAdmin);
+        assertEq(keeper.emergency_admin(), nextEmergencyAdmin);
+    }
+
+    function test_curveAdminCommitCanBeOverwrittenAndLegacySetterIsAbsent() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+        address firstAdmin = makeAddr("first admin");
+        address correctedAdmin = makeAddr("corrected admin");
+
+        vm.prank(governance);
+        keeper.commit_new_admin(firstAdmin);
+        uint256 firstDeadline = keeper.new_admin_deadline();
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(governance);
+        keeper.commit_new_admin(correctedAdmin);
+
+        assertEq(keeper.future_admin(), correctedAdmin);
+        assertGt(keeper.new_admin_deadline(), firstDeadline);
+
+        vm.prank(governance);
+        vm.expectRevert();
+        keeper.commit_new_admin(address(0));
+
+        vm.prank(governance);
+        (bool legacySetterExists,) =
+            address(keeper).call(abi.encodeWithSignature("set_admin(address)", correctedAdmin));
+        assertFalse(legacySetterExists);
+    }
+
+    function test_curveEmergencyAdminSetterAllowsRevocation() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        vm.expectEmit(false, false, false, true, address(keeper));
+        emit SetEmergencyAdmin(address(0));
+        vm.prank(governance);
+        keeper.set_emergency_admin(address(0));
+
+        assertEq(keeper.emergency_admin(), address(0));
     }
 
     function test_versionIsNumericThreeZeroZeroTuple() public {
@@ -791,6 +860,19 @@ contract PegKeeperV3LpYieldTest is Test {
         (bool oldMaxDebtGetterExists,) =
             address(keeper).staticcall(abi.encodeWithSignature("max_deployed_crvusd()"));
         assertFalse(oldMaxDebtGetterExists);
+    }
+
+    function test_lpBalanceReplacesAccountedLpTokensGetter() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        (bool lpBalanceExists, bytes memory encodedLpBalance) =
+            address(keeper).staticcall(abi.encodeWithSignature("lp_balance()"));
+        assertTrue(lpBalanceExists);
+        assertEq(abi.decode(encodedLpBalance, (uint256)), 0);
+
+        (bool oldGetterExists,) =
+            address(keeper).staticcall(abi.encodeWithSignature("accounted_lp_tokens()"));
+        assertFalse(oldGetterExists);
     }
 
     function test_reduceDebtReplacesReduceDeployedCrvUsdSelector() public {
@@ -1325,14 +1407,14 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setWithdrawBps(10_002);
 
         keeper.preview_contraction();
-        uint256 lpBefore = keeper.accounted_lp_tokens();
+        uint256 lpBefore = keeper.lp_balance();
         uint256 debtBefore = keeper.debt();
         yieldAmm.setActualWithdrawBps(10_000);
 
         vm.expectRevert();
         keeper.contract_supply();
 
-        assertEq(keeper.accounted_lp_tokens(), lpBefore);
+        assertEq(keeper.lp_balance(), lpBefore);
         assertEq(keeper.debt(), debtBefore);
         assertEq(yieldAmm.removeLiquidityCalls(), 0);
     }
@@ -1531,7 +1613,7 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.contract_supply();
 
         assertEq(keeper.debt(), 0);
-        assertEq(keeper.accounted_lp_tokens(), 0);
+        assertEq(keeper.lp_balance(), 0);
         assertEq(crvUsd.balanceOf(newFeeReceiver), expectedTerminalProfit);
         assertEq(
             crvUsd.balanceOf(address(keeper)), idleBefore + currentCallNet - expectedTerminalProfit
