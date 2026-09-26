@@ -20,6 +20,7 @@ check:
 	forge fmt --check
 	git diff --check
 	forge lint
+	python3 scripts/check-no-vyper-defaults.py
 	forge build --force
 	forge build --sizes
 	python3 scripts/check-vyper-solidity-abi.py \

@@ -1567,12 +1567,3 @@ def set_direction_paused(_direction: uint256, _paused: bool):
         raise
 
     log DirectionPaused(direction=_direction, paused=_paused)
-
-
-@external
-@payable
-def __default__():
-    """
-    @notice Rejects unsupported calls.
-    """
-    raise
