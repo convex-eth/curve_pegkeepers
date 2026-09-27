@@ -29,7 +29,6 @@ interface ILpPegKeeperV3 {
     function calc_profit() external view returns (uint256);
     function update() external returns (uint256 callerRewardValue);
     function update(address beneficiary) external returns (uint256 callerRewardValue);
-    function can_expand_without_policy() external view returns (bool);
     function set_amm_execution_buffer(uint256 executionBufferBps) external;
     function backing_oracle() external view returns (address);
     function policy() external view returns (address);
@@ -1768,7 +1767,6 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
 
-        assertTrue(keeper.can_expand_without_policy());
         keeper.preview_expansion();
         keeper.expand_supply();
         assertGt(keeper.debt(), 0);
@@ -1779,9 +1777,7 @@ contract PegKeeperV3LpYieldTest is Test {
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 20_000e18);
 
-        assertTrue(keeper.can_expand_without_policy());
         controllerAndPolicy.setPolicyExpansionAllowed(false);
-        assertTrue(keeper.can_expand_without_policy());
         assertEq(keeper.available_expansion(), 0);
         vm.expectRevert();
         keeper.preview_expansion();
@@ -1885,24 +1881,35 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(success);
     }
 
-    function test_localExpansionProbeIncludesPauseBackingAndExecutionViability() public {
+    function test_localExpansionProbeSelectorIsAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+
+        (bool success,) =
+            address(keeper).staticcall(abi.encodeWithSignature("can_expand_without_policy()"));
+        assertFalse(success);
+    }
+
+    function test_expansionPreviewIncludesPauseBackingAndExecutionViability() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 20_000e18);
-        assertTrue(keeper.can_expand_without_policy());
+        keeper.preview_expansion();
 
         vm.prank(governance);
         keeper.set_direction_paused(0, true);
-        assertFalse(keeper.can_expand_without_policy());
+        vm.expectRevert();
+        keeper.preview_expansion();
 
         vm.prank(governance);
         keeper.set_direction_paused(0, false);
         yieldOracle.setPrice(0.998e18);
-        assertFalse(keeper.can_expand_without_policy());
+        vm.expectRevert();
+        keeper.preview_expansion();
 
         yieldOracle.setPrice(1e18);
         yieldAmm.setLpMintBps(9_999);
-        assertFalse(keeper.can_expand_without_policy());
+        vm.expectRevert();
+        keeper.preview_expansion();
     }
 
     function test_policyGatesContraction() public {
@@ -1983,7 +1990,6 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(keeper.expansion_paused());
         assertFalse(keeper.all_execution_paused());
         assertEq(keeper.available_expansion(), 0);
-        assertFalse(keeper.can_expand_without_policy());
         vm.expectRevert();
         keeper.expand_supply();
         assertEq(keeper.debt(), 0);

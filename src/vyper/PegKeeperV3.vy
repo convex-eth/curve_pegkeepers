@@ -617,22 +617,6 @@ def _available_contraction_without_policy() -> uint256:
 
 @external
 @view
-def can_expand_without_policy() -> bool:
-    """
-    @notice Reports whether the canonical expansion is locally executable, excluding system policy.
-    """
-    cap: uint256 = self._available_expansion_without_policy()
-    if cap == 0:
-        return False
-
-    if staticcall self.backing_oracle.price() < self.min_backing_oracle_price:
-        return False
-
-    return self._expansion_preview_viable(cap)
-
-
-@external
-@view
 def available_expansion() -> uint256:
     """
     @notice Returns the most crvUSD that can be used for a policy-approved expansion now.
@@ -894,47 +878,6 @@ def _remove_exact_crv_usd(_crv_usd_amount: uint256, _maximum_lp_tokens: uint256)
             fixed_amounts,
             _maximum_lp_tokens,
         )
-
-
-@internal
-@view
-def _expansion_preview_viable(_crv_usd_amount: uint256) -> bool:
-    lp_before: uint256 = self._lp_balance()
-    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
-    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_paired_token: uint256 = self._paired_token_balance()
-    donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
-    crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
-
-    if crv_usd_deployed > staticcall crv_usd.balanceOf(self):
-        return False
-    debt_after: uint256 = self.debt + crv_usd_deployed
-    if debt_after > self.max_debt:
-        return False
-    if debt_after > staticcall self._controller_factory.debt_ceiling(self):
-        return False
-
-    lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
-
-    accounting_baseline: uint256 = lp_value_before + donated_value
-    lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
-    if lp_value_after < accounting_baseline + crv_usd_deployed:
-        return False
-    gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
-    keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price
-    if keeper_reward > lp_tokens_out:
-        return False
-
-    retained_value: uint256 = self._lp_value_at(
-        lp_before + lp_tokens_out - keeper_reward,
-        virtual_price,
-    )
-    if retained_value < accounting_baseline:
-        return False
-    if not self._meets_entry_floor(gross_profit, crv_usd_deployed):
-        return False
-    return retained_value >= debt_after
 
 
 @internal

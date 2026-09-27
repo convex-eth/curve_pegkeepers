@@ -57,7 +57,7 @@ policy.expansion_regime();
 
 The current `PegKeeperPolicy` owns the aggregate crvUSD oracle and global `fee_receiver`. It does not own a keeper list or reward setting and does not call keepers for local conditions. Its current rulings use only aggregate price. The no-argument selectors deliberately preserve a replaceable Policy boundary: a future Policy can add global or caller-aware rules, using `msg.sender` as the querying keeper, without changing keeper bytecode.
 
-Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, reward accounting, and final solvency. `can_expand_without_policy()` exposes those local expansion checks for observation; the current Policy does not invoke it. One keeper's local state cannot block another through the current Policy.
+Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, reward accounting, and final solvency. The current Policy does not inspect keeper-local state, so one keeper's local conditions cannot block another.
 
 `PegKeeperRegistry` is a separate governance-owned discovery list:
 
@@ -178,14 +178,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      19,249 bytes
-keeper runtime core:       16,678 bytes
-standalone runtime:      16,710 bytes
-EIP-170 headroom:         7,866 bytes
+standalone initcode:      18,274 bytes
+keeper runtime core:       15,703 bytes
+standalone runtime:      15,735 bytes
+EIP-170 headroom:         8,841 bytes
 runtime core hash:
-0xf835e7415573c866384e6ffb2b46b95080c5845623407419db4f4e9507f226bf
+0xeaf66971c342433f834b05d6705965f9b6e2943444050600ae1dbc35eef6d304
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0xb30253eac8052fada992aee0d22a1e3f2d5a51670e8b0df7438f5b7247fb99ae
+0x2401df2f13a1e82ce6aa07a7bf9533f3c1a51b50480fb4309353adc832cb5337
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

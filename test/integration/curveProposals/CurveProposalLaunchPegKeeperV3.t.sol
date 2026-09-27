@@ -325,11 +325,11 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         IPegKeeperV3 frxUsdKeeper = IPegKeeperV3(expectedFrxUsdKeeper);
         IPegKeeperV3 usdcKeeper = IPegKeeperV3(expectedUsdcKeeper);
         assertTrue(keeperPolicy.can_expand());
-        assertTrue(usdcKeeper.can_expand_without_policy());
+        assertGt(usdcKeeper.available_expansion(), 0);
 
         frxUsdKeeper.expand_supply();
 
-        assertFalse(frxUsdKeeper.can_expand_without_policy());
+        assertEq(frxUsdKeeper.available_expansion(), 0);
         assertTrue(keeperPolicy.can_expand());
         (uint256 debtAdded, uint256 lpReceived,) = usdcKeeper.expand_supply();
         assertGt(debtAdded, 0);

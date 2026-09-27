@@ -113,8 +113,6 @@ interface IPegKeeperV3 {
     function set_keeper_profit_share_bps(uint256 newKeeperProfitShareBps) external;
     function set_intervention_policy(uint256 actionImbalanceBps, uint256 actionDelay) external;
 
-    /// @notice Reports local expansion viability without querying the selected Policy.
-    function can_expand_without_policy() external view returns (bool);
     function available_expansion() external view returns (uint256);
     function available_contraction() external view returns (uint256);
     function estimate_caller_profit() external view returns (uint256);

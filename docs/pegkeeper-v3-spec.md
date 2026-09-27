@@ -81,17 +81,7 @@ Policy and keeper oracle reads use the declared `price()` interface directly. Or
 
 ## 4. Keeper-local admission
 
-A keeper exposes `can_expand_without_policy()`, a non-recursive local probe covering:
-
-- global and expansion pauses;
-- shared action delay;
-- normalized local pool deficit and canonical expansion amount;
-- idle crvUSD;
-- keeper-local and ControllerFactory capacity;
-- retained-backing oracle floor;
-- direct AMM quote, entry-profit floor, reward, and final solvency.
-
-Expected economic failure returns `false`. Execution and previews query the selected Policy for the applicable global ruling and enforce local conditions inside the keeper. The current Policy does not call `can_expand_without_policy()` or inspect keeper state. It has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
+Execution and previews query the selected Policy for the applicable global ruling, then enforce pauses, action delay, normalized local imbalance, idle crvUSD, keeper-local and ControllerFactory capacity, the retained-backing oracle floor, direct AMM economics, reward accounting, and final solvency inside the keeper. The current Policy does not inspect keeper state and has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
 
 ## 5. PegKeeperRegistry and wind-down
 
@@ -283,14 +273,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      19,249 bytes
-keeper runtime core:       16,678 bytes
-standalone runtime:      16,710 bytes
-EIP-170 headroom:         7,866 bytes
+standalone initcode:      18,274 bytes
+keeper runtime core:       15,703 bytes
+standalone runtime:      15,735 bytes
+EIP-170 headroom:         8,841 bytes
 runtime core hash:
-0xf835e7415573c866384e6ffb2b46b95080c5845623407419db4f4e9507f226bf
+0xeaf66971c342433f834b05d6705965f9b6e2943444050600ae1dbc35eef6d304
 mainnet runtime hash:
-0xb30253eac8052fada992aee0d22a1e3f2d5a51670e8b0df7438f5b7247fb99ae
+0x2401df2f13a1e82ce6aa07a7bf9533f3c1a51b50480fb4309353adc832cb5337
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

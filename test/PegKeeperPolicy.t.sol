@@ -57,7 +57,6 @@ contract PegKeeperPolicyTest is Test {
         _assertStaticCallFails(abi.encodeWithSignature("can_expand(address)", address(this)));
         _assertStaticCallFails(abi.encodeWithSignature("can_contract(address)", address(this)));
         _assertStaticCallFails(abi.encodeWithSignature("can_allocate(address)", address(this)));
-        _assertStaticCallFails(abi.encodeWithSignature("can_expand_without_policy()"));
         _assertStaticCallFails(abi.encodeWithSignature("peg_keeper_count()"));
         _assertStaticCallFails(abi.encodeWithSignature("peg_keepers(uint256)", 0));
         _assertStaticCallFails(abi.encodeWithSignature("is_active(address)", address(this)));
