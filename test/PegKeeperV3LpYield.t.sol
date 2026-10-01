@@ -91,6 +91,7 @@ contract LpYieldToken {
     uint8 public immutable decimals;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+    mapping(address => uint256) public approveCalls;
 
     constructor(uint8 decimals_) {
         decimals = decimals_;
@@ -120,6 +121,7 @@ contract LpYieldToken {
     }
 
     function approve(address spender, uint256 amount) external returns (bool) {
+        approveCalls[msg.sender]++;
         allowance[msg.sender][spender] = amount;
         return true;
     }
@@ -478,6 +480,26 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.pool_paired_token_index(), 1);
         assertEq(keeper.lp_balance(), 0);
         assertEq(keeper.trusted_backing_value(), 0);
+    }
+
+    function test_constructorSetsUnlimitedPoolAllowances() public {
+        ILpPegKeeperV3 keeper = _deployKeeper(address(yieldAmm));
+
+        assertEq(crvUsd.allowance(address(keeper), address(yieldAmm)), type(uint256).max);
+        assertEq(yieldToken.allowance(address(keeper), address(yieldAmm)), type(uint256).max);
+    }
+
+    function test_expansionDoesNotWritePoolAllowances() public {
+        ILpPegKeeperV3 keeper = _configuredNormalKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        uint256 crvUsdApprovalCalls = crvUsd.approveCalls(address(keeper));
+        uint256 pairedTokenApprovalCalls = yieldToken.approveCalls(address(keeper));
+
+        keeper.expand_supply();
+
+        assertEq(crvUsd.approveCalls(address(keeper)), crvUsdApprovalCalls);
+        assertEq(yieldToken.approveCalls(address(keeper)), pairedTokenApprovalCalls);
     }
 
     function test_keeperIsStandaloneAndHasNoFactorySelector() public {
@@ -1220,8 +1242,8 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(yieldToken.balanceOf(address(keeper)), 12_000e18);
         assertEq(yieldAmm.balanceOf(address(keeper)), 0);
         assertEq(yieldAmm.addLiquidityCalls(), 0);
-        assertEq(crvUsd.allowance(address(keeper), address(yieldAmm)), 0);
-        assertEq(yieldToken.allowance(address(keeper), address(yieldAmm)), 0);
+        assertEq(crvUsd.allowance(address(keeper), address(yieldAmm)), type(uint256).max);
+        assertEq(yieldToken.allowance(address(keeper), address(yieldAmm)), type(uint256).max);
         assertEq(keeper.debt(), 0);
     }
 

@@ -144,9 +144,9 @@ contract PegKeeperV3LpYieldInvariantTest is StdInvariant, Test {
         assertLe(keeper.debt(), controllerAndPolicy.debt_ceiling(address(keeper)));
     }
 
-    function invariant_ammAllowancesAreAlwaysZero() public view {
-        assertEq(crvUsd.allowance(address(keeper), address(yieldAmm)), 0);
-        assertEq(yieldToken.allowance(address(keeper), address(yieldAmm)), 0);
+    function invariant_ammAllowancesRemainEffectivelyUnlimited() public view {
+        assertGt(crvUsd.allowance(address(keeper), address(yieldAmm)), type(uint256).max / 2);
+        assertGt(yieldToken.allowance(address(keeper), address(yieldAmm)), type(uint256).max / 2);
     }
 
     function invariant_handlerReachesEveryEconomicAction() public view {

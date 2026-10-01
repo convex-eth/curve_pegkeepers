@@ -260,6 +260,7 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
         assertEq(IControllerFactory(CONTROLLER_FACTORY).debt_ceiling(expectedUsdtKeeper), CAP);
 
         address[3] memory keepers = [expectedFrxUsdKeeper, expectedUsdcKeeper, expectedUsdtKeeper];
+        IERC20 crvUsd = IERC20(IControllerFactory(CONTROLLER_FACTORY).stablecoin());
         for (uint256 i; i < keepers.length; ++i) {
             assertEq(
                 IAggMonetaryPolicy(MONETARY_POLICY).peg_keepers(currentPolicySlots[i]), keepers[i]
@@ -267,6 +268,10 @@ contract CurveProposalLaunchPegKeeperV3Test is Test {
             assertEq(
                 IAggMonetaryPolicy(LEGACY_MONETARY_POLICY).peg_keepers(legacySlots[i]), keepers[i]
             );
+            IPegKeeperV3 keeper = IPegKeeperV3(keepers[i]);
+            address pool = keeper.pool();
+            assertEq(crvUsd.allowance(keepers[i], pool), type(uint256).max);
+            assertEq(IERC20(keeper.paired_token()).allowance(keepers[i], pool), type(uint256).max);
         }
     }
 

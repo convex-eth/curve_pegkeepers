@@ -277,6 +277,8 @@ def __init__(
 
     self._controller_factory = _controller_factory
     extcall ERC20(crv_usd_address).approve(_controller_factory.address, max_value(uint256))
+    extcall ERC20(crv_usd_address).approve(_pool.address, max_value(uint256))
+    extcall ERC20(paired_token_address).approve(_pool.address, max_value(uint256))
     self._backing_asset = backing_asset
     self._paired_token = paired_token
     self.pool = _pool
@@ -778,7 +780,35 @@ def preview_expansion() -> (uint256, uint256, uint256, uint256):
     self._require_expansion_policy()
     amount: uint256 = self._available_expansion_without_policy()
     assert amount > 0
-    return self._preview_expansion(amount)
+    self._backing_price()
+
+    lp_before: uint256 = self._lp_balance()
+    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
+    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
+    donated_paired_token: uint256 = self._paired_token_balance()
+    donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
+    crv_usd_deployed: uint256 = amount + donated_value
+    accounting_baseline: uint256 = lp_value_before + donated_value
+
+    assert crv_usd_deployed <= staticcall crv_usd.balanceOf(self)
+    debt_after: uint256 = self.debt + crv_usd_deployed
+    assert debt_after <= self.max_debt
+    assert debt_after <= staticcall self._controller_factory.debt_ceiling(self)
+
+    lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
+    lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
+    assert lp_value_after >= accounting_baseline + crv_usd_deployed
+    gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
+    reward_value: uint256 = self._keeper_reward(gross_profit)
+    keeper_reward: uint256 = reward_value * PRECISION // virtual_price
+    assert keeper_reward <= lp_tokens_out
+
+    retained_lp: uint256 = lp_before + lp_tokens_out - keeper_reward
+    retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
+    assert retained_value >= accounting_baseline
+    assert self._meets_entry_floor(gross_profit, crv_usd_deployed)
+    assert retained_value >= debt_after
+    return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
 
 
 @external
@@ -881,40 +911,6 @@ def _remove_exact_crv_usd(_crv_usd_amount: uint256, _maximum_lp_tokens: uint256)
 
 
 @internal
-@view
-def _preview_expansion(_crv_usd_amount: uint256) -> (uint256, uint256, uint256, uint256):
-    self._backing_price()
-
-    lp_before: uint256 = self._lp_balance()
-    virtual_price: uint256 = staticcall self.pool.get_virtual_price()
-    lp_value_before: uint256 = self._lp_value_at(lp_before, virtual_price)
-    donated_paired_token: uint256 = self._paired_token_balance()
-    donated_value: uint256 = self._trusted_paired_token_value(donated_paired_token)
-    crv_usd_deployed: uint256 = _crv_usd_amount + donated_value
-    accounting_baseline: uint256 = lp_value_before + donated_value
-
-    assert crv_usd_deployed <= staticcall crv_usd.balanceOf(self)
-    debt_after: uint256 = self.debt + crv_usd_deployed
-    assert debt_after <= self.max_debt
-    assert debt_after <= staticcall self._controller_factory.debt_ceiling(self)
-
-    lp_tokens_out: uint256 = self._calc_token_amount(crv_usd_deployed, donated_paired_token)
-    lp_value_after: uint256 = self._lp_value_at(lp_before + lp_tokens_out, virtual_price)
-    assert lp_value_after >= accounting_baseline + crv_usd_deployed
-    gross_profit: uint256 = lp_value_after - accounting_baseline - crv_usd_deployed
-    reward_value: uint256 = self._keeper_reward(gross_profit)
-    keeper_reward: uint256 = reward_value * PRECISION // virtual_price
-    assert keeper_reward <= lp_tokens_out
-
-    retained_lp: uint256 = lp_before + lp_tokens_out - keeper_reward
-    retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
-    assert retained_value >= accounting_baseline
-    assert self._meets_entry_floor(gross_profit, crv_usd_deployed)
-    assert retained_value >= debt_after
-    return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
-
-
-@internal
 def _deposit_to_pool(
     _crv_usd_amount: uint256,
     _paired_token_amount: uint256,
@@ -926,10 +922,6 @@ def _deposit_to_pool(
     paired_token_before: uint256 = staticcall self._paired_token.balanceOf(self)
     lp_before: uint256 = self._lp_balance()
 
-    extcall crv_usd.approve(self.pool.address, 0)
-    extcall crv_usd.approve(self.pool.address, _crv_usd_amount)
-    extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
-    extcall ERC20(self._paired_token.address).approve(self.pool.address, _paired_token_amount)
     if self.pool_uses_dynamic_arrays:
         dynamic_amounts: DynArray[uint256, 2] = [0, 0]
         dynamic_amounts[self.pool_crvusd_index] = _crv_usd_amount
@@ -940,9 +932,6 @@ def _deposit_to_pool(
         fixed_amounts[self.pool_crvusd_index] = _crv_usd_amount
         fixed_amounts[self.pool_paired_token_index] = _paired_token_amount
         extcall FixedLiquidityPool(self.pool.address).add_liquidity(fixed_amounts, min_lp)
-    extcall crv_usd.approve(self.pool.address, 0)
-    extcall ERC20(self._paired_token.address).approve(self.pool.address, 0)
-
     assert crv_usd_before - staticcall crv_usd.balanceOf(self) == _crv_usd_amount
     assert paired_token_before - staticcall self._paired_token.balanceOf(self) == _paired_token_amount
     lp_received: uint256 = self._lp_balance() - lp_before

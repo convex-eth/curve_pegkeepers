@@ -25,7 +25,7 @@ The constructor:
 - optionally derives an ERC-4626 backing asset through `asset()`;
 - fixes the pool liquidity ABI mode, keeper index, backing oracle, cap, profit floors, keeper reward share, and execution buffer;
 - stores the final `admin`, `emergency_admin`, and selected `policy` directly on that keeper;
-- grants the ControllerFactory unlimited crvUSD allowance for ceiling reductions and residual-allocation burning.
+- grants unlimited crvUSD allowance to the ControllerFactory and unlimited pool allowances for crvUSD and the paired token.
 
 ```text
 expansion:
@@ -41,7 +41,7 @@ contraction:
 
 The core has no swap router, target AMM, path storage, route adapter, or detached preview module. For ERC-4626 paired tokens, loose shares are normalized with `convertToAssets()`. Held LP is valued only with `get_virtual_price()`; applying the ERC-4626 rate again would double-count it.
 
-Expansion, donation settlement, and contraction use measured token/LP deltas, temporary exact approvals reset to zero, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual profit and solvency are rechecked.
+Expansion, donation settlement, and contraction use measured token/LP deltas, constructor-set unlimited pool allowances, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual profit and solvency are rechecked.
 
 Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, bounded by balance, backing, and capacity. `update()` selects the local direction for V2 compatibility. `update(address beneficiary)` routes the physical reward to a selected nonzero beneficiary. Both forms return zero rather than reverting when another caller already consumed the shared `action_delay`.
 
@@ -178,14 +178,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      18,274 bytes
-keeper runtime core:       15,703 bytes
-standalone runtime:      15,735 bytes
-EIP-170 headroom:         8,841 bytes
+standalone initcode:      18,065 bytes
+keeper runtime core:       15,314 bytes
+standalone runtime:      15,346 bytes
+EIP-170 headroom:         9,230 bytes
 runtime core hash:
-0xeaf66971c342433f834b05d6705965f9b6e2943444050600ae1dbc35eef6d304
+0x3f9daf6cd1200c8cab72af3809b0ba6ac02003324003f5e5f14304cb11203a53
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0x2401df2f13a1e82ce6aa07a7bf9533f3c1a51b50480fb4309353adc832cb5337
+0x137e8c4ef288faad72ed3e0538ddb054945e189c070cc5a9aa840850f50de4dc
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
@@ -206,7 +206,7 @@ ETH_RPC_URL=https://an-archive-rpc.example make check
 
 Coverage includes fixed- and dynamic-array liquidity dispatch, amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, keeper-local role and reward changes, replaceable Policy rulings, Registry lifecycle and pop-and-swap removal, independent execution, external draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, deployment JSON, and full Curve ownership-vote execution.
 
-The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile. It exercises canonical expansion and exact-output contraction under the `20%` rule without weakening the profit floor, and verifies Policy direction, measured deltas, debt reduction, final solvency, ControllerFactory funding, idle-allocation burning, residual rugging, and the persistent ControllerFactory allowance.
+The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile. It exercises canonical expansion and exact-output contraction under the `20%` rule without weakening the profit floor, and verifies Policy direction, measured deltas, debt reduction, final solvency, ControllerFactory funding, idle-allocation burning, residual rugging, and persistent ControllerFactory/pool allowances.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json`, `docs/pegkeeper-v3-release-checklist.md`, and `scripts/verify-release-manifest.py` predate this source candidate. They remain frozen and must be regenerated from the final committed source snapshot before release.
 

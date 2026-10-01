@@ -62,6 +62,14 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
             IERC20(CRVUSD).allowance(address(pegKeeper), CONTROLLER_FACTORY) == type(uint256).max,
             "ControllerFactory crvUSD allowance"
         );
+        require(
+            IERC20(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == type(uint256).max,
+            "initial AMM crvUSD allowance"
+        );
+        require(
+            IERC20(FRXUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == type(uint256).max,
+            "initial AMM frxUSD allowance"
+        );
 
         // Make the paired token abundant in the direct AMM.
         deal(FRXUSD, CANARY_TRADER, EXPANSION_MARKET_TRADE);
@@ -86,12 +94,14 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         require(IERC20(FRXUSD).balanceOf(address(pegKeeper)) == 0, "loose frxUSD");
         require(pegKeeper.trusted_backing_value() >= pegKeeper.debt(), "principal invariant");
         require(
-            IERC20(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
-            "AMM crvUSD allowance"
+            IERC20(CRVUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL)
+                > type(uint256).max / 2,
+            "persistent AMM crvUSD allowance"
         );
         require(
-            IERC20(FRXUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL) == 0,
-            "AMM frxUSD allowance"
+            IERC20(FRXUSD).allowance(address(pegKeeper), FRXUSD_CRVUSD_POOL)
+                > type(uint256).max / 2,
+            "persistent AMM frxUSD allowance"
         );
 
         vm.warp(block.timestamp + pegKeeper.action_delay());

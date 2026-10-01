@@ -16,9 +16,9 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
     string public constant DEPLOYMENT_INPUT_PATH =
         "deployments/mainnet/PegKeeperV3-deployment.json";
 
-    uint256 public constant KEEPER_RUNTIME_SIZE = 15_735;
+    uint256 public constant KEEPER_RUNTIME_SIZE = 15_346;
     bytes32 public constant EXPECTED_KEEPER_RUNTIME_HASH =
-        0x2401df2f13a1e82ce6aa07a7bf9533f3c1a51b50480fb4309353adc832cb5337;
+        0x137e8c4ef288faad72ed3e0538ddb054945e189c070cc5a9aa840850f50de4dc;
     uint256 public constant POLICY_RUNTIME_SIZE = 905;
     bytes32 public constant EXPECTED_POLICY_RUNTIME_HASH =
         0xa11f74514ddad33cebd3ea933e1bf8d802b74107af7b3bc23b0bb6a0067a758c;
@@ -255,10 +255,20 @@ contract CurveProposalLaunchPegKeeperV3 is BaseCurveProposal {
             IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).debt_ceiling(keeperAddress) == 0,
             "keeper prefunded"
         );
+        address crvUsd = IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).stablecoin();
+        address pool = keeper.pool();
         require(
-            IERC20(IControllerFactory(CURVE_CRVUSD_CONTROLLER_FACTORY).stablecoin())
-                .allowance(keeperAddress, CURVE_CRVUSD_CONTROLLER_FACTORY) == type(uint256).max,
+            IERC20(crvUsd).allowance(keeperAddress, CURVE_CRVUSD_CONTROLLER_FACTORY)
+                == type(uint256).max,
             "keeper ControllerFactory allowance"
+        );
+        require(
+            IERC20(crvUsd).allowance(keeperAddress, pool) == type(uint256).max,
+            "keeper pool crvUSD allowance"
+        );
+        require(
+            IERC20(keeper.paired_token()).allowance(keeperAddress, pool) == type(uint256).max,
+            "keeper pool paired-token allowance"
         );
     }
 

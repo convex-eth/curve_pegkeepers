@@ -115,7 +115,7 @@ Post-deployment state:
 - Registry empty;
 - keepers unpaused and debt-free;
 - ControllerFactory ceilings zero;
-- unlimited keeper allowances to ControllerFactory present;
+- unlimited keeper allowances to ControllerFactory and each keeper's fixed pool present;
 - no pending admin commitment or setup transaction.
 
 The governance proposal contains ten actions:
@@ -149,7 +149,7 @@ Before authorization:
 1. Reconfirm Policy, Registry, keeper, and adapter runtime identities.
 2. Reconfirm pool coin order, ABI mode, rates, virtual prices, fees, balances, and exact-output behavior.
 3. Reassess local maxima and ControllerFactory ceilings against current depth.
-4. Confirm Policy and Registry administration, empty pre-proposal Registry, direct keeper roles/Policy selection, local reward shares, unpaused/debt-free state, zero ceilings, and unlimited ControllerFactory allowances.
+4. Confirm Policy and Registry administration, empty pre-proposal Registry, direct keeper roles/Policy selection, local reward shares, unpaused/debt-free state, zero ceilings, and unlimited ControllerFactory/pool allowances.
 5. Simulate the exact ten-action vote and verify Registry enrollment precedes monetary-policy registrations and ceilings.
 6. Immediately after execution, run bounded expansion/contraction canaries and reconcile every balance/debt delta.
 7. Retire V2 only under separate authorization.

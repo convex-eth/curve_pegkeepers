@@ -369,6 +369,15 @@ contract DeployPegKeeperV3 is Script {
             "controller factory allowance"
         );
         require(
+            IERC20(crvUsd).allowance(keeperAddress, expectedPool) == type(uint256).max,
+            "pool crvUSD allowance"
+        );
+        require(
+            IERC20(keeper.paired_token()).allowance(keeperAddress, expectedPool)
+                == type(uint256).max,
+            "pool paired-token allowance"
+        );
+        require(
             IControllerFactory(config.controllerFactory).debt_ceiling(keeperAddress) == 0,
             "keeper prefunded"
         );
