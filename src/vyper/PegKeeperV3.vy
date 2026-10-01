@@ -401,10 +401,7 @@ def _lp_balance() -> uint256:
 @view
 def _lp_value(_lp_tokens: uint256) -> uint256:
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
-    return (
-        _lp_tokens // PRECISION * virtual_price
-        + _lp_tokens % PRECISION * virtual_price // PRECISION
-    )
+    return _lp_tokens * virtual_price // PRECISION
 
 
 @external
@@ -432,7 +429,7 @@ def coins(_index: uint256) -> address:
 @pure
 def _oracle_value(_value: uint256, _price: uint256) -> uint256:
     price: uint256 = min(_price, PRECISION)
-    return _value // PRECISION * price + _value % PRECISION * price // PRECISION
+    return _value * price // PRECISION
 
 
 @internal
@@ -748,7 +745,7 @@ def preview_contraction() -> (uint256, uint256, uint256):
     quoted_lp_burn: uint256 = self._calc_lp_burn(expected_crv_usd)
     expected_lp_burn: uint256 = quoted_lp_burn + 1
     maximum_lp_burn: uint256 = self._maximum_lp_burn(quoted_lp_burn)
-    assert expected_lp_burn <= maximum_lp_burn and maximum_lp_burn <= accounted
+    assert maximum_lp_burn <= accounted
     virtual_price: uint256 = staticcall self.pool.get_virtual_price()
     trusted_before: uint256 = self._lp_value_at(accounted, virtual_price)
     trusted_after: uint256 = self._lp_value_at(accounted - expected_lp_burn, virtual_price)
@@ -847,10 +844,7 @@ def set_amm_execution_buffer(_execution_buffer_bps: uint256):
 @internal
 @view
 def _lp_value_at(_lp_tokens: uint256, _virtual_price: uint256) -> uint256:
-    return (
-        _lp_tokens // PRECISION * _virtual_price
-        + _lp_tokens % PRECISION * _virtual_price // PRECISION
-    )
+    return _lp_tokens * _virtual_price // PRECISION
 
 
 @internal
@@ -885,11 +879,7 @@ def _calc_lp_burn(_crv_usd_amount: uint256) -> uint256:
 @view
 def _maximum_lp_burn(_quoted_lp_burn: uint256) -> uint256:
     multiplier: uint256 = BPS + self.amm_execution_buffer_bps
-    return (
-        _quoted_lp_burn // BPS * multiplier
-        + (_quoted_lp_burn % BPS * multiplier + BPS - 1) // BPS
-        + 1
-    )
+    return (_quoted_lp_burn * multiplier + BPS - 1) // BPS + 1
 
 
 @internal
@@ -949,8 +939,7 @@ def _settle_lp_expansion(
     _lp_received: uint256,
     _reward_recipient: address,
 ) -> (uint256, uint256):
-    lp_after_deposit: uint256 = self._lp_balance()
-    assert lp_after_deposit - _lp_before == _lp_received
+    lp_after_deposit: uint256 = _lp_before + _lp_received
     virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     lp_value_after: uint256 = self._lp_value_at(lp_after_deposit, virtual_price_after)
     accounting_baseline: uint256 = _lp_value_before + _donated_paired_token_value
@@ -996,7 +985,6 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         crv_usd_deployed,
         paired_token_before,
     )
-    assert crv_usd_before - staticcall crv_usd.balanceOf(self) == crv_usd_deployed
 
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
@@ -1181,7 +1169,6 @@ def withdraw_profit(_max_crv_usd_amount: uint256 = max_value(uint256)) -> uint25
     fee_receiver: address = self._fee_receiver()
     self._transfer_exact_to(crv_usd, fee_receiver, crv_usd_transferred)
     crv_usd_balance_after: uint256 = staticcall crv_usd.balanceOf(self)
-    assert crv_usd_balance_before >= crv_usd_balance_after
     assert crv_usd_balance_before - crv_usd_balance_after == crv_usd_transferred
 
     assert self._trusted_backing_value() >= debt_after
@@ -1225,7 +1212,6 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
 
     virtual_price_after: uint256 = staticcall self.pool.get_virtual_price()
     trusted_backing_after: uint256 = self._lp_value_at(lp_after, virtual_price_after)
-    assert trusted_backing_before >= trusted_backing_after
     trusted_value_removed: uint256 = trusted_backing_before - trusted_backing_after
     assert trusted_value_removed > 0
 

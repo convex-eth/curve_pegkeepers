@@ -273,14 +273,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      18,065 bytes
-keeper runtime core:       15,314 bytes
-standalone runtime:      15,346 bytes
-EIP-170 headroom:         9,230 bytes
+standalone initcode:      17,651 bytes
+keeper runtime core:       14,900 bytes
+standalone runtime:      14,932 bytes
+EIP-170 headroom:         9,644 bytes
 runtime core hash:
-0x3f9daf6cd1200c8cab72af3809b0ba6ac02003324003f5e5f14304cb11203a53
+0xadc70775e1cdfe670c9f7b8fb2f136b7ef5f36374d2bb99a66219ced3e705193
 mainnet runtime hash:
-0x137e8c4ef288faad72ed3e0538ddb054945e189c070cc5a9aa840850f50de4dc
+0xba51e39f21a209cc7d2d5c9c2e88c58dcda3043828a96e2cacf50372e5a4df92
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
