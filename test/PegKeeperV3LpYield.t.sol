@@ -1168,6 +1168,42 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.debt(), 12_000e18);
     }
 
+    function test_profitableExpansionCanPartiallyRepairInsolvency() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+
+        yieldAmm.setVirtualPrice(0.9e18);
+        uint256 deficitBefore = keeper.debt() - keeper.trusted_backing_value();
+        yieldAmm.setLpMintBps(11_113);
+        crvUsd.mint(address(keeper), 10_000e18);
+
+        keeper.expand_supply();
+
+        uint256 backingAfter = keeper.trusted_backing_value();
+        assertLt(backingAfter, keeper.debt());
+        assertLt(keeper.debt() - backingAfter, deficitBefore);
+    }
+
+    function test_donationSweepCanPartiallyRepairInsolvency() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        crvUsd.mint(address(keeper), 10_000e18);
+        keeper.expand_supply();
+
+        yieldAmm.setVirtualPrice(0.9e18);
+        uint256 deficitBefore = keeper.debt() - keeper.trusted_backing_value();
+        crvUsd.mint(address(keeper), 100e18);
+        yieldToken.mint(address(keeper), 100e18);
+
+        keeper.sweep_donated_paired_token(100e18);
+
+        uint256 backingAfter = keeper.trusted_backing_value();
+        assertLt(backingAfter, keeper.debt());
+        assertLt(keeper.debt() - backingAfter, deficitBefore);
+    }
+
     function test_sweep_donated_paired_tokenWorksWithoutTargetTrade() public {
         ILpPegKeeperV3 keeper = _configuredNormalKeeper();
         yieldAmm.setLpMintBps(10_001);

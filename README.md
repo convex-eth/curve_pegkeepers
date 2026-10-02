@@ -41,7 +41,7 @@ contraction:
 
 The core has no swap router, target AMM, path storage, route adapter, or detached preview module. For ERC-4626 paired tokens, loose shares are normalized with `convertToAssets()`. Held LP is valued only with `get_virtual_price()`; applying the ERC-4626 rate again would double-count it.
 
-Expansion, donation settlement, and contraction use measured token/LP deltas, constructor-set unlimited pool allowances, quote-derived slippage bounds, gross-before-reward accounting, and final backing-versus-debt solvency. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual profit and solvency are rechecked.
+Expansion, donation settlement, and contraction use measured token/LP deltas, constructor-set unlimited pool allowances, quote-derived slippage bounds, and gross-before-reward accounting. Profitable expansion and donation settlement may reduce a pre-existing deficit without curing it. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual burn and profit are rechecked.
 
 Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, bounded by balance, backing, and capacity. `update()` selects the local direction for V2 compatibility. `update(address beneficiary)` routes the physical reward to a selected nonzero beneficiary. Both forms return zero rather than reverting when another caller already consumed the shared `action_delay`.
 
@@ -57,7 +57,7 @@ policy.expansion_regime();
 
 The current `PegKeeperPolicy` owns the aggregate crvUSD oracle and global `fee_receiver`. It does not own a keeper list or reward setting and does not call keepers for local conditions. Its current rulings use only aggregate price. The no-argument selectors deliberately preserve a replaceable Policy boundary: a future Policy can add global or caller-aware rules, using `msg.sender` as the querying keeper, without changing keeper bytecode.
 
-Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, reward accounting, and final solvency. The current Policy does not inspect keeper-local state, so one keeper's local conditions cannot block another.
+Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, and reward accounting. Protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper-local state, so one keeper's local conditions cannot block another.
 
 `PegKeeperRegistry` is a separate governance-owned discovery list:
 
@@ -123,7 +123,7 @@ The draw cannot prove that an external module returns LP backing. A production i
 
 ## Donations, profit, and surplus
 
-Loose paired-token donations can be swept into LP. Positive crvUSD matching requires the selected Policy's global expansion ruling. Under the current price-only Policy, donations are fully matched at or above `$1` and deposited one-sided below `$1`; keeper-local backing, capacity, balance, and solvency checks remain binding. Donation value is excluded from caller-profit attribution.
+Loose paired-token donations can be swept into LP. Positive crvUSD matching requires the selected Policy's global expansion ruling. Under the current price-only Policy, donations are fully matched at or above `$1` and deposited one-sided below `$1`; keeper-local oracle, capacity, balance, and profit checks remain binding. Donation value is excluded from caller-profit attribution, and settlement may partially repair a pre-existing deficit.
 
 `withdraw_profit()` first settles loose paired-token donations, then transfers all claimable idle crvUSD to the selected Policy's current global `fee_receiver`. The bounded overload performs the same accounting with a caller-supplied transfer cap. Both remain callable in contraction regimes.
 
@@ -178,14 +178,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      17,651 bytes
-keeper runtime core:       14,900 bytes
-standalone runtime:      14,932 bytes
-EIP-170 headroom:         9,644 bytes
+standalone initcode:      17,582 bytes
+keeper runtime core:       14,831 bytes
+standalone runtime:      14,863 bytes
+EIP-170 headroom:         9,713 bytes
 runtime core hash:
-0xadc70775e1cdfe670c9f7b8fb2f136b7ef5f36374d2bb99a66219ced3e705193
+0x01ffd4d7db52ab8aa13981d39fb4a4b1ac914a0f1a201568ab7d5b7882e8f01a
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0xba51e39f21a209cc7d2d5c9c2e88c58dcda3043828a96e2cacf50372e5a4df92
+0xa5406b28497a8b4ec75ad1668165bd38175dfa1e6439b6fb352af71c8e32bf37
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

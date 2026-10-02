@@ -998,7 +998,6 @@ def _expand_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         _reward_recipient,
     )
     self.debt += crv_usd_deployed
-    assert self._trusted_backing_value() >= self.debt
     self.last_intervention_at = block.timestamp
 
     log Expanded(
@@ -1078,7 +1077,6 @@ def _settle_donated_paired_token(
     )
 
     self.debt += crv_usd_matched
-    assert self._trusted_backing_value() >= self.debt
 
     log DonatedPairedTokenSwept(
         keeper=msg.sender,
@@ -1225,7 +1223,6 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
         trusted_backing_after,
         _reward_recipient,
     )
-    assert self._trusted_backing_value() >= self.debt
     self.last_intervention_at = block.timestamp
 
     log Contracted(

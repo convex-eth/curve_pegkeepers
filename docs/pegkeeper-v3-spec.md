@@ -81,7 +81,7 @@ Policy and keeper oracle reads use the declared `price()` interface directly. Or
 
 ## 4. Keeper-local admission
 
-Execution and previews query the selected Policy for the applicable global ruling, then enforce pauses, action delay, normalized local imbalance, idle crvUSD, keeper-local and ControllerFactory capacity, the retained-backing oracle floor, direct AMM economics, reward accounting, and final solvency inside the keeper. The current Policy does not inspect keeper state and has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
+Execution and previews query the selected Policy for the applicable global ruling, then enforce pauses, action delay, normalized local imbalance, idle crvUSD, keeper-local and ControllerFactory capacity, the retained-backing oracle floor, direct AMM economics, and reward accounting inside the keeper. Profitable expansion and donation settlement may reduce a pre-existing deficit without curing it. Protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper state and has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
 
 ## 5. PegKeeperRegistry and wind-down
 
@@ -150,7 +150,7 @@ principal           = crvUSD deposited
 realized gross      = max(LP value after - baseline - principal, 0)
 ```
 
-The entry floor applies to realized gross profit before caller compensation. Reward is calculated only after that floor passes, and retained LP must still cover resulting debt.
+The entry floor applies to realized gross profit before caller compensation. Reward is calculated only after that floor passes. Donation principal remains excluded from caller profit, and settlement may partially repair a pre-existing deficit.
 
 `sweep_donated_paired_token(maxAmount)`:
 
@@ -185,9 +185,9 @@ It requires:
 - measured crvUSD receipt exactly equal to requested output;
 - strictly positive gross exit profit before reward, even if the configured floor is zero;
 - the configured gross exit floor;
-- final retained LP backing at least remaining debt.
+- previewed retained LP backing at least projected remaining debt.
 
-Preview uses expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, for gross profit and expected backing. The larger buffered maximum burn is execution-only. Execution independently rechecks actual burn, profit, debt reduction, and solvency.
+Preview uses expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, for gross profit and expected backing. The larger buffered maximum burn is execution-only. Execution independently rechecks actual burn, profit, and debt reduction.
 
 Contraction reduces debt by crvUSD retained after reward. Terminal value above remaining debt is sent to the selected Policy's global fee receiver.
 
@@ -273,14 +273,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      17,651 bytes
-keeper runtime core:       14,900 bytes
-standalone runtime:      14,932 bytes
-EIP-170 headroom:         9,644 bytes
+standalone initcode:      17,582 bytes
+keeper runtime core:       14,831 bytes
+standalone runtime:      14,863 bytes
+EIP-170 headroom:         9,713 bytes
 runtime core hash:
-0xadc70775e1cdfe670c9f7b8fb2f136b7ef5f36374d2bb99a66219ced3e705193
+0x01ffd4d7db52ab8aa13981d39fb4a4b1ac914a0f1a201568ab7d5b7882e8f01a
 mainnet runtime hash:
-0xba51e39f21a209cc7d2d5c9c2e88c58dcda3043828a96e2cacf50372e5a4df92
+0xa5406b28497a8b4ec75ad1668165bd38175dfa1e6439b6fb352af71c8e32bf37
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
