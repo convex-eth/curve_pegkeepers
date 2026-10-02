@@ -55,7 +55,7 @@ set_keeper_profit_share_bps(uint256);
 
 Constructor admin and emergency-admin roles must be nonzero and distinct. Admin replacement follows Curve's three-day `commit_new_admin` / `apply_new_admin` flow. The current admin remains active during the delay and can overwrite or cancel a pending commitment by recommitting; only `future_admin` may apply after the deadline. `set_emergency_admin` can replace or revoke the emergency role. A replacement Policy must contain code.
 
-The admin may configure keeper parameters, pause or unpause, execute recovery calls, and perform the external draw. The emergency admin may only pause. There is no shared keeper-role owner.
+The admin may configure keeper parameters, pause or unpause, execute recovery calls, and adjust recorded debt. The emergency admin may only pause. There is no shared keeper-role owner.
 
 ## 3. PegKeeperPolicy global rulings
 
@@ -193,25 +193,25 @@ Contraction reduces debt by crvUSD retained after reward. Terminal value above r
 
 `update()` selects contraction when the pool has excess crvUSD and returns zero if the delay was consumed. `update(address beneficiary)` routes the physical reward to the selected nonzero beneficiary. `estimate_caller_profit()` returns zero when neither canonical direction is executable. `calc_profit()` aliases current protocol surplus in crvUSD-value terms.
 
-## 10. Policy-gated external draw
+## 10. Governance debt accounting
 
 The keeper admin may call:
 
 ```solidity
-borrow_crvusd(uint256 amount, address receiver)
+increase_debt(uint256 amount)
+reduce_debt(uint256 amount)
 ```
 
-It requires:
+`increase_debt` performs checked addition and emits `DebtIncreased`. `reduce_debt` clamps the requested reduction at zero and emits `DebtReduced`. These functions are bookkeeping-only: they do not move or mint crvUSD, query Policy or oracle state, enforce pauses or capacity, or update the intervention timestamp. Governance performs any corresponding asset movement separately through `execute`.
 
-- nonzero amount and receiver;
-- open expansion/global pauses and elapsed action delay;
-- amount within normalized local imbalance;
-- healthy retained backing;
-- `policy.can_expand()`;
-- resulting debt within local cap and ControllerFactory ceiling;
-- sufficient idle crvUSD.
+For a debt migration of `X` from keeper A to keeper B under unchanged ControllerFactory allocations, one atomic governance execution must:
 
-It increments debt, records intervention time, transfers exactly `amount`, and emits `CrvUsdBorrowed`. External execution and backing return must be atomic at the module/governance transaction layer. `reduce_debt(amount)` is the admin-only inverse bookkeeping operation.
+1. call `B.increase_debt(X)`;
+2. transfer `X` idle crvUSD from B to A through `B.execute`;
+3. call `A.reduce_debt(X)`;
+4. transfer the corresponding backing from A to B through `A.execute`.
+
+The crvUSD counter-transfer preserves each keeper's `debt + idle crvUSD` against its unchanged `debt_ceiling_residual`. Calling only `increase_debt` leaves ControllerFactory residual accounting economically unreconciled. If B lacks `X` idle crvUSD, governance must instead migrate ControllerFactory allocation through coordinated `set_debt_ceiling` mint/transfer/burn operations.
 
 ## 11. Pauses, capacity, and timing
 
@@ -223,9 +223,9 @@ Pause directions:
 2 all execution
 ```
 
-`action_imbalance_bps` controls the sole ordinary action size as a share of current normalized pool imbalance. `action_delay` controls elapsed-time frequency for expansion, contraction, `update`, and external draw. `keeper_profit_share_bps` is independently stored and admin-controlled on each keeper, bounded to `10_000 bps`. Donation and profit settlement remain outside the timer so donated dust cannot monopolize it.
+`action_imbalance_bps` controls the sole ordinary action size as a share of current normalized pool imbalance. `action_delay` controls elapsed-time frequency for expansion, contraction, and `update`. `keeper_profit_share_bps` is independently stored and admin-controlled on each keeper, bounded to `10_000 bps`. Donation and profit settlement remain outside the timer so donated dust cannot monopolize it.
 
-Every debt increase is bounded by both:
+Every permissionless debt increase is bounded by both:
 
 ```text
 keeper.max_debt()
@@ -273,14 +273,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      17,582 bytes
-keeper runtime core:       14,831 bytes
-standalone runtime:      14,863 bytes
-EIP-170 headroom:         9,713 bytes
+standalone initcode:      17,247 bytes
+keeper runtime core:       14,496 bytes
+standalone runtime:      14,528 bytes
+EIP-170 headroom:         10,048 bytes
 runtime core hash:
-0x01ffd4d7db52ab8aa13981d39fb4a4b1ac914a0f1a201568ab7d5b7882e8f01a
+0xecd9370b440f9cee24986f438e600f8c05e8b63824918711b94a4696a3a48801
 mainnet runtime hash:
-0xa5406b28497a8b4ec75ad1668165bd38175dfa1e6439b6fb352af71c8e32bf37
+0xe47de059f1ce3e2a8615ff62cbd025afb02ad84874db9aee9b6852b1334bc009
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

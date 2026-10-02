@@ -66,7 +66,7 @@ Entry and exit floors are independent. The launch profiles make USDC/USDT exposu
 
 The `20%` `actionImbalanceBps` share defines the sole ordinary action amount from current normalized pool imbalance. Callers cannot select dust clips. `update()` selects direction, `update(address beneficiary)` routes reward to a nonzero beneficiary, and amountless `expand_supply()` / `contract_supply()` expose the same canonical actions.
 
-`actionDelay` is shared across expansion, contraction, `update`, and `borrow_crvusd`. Donation and profit settlement remain timer-independent. Keeper-local and ControllerFactory ceilings independently bound total exposure.
+`actionDelay` is shared across expansion, contraction, and `update`. Donation settlement, profit withdrawal, and governance debt accounting remain timer-independent. Keeper-local and ControllerFactory ceilings independently bound permissionless exposure growth.
 
 ## Retained-backing oracles
 
@@ -76,7 +76,7 @@ The `20%` `actionImbalanceBps` share defines the sole ordinary action amount fro
 | USDC | `0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6` | `26 hours` | `0.999e18` |
 | USDT | `0x3E7d1eAB13ad0104d2750B8863b489D65364e32D` | `26 hours` | `0.999e18` |
 
-## Direct expansion and external modules
+## Direct expansion and governance accounting
 
 Every keeper deposits directly into its own AMM:
 
@@ -89,13 +89,14 @@ canonical X crvUSD
 
 There is no target swap, route-loss parameter, Frax mint step, 3pool hop, or detached preview call.
 
-If governance later wants routed arbitrage, it belongs in a separate module. The keeper-local admin may call:
+If governance later wants routed arbitrage or a keeper-to-keeper migration, it moves assets separately through the admin `execute` surface and adjusts keeper accounting with:
 
 ```solidity
-borrow_crvusd(uint256 amount, address receiver)
+increase_debt(uint256 amount)
+reduce_debt(uint256 amount)
 ```
 
-The draw is Policy-gated, cap/ceiling/balance bounded, and recorded as debt before transfer. Any module must return backing and verify final state atomically.
+These bookkeeping calls do not transfer or mint crvUSD and are independent of Policy, pauses, action delay, pool state, oracle state, and capacity. Governance is responsible for pairing them atomically with the intended asset movement. A keeper-to-keeper debt migration under unchanged ControllerFactory allocations must include an equal idle-crvUSD counter-transfer from the destination keeper to the source keeper; otherwise per-keeper `debt_ceiling_residual` reconciliation is broken.
 
 ## Deployment and proposal sequence
 

@@ -107,19 +107,20 @@ Only the current keeper admin may update these values. Admin replacement follows
 
 The Policy admin controls the nonzero `fee_receiver` once for all keepers selecting that Policy. Policy and Registry use the same three-day Curve admin transfer flow; their current admins remain active while a commitment is pending.
 
-`admin` may configure policy parameters, execute recovery calls, pause or unpause, and use the policy-gated external draw. `emergency_admin` may only pause.
+`admin` may configure policy parameters, execute recovery calls, pause or unpause, and adjust recorded debt. `emergency_admin` may only pause.
 
-## External execution modules
+## Governance debt accounting
 
-Routing and arbitrage remain outside the core. The keeper admin may call:
+Routing, arbitrage, and asset movement remain outside the core. The keeper admin may adjust recorded debt directly:
 
 ```solidity
-borrow_crvusd(uint256 amount, address receiver)
+increase_debt(uint256 amount)
+reduce_debt(uint256 amount)
 ```
 
-The draw requires Policy expansion admission, open pauses, elapsed delay, healthy retained backing, a requested amount within local imbalance, sufficient idle crvUSD, and resulting debt within both the keeper cap and ControllerFactory ceiling. It records debt and updates the shared intervention timestamp before transferring exactly the requested amount.
+`increase_debt` performs checked addition; `reduce_debt` clamps the requested reduction at zero. Both are bookkeeping-only: they do not move or mint crvUSD, query Policy or oracle state, enforce pauses or capacity, or update the intervention timestamp. Governance moves any corresponding assets separately through `execute`.
 
-The draw cannot prove that an external module returns LP backing. A production integration must make the draw, external execution, backing return, and postconditions atomic. `reduce_debt(amount)` is the keeper-admin inverse bookkeeping operation.
+A debt migration of `X` from keeper A to keeper B under unchanged ControllerFactory allocations must atomically pair `B.increase_debt(X)` with a transfer of `X` idle crvUSD from B to A, `A.reduce_debt(X)`, and the corresponding backing transfer from A to B. The counter-transfer preserves each keeper's `debt + idle crvUSD` against its unchanged `debt_ceiling_residual`. Calling only `increase_debt` would leave that relationship inconsistent. If B lacks the required idle allocation, governance must instead migrate ControllerFactory allocation through coordinated `set_debt_ceiling` mint/transfer/burn operations.
 
 ## Donations, profit, and surplus
 
@@ -178,14 +179,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      17,582 bytes
-keeper runtime core:       14,831 bytes
-standalone runtime:      14,863 bytes
-EIP-170 headroom:         9,713 bytes
+standalone initcode:      17,247 bytes
+keeper runtime core:       14,496 bytes
+standalone runtime:      14,528 bytes
+EIP-170 headroom:         10,048 bytes
 runtime core hash:
-0x01ffd4d7db52ab8aa13981d39fb4a4b1ac914a0f1a201568ab7d5b7882e8f01a
+0xecd9370b440f9cee24986f438e600f8c05e8b63824918711b94a4696a3a48801
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0xa5406b28497a8b4ec75ad1668165bd38175dfa1e6439b6fb352af71c8e32bf37
+0xe47de059f1ce3e2a8615ff62cbd025afb02ad84874db9aee9b6852b1334bc009
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
@@ -204,7 +205,7 @@ make setup
 ETH_RPC_URL=https://an-archive-rpc.example make check
 ```
 
-Coverage includes fixed- and dynamic-array liquidity dispatch, amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, keeper-local role and reward changes, replaceable Policy rulings, Registry lifecycle and pop-and-swap removal, independent execution, external draw accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, deployment JSON, and full Curve ownership-vote execution.
+Coverage includes fixed- and dynamic-array liquidity dispatch, amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, keeper-local role and reward changes, replaceable Policy rulings, Registry lifecycle and pop-and-swap removal, independent execution, governance debt accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, deployment JSON, and full Curve ownership-vote execution.
 
 The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile. It exercises canonical expansion and exact-output contraction under the `20%` rule without weakening the profit floor, and verifies Policy direction, measured deltas, debt reduction, final solvency, ControllerFactory funding, idle-allocation burning, residual rugging, and persistent ControllerFactory/pool allowances.
 

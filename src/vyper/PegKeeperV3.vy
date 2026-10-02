@@ -108,9 +108,8 @@ event DebtReduced:
     actual_reduction: uint256
     debt_after: uint256
 
-event CrvUsdBorrowed:
+event DebtIncreased:
     caller: indexed(address)
-    receiver: indexed(address)
     amount: uint256
     debt_after: uint256
 
@@ -1269,33 +1268,17 @@ def update(_beneficiary: address = msg.sender) -> uint256:
 
 
 @external
-@nonreentrant
-def borrow_crvusd(_amount: uint256, _receiver: address):
+def increase_debt(_amount: uint256):
     """
-    @notice Gives an admin-selected receiver policy-approved crvUSD and records it as debt.
+    @notice Lets the admin increase recorded debt.
     """
     assert self._is_admin(msg.sender)
-    assert not self.all_execution_paused
-    assert not self.expansion_paused
-    assert _amount > 0 and _receiver != empty(address)
-    self._require_expansion_policy()
-    assert self._action_delay_elapsed()
-    assert _amount <= self._local_expansion_limit()
-    self._backing_price()
 
-    debt_after: uint256 = self.debt + _amount
-    assert debt_after <= self.max_debt
-    assert debt_after <= staticcall self._controller_factory.debt_ceiling(self)
-    assert _amount <= staticcall crv_usd.balanceOf(self)
-
-    self.debt = debt_after
-    self.last_intervention_at = block.timestamp
-    self._transfer_exact_to(crv_usd, _receiver, _amount)
-    log CrvUsdBorrowed(
+    self.debt += _amount
+    log DebtIncreased(
         caller=msg.sender,
-        receiver=_receiver,
         amount=_amount,
-        debt_after=debt_after,
+        debt_after=self.debt,
     )
 
 

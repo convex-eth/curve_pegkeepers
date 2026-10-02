@@ -42,9 +42,7 @@ interface IPegKeeperV3 {
         uint256 actualReduction,
         uint256 debtAfter
     );
-    event CrvUsdBorrowed(
-        address indexed caller, address indexed receiver, uint256 amount, uint256 debtAfter
-    );
+    event DebtIncreased(address indexed caller, uint256 amount, uint256 debtAfter);
     event PolicyUpdated(uint256 entryMinProfitPpm, uint256 normalExitMinProfitPpm, uint256 maxDebt);
     event KeeperProfitShareUpdated(
         uint256 oldKeeperProfitShareBps, uint256 newKeeperProfitShareBps
@@ -158,8 +156,8 @@ interface IPegKeeperV3 {
 
     function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
-    /// @notice Gives keeper-admin-approved crvUSD to a receiver and records it as keeper debt.
-    function borrow_crvusd(uint256 amount, address receiver) external;
+    /// @notice Increases recorded keeper debt without moving tokens.
+    function increase_debt(uint256 amount) external;
     function reduce_debt(uint256 amount) external;
     function execute(address target, uint256 value, bytes calldata data)
         external

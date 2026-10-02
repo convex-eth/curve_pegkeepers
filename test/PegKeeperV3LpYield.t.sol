@@ -83,12 +83,17 @@ interface ILpPegKeeperV3 {
 
     function withdraw_profit() external returns (uint256 crvUsdTransferred);
     function withdraw_profit(uint256 maxCrvUsdAmount) external returns (uint256 crvUsdTransferred);
-    function borrow_crvusd(uint256 amount, address receiver) external;
+    function increase_debt(uint256 amount) external;
     function reduce_debt(uint256 amount) external;
+    function execute(address target, uint256 value, bytes calldata data)
+        external
+        payable
+        returns (bytes memory);
 }
 
 contract LpYieldToken {
     uint8 public immutable decimals;
+    uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
     mapping(address => uint256) public approveCalls;
@@ -98,10 +103,12 @@ contract LpYieldToken {
     }
 
     function mint(address account, uint256 amount) external {
+        totalSupply += amount;
         balanceOf[account] += amount;
     }
 
     function burn(address account, uint256 amount) external {
+        totalSupply -= amount;
         balanceOf[account] -= amount;
     }
 
@@ -156,6 +163,7 @@ contract LpYieldControllerAndPolicy {
     bool public policyExpansionAllowed = true;
     bool public policyContractionAllowed = true;
     mapping(address => uint256) public debt_ceiling;
+    mapping(address => uint256) public debt_ceiling_residual;
 
     constructor(
         address stablecoin_,
@@ -179,7 +187,25 @@ contract LpYieldControllerAndPolicy {
 
     function increaseDebtCeiling(address keeper, uint256 amount) external {
         debt_ceiling[keeper] += amount;
+        debt_ceiling_residual[keeper] += amount;
         LpYieldToken(stablecoin).mint(keeper, amount);
+    }
+
+    function set_debt_ceiling(address keeper, uint256 amount) external {
+        require(msg.sender == admin, "admin");
+        uint256 oldResidual = debt_ceiling_residual[keeper];
+        if (amount > oldResidual) {
+            uint256 toMint = amount - oldResidual;
+            debt_ceiling_residual[keeper] = amount;
+            LpYieldToken(stablecoin).mint(keeper, toMint);
+        } else if (amount < oldResidual) {
+            uint256 toBurn = oldResidual - amount;
+            uint256 balance = LpYieldToken(stablecoin).balanceOf(keeper);
+            if (toBurn > balance) toBurn = balance;
+            LpYieldToken(stablecoin).burn(keeper, toBurn);
+            debt_ceiling_residual[keeper] = oldResidual - toBurn;
+        }
+        debt_ceiling[keeper] = amount;
     }
 
     function setFeeReceiver(address receiver) external {
@@ -896,25 +922,63 @@ contract PegKeeperV3LpYieldTest is Test {
         assertFalse(oldGetterExists);
     }
 
-    function test_reduceDebtReplacesReduceDeployedCrvUsdSelector() public {
-        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        crvUsd.mint(address(keeper), 20_000e18);
+    function test_increaseDebtAndExecuteMigrateFactoryAccountingBetweenKeepers() public {
+        ILpPegKeeperV3 sourceKeeper = _configuredDirectKeeper();
+        ILpPegKeeperV3 destinationKeeper = _configuredDirectKeeper();
+        uint256 sourceDebt = 10_000e18;
+        uint256 migratedDebt = 4_000e18;
+
+        controllerAndPolicy.setDebtCeiling(address(sourceKeeper), 0);
+        controllerAndPolicy.setDebtCeiling(address(destinationKeeper), 0);
+        vm.startPrank(governance);
+        controllerAndPolicy.set_debt_ceiling(address(sourceKeeper), sourceDebt);
+        sourceKeeper.increase_debt(sourceDebt);
+        sourceKeeper.execute(
+            address(crvUsd),
+            0,
+            abi.encodeCall(LpYieldToken.transfer, (address(yieldAmm), sourceDebt))
+        );
+        vm.stopPrank();
+        yieldAmm.mint(address(sourceKeeper), sourceDebt);
+
+        uint256 supplyBeforeMigration = crvUsd.totalSupply();
+        vm.startPrank(governance);
+        controllerAndPolicy.set_debt_ceiling(address(destinationKeeper), migratedDebt);
+        destinationKeeper.increase_debt(migratedDebt);
+        destinationKeeper.execute(
+            address(crvUsd),
+            0,
+            abi.encodeCall(LpYieldToken.transfer, (address(sourceKeeper), migratedDebt))
+        );
+        sourceKeeper.reduce_debt(migratedDebt);
+        controllerAndPolicy.set_debt_ceiling(address(sourceKeeper), sourceDebt - migratedDebt);
+        sourceKeeper.execute(
+            address(yieldAmm),
+            0,
+            abi.encodeCall(LpYieldToken.transfer, (address(destinationKeeper), migratedDebt))
+        );
+        vm.stopPrank();
+
+        assertEq(sourceKeeper.debt(), sourceDebt - migratedDebt);
+        assertEq(destinationKeeper.debt(), migratedDebt);
+        assertEq(controllerAndPolicy.debt_ceiling(address(sourceKeeper)), sourceDebt - migratedDebt);
+        assertEq(controllerAndPolicy.debt_ceiling(address(destinationKeeper)), migratedDebt);
+        assertEq(
+            controllerAndPolicy.debt_ceiling_residual(address(sourceKeeper)),
+            sourceDebt - migratedDebt
+        );
+        assertEq(
+            controllerAndPolicy.debt_ceiling_residual(address(destinationKeeper)), migratedDebt
+        );
+        assertEq(crvUsd.balanceOf(address(sourceKeeper)), 0);
+        assertEq(crvUsd.balanceOf(address(destinationKeeper)), 0);
+        assertEq(crvUsd.totalSupply(), supplyBeforeMigration);
+        assertEq(yieldAmm.balanceOf(address(sourceKeeper)), sourceDebt - migratedDebt);
+        assertEq(yieldAmm.balanceOf(address(destinationKeeper)), migratedDebt);
 
         vm.prank(governance);
-        keeper.borrow_crvusd(10_000e18, makeAddr("module"));
-        assertEq(keeper.debt(), 10_000e18);
-
-        vm.prank(governance);
-        keeper.reduce_debt(4_000e18);
-        assertEq(keeper.debt(), 6_000e18);
-
-        vm.prank(governance);
-        keeper.reduce_debt(type(uint256).max);
-        assertEq(keeper.debt(), 0);
-
-        vm.prank(governance);
-        (bool oldReduceDebtExists,) =
-            address(keeper).call(abi.encodeWithSignature("reduce_deployed_crvusd(uint256)", 0));
+        (bool oldReduceDebtExists,) = address(sourceKeeper)
+            .call(abi.encodeWithSignature("reduce_deployed_crvusd(uint256)", 0));
         assertFalse(oldReduceDebtExists);
     }
 
@@ -1847,83 +1911,69 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.expand_supply();
     }
 
-    function test_adminCanBorrowCrvUsdWhenPolicyAllowsAndDebtIsTracked() public {
+    function test_adminCanIncreaseDebtWithoutMovingCrvUsdOrTouchingInterventionState() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        address receiver = makeAddr("module");
         crvUsd.mint(address(keeper), 20_000e18);
-        uint256 borrowedAt = block.timestamp;
+        uint256 keeperBalanceBefore = crvUsd.balanceOf(address(keeper));
+        uint256 supplyBefore = crvUsd.totalSupply();
+        uint256 lastInterventionBefore = keeper.last_intervention_at();
 
         vm.prank(governance);
-        keeper.borrow_crvusd(10_000e18, receiver);
+        keeper.increase_debt(10_000e18);
 
-        assertEq(crvUsd.balanceOf(receiver), 10_000e18);
-        assertEq(crvUsd.balanceOf(address(keeper)), 10_000e18);
         assertEq(keeper.debt(), 10_000e18);
-        assertEq(keeper.last_intervention_at(), borrowedAt);
+        assertEq(crvUsd.balanceOf(address(keeper)), keeperBalanceBefore);
+        assertEq(crvUsd.totalSupply(), supplyBefore);
+        assertEq(keeper.last_intervention_at(), lastInterventionBefore);
     }
 
-    function test_borrowCrvUsdPolicyDenialLeavesAccountingAndBalancesUnchanged() public {
+    function test_increaseDebtUsesCheckedAddition() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        address receiver = makeAddr("module");
-        crvUsd.mint(address(keeper), 20_000e18);
+
+        vm.startPrank(governance);
+        keeper.increase_debt(type(uint256).max);
+        vm.expectRevert();
+        keeper.increase_debt(1);
+        vm.stopPrank();
+
+        assertEq(keeper.debt(), type(uint256).max);
+    }
+
+    function test_increaseDebtIsIndependentOfExecutionGuardsAndCapacity() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         controllerAndPolicy.setPolicyExpansionAllowed(false);
-
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(10_000e18, receiver);
-
-        assertEq(crvUsd.balanceOf(receiver), 0);
-        assertEq(crvUsd.balanceOf(address(keeper)), 20_000e18);
-        assertEq(keeper.debt(), 0);
-    }
-
-    function test_borrowCrvUsdRejectsUnauthorizedZeroReceiverAndCapacityExcess() public {
-        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        crvUsd.mint(address(keeper), MAX_DEBT * 2);
-
-        vm.expectRevert();
-        keeper.borrow_crvusd(1, makeAddr("module"));
-
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(1, address(0));
-
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(0, makeAddr("zero-amount receiver"));
-
-        controllerAndPolicy.setDebtCeiling(address(keeper), 5_000e18);
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(5_000e18 + 1, makeAddr("module"));
-
-        assertEq(keeper.debt(), 0);
-    }
-
-    function test_borrowCrvUsdEnforcesKeeperLocalExpansionGuards() public {
-        address receiver = makeAddr("bounded module");
-
-        ILpPegKeeperV3 pausedKeeper = _deployKeeper(address(yieldAmm));
-        crvUsd.mint(address(pausedKeeper), 100_000e18);
-        vm.prank(governance);
-        pausedKeeper.set_direction_paused(0, true);
-        vm.prank(governance);
-        vm.expectRevert();
-        pausedKeeper.borrow_crvusd(10_000e18, receiver);
-
-        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
-        crvUsd.mint(address(keeper), 100_000e18);
-
-        yieldAmm.setBalances(0, 30_000e18);
-        vm.prank(governance);
-        vm.expectRevert();
-        keeper.borrow_crvusd(10_000e18, receiver);
-
-        yieldAmm.setBalances(0, 100_000_000e18);
+        controllerAndPolicy.setDebtCeiling(address(keeper), 0);
+        yieldAmm.setBalances(0, 1);
         yieldOracle.setPrice(0.998e18);
         vm.prank(governance);
+        keeper.set_direction_paused(2, true);
+
+        vm.prank(governance);
+        keeper.increase_debt(MAX_DEBT + 1);
+
+        assertEq(keeper.debt(), MAX_DEBT + 1);
+        assertEq(crvUsd.balanceOf(address(keeper)), 0);
+    }
+
+    function test_increaseDebtRejectsUnauthorizedCaller() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+
         vm.expectRevert();
-        keeper.borrow_crvusd(10_000e18, receiver);
+        keeper.increase_debt(1);
+
+        assertEq(keeper.debt(), 0);
+    }
+
+    function test_borrowCrvUsdSelectorIsAbsent() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+
+        vm.prank(governance);
+        (bool success,) = address(keeper)
+            .call(
+                abi.encodeWithSignature("borrow_crvusd(uint256,address)", 1, makeAddr("receiver"))
+            );
+
+        assertFalse(success);
     }
 
     function test_legacySetPathsSelectorIsAbsent() public {
