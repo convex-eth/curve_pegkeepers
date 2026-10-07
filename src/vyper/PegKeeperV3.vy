@@ -610,7 +610,10 @@ def _available_contraction_without_policy() -> uint256:
     if inventory_output == 0:
         return 0
     inventory_output -= 1
-    return min(self._local_contraction_limit(), inventory_output)
+    return min(
+        self._local_contraction_limit(),
+        min(inventory_output, self._lp_value(held)),
+    )
 
 
 @external
@@ -663,7 +666,8 @@ def estimate_caller_profit() -> uint256:
         revert_on_failure=False,
     )
     if ok and len(contraction_response) == 96:
-        return convert(slice(contraction_response, 64, 32), uint256)
+        lp_reward: uint256 = convert(slice(contraction_response, 64, 32), uint256)
+        return self._lp_value(lp_reward)
     return 0
 
 
@@ -672,17 +676,10 @@ def estimate_caller_profit() -> uint256:
 def _realized_contraction_profit(
     _crv_usd_received: uint256,
     _trusted_value_removed: uint256,
-    _trusted_backing_after: uint256,
 ) -> uint256:
-    principal_recovery: uint256 = _trusted_value_removed
-    if self.debt > _trusted_backing_after:
-        solvency_recovery: uint256 = self.debt - _trusted_backing_after
-        if solvency_recovery > principal_recovery:
-            principal_recovery = solvency_recovery
-
-    if _crv_usd_received <= principal_recovery:
+    if _crv_usd_received <= _trusted_value_removed:
         return 0
-    return _crv_usd_received - principal_recovery
+    return _crv_usd_received - _trusted_value_removed
 
 
 @internal
@@ -695,38 +692,33 @@ def _transfer_exact_to(_token: ERC20, _recipient: address, _amount: uint256):
 
 @internal
 def _settle_keeper_contraction_and_reduce_exposure(
-    _crv_usd_before: uint256,
-    _crv_usd_after_withdrawal: uint256,
     _crv_usd_received: uint256,
     _trusted_value_removed: uint256,
-    _trusted_backing_after: uint256,
+    _virtual_price_after: uint256,
     _reward_recipient: address,
 ) -> (uint256, uint256):
     gross_profit: uint256 = self._realized_contraction_profit(
         _crv_usd_received,
         _trusted_value_removed,
-        _trusted_backing_after,
     )
     assert gross_profit > 0
     exit_margin: uint256 = _trusted_value_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = self._keeper_reward(gross_profit)
-    self._transfer_exact_to(crv_usd, _reward_recipient, keeper_reward)
-
-    crv_usd_after_reward: uint256 = staticcall crv_usd.balanceOf(self)
-    assert _crv_usd_after_withdrawal - crv_usd_after_reward == keeper_reward
-    net_crv_usd: uint256 = crv_usd_after_reward - _crv_usd_before
+    keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
+    keeper_reward: uint256 = keeper_reward_value * PRECISION // _virtual_price_after
+    assert keeper_reward <= self._lp_balance()
+    self._transfer_exact_to(ERC20(self.pool.address), _reward_recipient, keeper_reward)
 
     current_debt: uint256 = self.debt
-    if net_crv_usd > current_debt:
+    if _crv_usd_received > current_debt:
         self.debt = 0
         self._transfer_exact_to(
             crv_usd,
             self._fee_receiver(),
-            net_crv_usd - current_debt,
+            _crv_usd_received - current_debt,
         )
     else:
-        self.debt = current_debt - net_crv_usd
+        self.debt = current_debt - _crv_usd_received
     return gross_profit, keeper_reward
 
 
@@ -734,7 +726,7 @@ def _settle_keeper_contraction_and_reduce_exposure(
 @view
 def preview_contraction() -> (uint256, uint256, uint256):
     """
-    @notice Estimates the canonical exact-crvUSD contraction.
+    @notice Estimates exact crvUSD output, marginal profit, and caller LP reward.
     """
     self._require_contraction_policy()
     expected_crv_usd: uint256 = self._available_contraction_without_policy()
@@ -752,18 +744,18 @@ def preview_contraction() -> (uint256, uint256, uint256):
     gross_profit: uint256 = self._realized_contraction_profit(
         expected_crv_usd,
         trusted_removed,
-        trusted_after,
     )
     assert gross_profit > 0
     exit_margin: uint256 = trusted_removed * self.normal_exit_min_profit_ppm // PPM
     assert gross_profit >= exit_margin
-    keeper_reward: uint256 = self._keeper_reward(gross_profit)
-    net_crv_usd: uint256 = expected_crv_usd - keeper_reward
-
-    debt_after: uint256 = 0
-    if self.debt > net_crv_usd:
-        debt_after = self.debt - net_crv_usd
-    assert trusted_after >= debt_after
+    keeper_reward_value: uint256 = self._keeper_reward(gross_profit)
+    keeper_reward: uint256 = keeper_reward_value * PRECISION // virtual_price
+    assert keeper_reward <= accounted - expected_lp_burn
+    retained_value: uint256 = self._lp_value_at(
+        accounted - expected_lp_burn - keeper_reward,
+        virtual_price,
+    )
+    assert retained_value >= trusted_before - expected_crv_usd
     return expected_crv_usd, gross_profit, keeper_reward
 
 
@@ -1213,13 +1205,12 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
     gross_profit: uint256 = 0
     keeper_reward: uint256 = 0
     gross_profit, keeper_reward = self._settle_keeper_contraction_and_reduce_exposure(
-        crv_usd_before,
-        crv_usd_after_withdrawal,
         crv_usd_received,
         trusted_value_removed,
-        trusted_backing_after,
+        virtual_price_after,
         _reward_recipient,
     )
+    assert self._trusted_backing_value() >= trusted_backing_before - crv_usd_received
     self.last_intervention_at = block.timestamp
 
     log Contracted(
@@ -1236,7 +1227,7 @@ def _contract_supply(_reward_recipient: address) -> (uint256, uint256, uint256):
 @nonreentrant
 def contract_supply() -> (uint256, uint256, uint256):
     """
-    @notice Executes the canonical exact-crvUSD contraction.
+    @notice Executes the canonical exact-crvUSD contraction and pays LP reward.
     """
     return self._contract_supply(msg.sender)
 
@@ -1259,9 +1250,9 @@ def update(_beneficiary: address = msg.sender) -> uint256:
     if self._local_contraction_limit() > 0:
         lp_burned: uint256 = 0
         crv_usd_received: uint256 = 0
-        keeper_reward: uint256 = 0
-        lp_burned, crv_usd_received, keeper_reward = self._contract_supply(_beneficiary)
-        return keeper_reward
+        keeper_reward_lp: uint256 = 0
+        lp_burned, crv_usd_received, keeper_reward_lp = self._contract_supply(_beneficiary)
+        return self._lp_value(keeper_reward_lp)
     raise
 
 

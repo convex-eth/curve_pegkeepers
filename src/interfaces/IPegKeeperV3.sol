@@ -145,12 +145,12 @@ interface IPegKeeperV3 {
         returns (
             uint256 expectedCrvUsdOut,
             uint256 expectedGrossProfit,
-            uint256 expectedKeeperReward
+            uint256 expectedKeeperRewardLp
         );
-    /// @notice Removes the canonical exact crvUSD amount from the AMM.
+    /// @notice Removes the canonical exact crvUSD amount and pays the caller in retained LP.
     function contract_supply()
         external
-        returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperReward);
+        returns (uint256 lpTokensBurned, uint256 crvUsdReceived, uint256 keeperRewardLp);
     function update() external returns (uint256 callerRewardValue);
     function update(address beneficiary) external returns (uint256 callerRewardValue);
 

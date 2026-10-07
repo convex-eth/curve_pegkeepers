@@ -802,7 +802,7 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(rewardValue, rewardLp * yieldAmm.virtualPrice() / 1e18);
     }
 
-    function test_updateBeneficiaryReceivesContractionCrvUsdReward() public {
+    function test_updateBeneficiaryReceivesContractionLpReward() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 20_000e18);
@@ -815,11 +815,13 @@ contract PegKeeperV3LpYieldTest is Test {
         vm.prank(caller);
         uint256 rewardValue = keeper.update(beneficiary);
 
-        assertGt(rewardValue, 0);
-        assertEq(crvUsd.balanceOf(beneficiary), rewardValue);
+        uint256 rewardLp = yieldAmm.balanceOf(beneficiary);
+        assertGt(rewardLp, 0);
+        assertEq(crvUsd.balanceOf(beneficiary), 0);
         assertEq(crvUsd.balanceOf(caller), 0);
-        assertEq(yieldAmm.balanceOf(beneficiary), 0);
+        assertEq(yieldAmm.balanceOf(caller), 0);
         assertEq(rewardValue, expectedRewardValue);
+        assertEq(rewardValue, rewardLp * yieldAmm.virtualPrice() / 1e18);
     }
 
     function test_updateRejectsZeroBeneficiary() public {
@@ -1556,12 +1558,13 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(received, 1_010e18);
         assertEq(reward, 3e18);
         assertEq(yieldAmm.removeLiquidityCalls(), 1);
-        assertEq(yieldAmm.balanceOf(address(keeper)), 9_000.7e18);
-        assertEq(crvUsd.balanceOf(address(keeper)), 1_007e18);
-        assertEq(crvUsd.balanceOf(caller), 3e18);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 8_997.7e18);
+        assertEq(crvUsd.balanceOf(address(keeper)), 1_010e18);
+        assertEq(crvUsd.balanceOf(caller), 0);
+        assertEq(yieldAmm.balanceOf(caller), 3e18);
         assertEq(yieldToken.balanceOf(address(keeper)), 0);
-        assertEq(keeper.debt(), 8_993e18);
-        assertEq(keeper.trusted_backing_value(), 9_000.7e18);
+        assertEq(keeper.debt(), 8_990e18);
+        assertEq(keeper.trusted_backing_value(), 8_997.7e18);
     }
 
     function test_contractionUsesCanonicalCrvUsdAmountAndDynamicExactOutput() public {
@@ -1877,17 +1880,18 @@ contract PegKeeperV3LpYieldTest is Test {
         controllerAndPolicy.setFeeReceiver(newFeeReceiver);
 
         uint256 idleBefore = crvUsd.balanceOf(address(keeper));
-        (uint256 expectedCrvUsd,, uint256 keeperReward) = keeper.preview_contraction();
-        uint256 currentCallNet = expectedCrvUsd - keeperReward;
-        uint256 expectedTerminalProfit = currentCallNet - keeper.debt();
+        uint256 callerLpBefore = yieldAmm.balanceOf(address(this));
+        (uint256 expectedCrvUsd,, uint256 keeperRewardLp) = keeper.preview_contraction();
+        uint256 expectedTerminalProfit = expectedCrvUsd - keeper.debt();
 
         keeper.contract_supply();
 
         assertEq(keeper.debt(), 0);
-        assertEq(keeper.lp_balance(), 0);
+        assertGt(keeper.lp_balance(), 0);
+        assertEq(yieldAmm.balanceOf(address(this)) - callerLpBefore, keeperRewardLp);
         assertEq(crvUsd.balanceOf(newFeeReceiver), expectedTerminalProfit);
         assertEq(
-            crvUsd.balanceOf(address(keeper)), idleBefore + currentCallNet - expectedTerminalProfit
+            crvUsd.balanceOf(address(keeper)), idleBefore + expectedCrvUsd - expectedTerminalProfit
         );
         assertEq(crvUsd.balanceOf(feeReceiver), 0);
     }
@@ -1909,17 +1913,18 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(grossProfit, 5e17);
         assertEq(expectedReward, 15e16);
 
-        uint256 keeperBalanceBefore = crvUsd.balanceOf(address(this));
+        uint256 keeperLpBefore = yieldAmm.balanceOf(address(this));
         (uint256 lpBurned, uint256 crvUsdReceived, uint256 keeperReward) = keeper.contract_supply();
 
         assertEq(lpBurned, 1_000e18);
         assertEq(crvUsdReceived, expectedCrvUsd);
         assertEq(keeperReward, expectedReward);
-        assertEq(crvUsd.balanceOf(address(this)) - keeperBalanceBefore, 15e16);
-        assertEq(debtBefore - keeper.debt(), 1_000e18 + 35e16);
+        assertEq(yieldAmm.balanceOf(address(this)) - keeperLpBefore, 15e16);
+        assertEq(crvUsd.balanceOf(address(this)), 0);
+        assertEq(debtBefore - keeper.debt(), expectedCrvUsd);
     }
 
-    function test_contractionAcceptsQuoteAndReceiptExactlyAtLocalImbalanceShare() public {
+    function test_contractionCapsLocalImbalanceShareAtLpValueForRewardInventory() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         vm.prank(governance);
         keeper.set_intervention_policy(5_000, 0);
@@ -1930,11 +1935,12 @@ contract PegKeeperV3LpYieldTest is Test {
 
         yieldAmm.setBalances(120_010e18, 100_000e18);
         yieldAmm.setWithdrawBps(10_005);
-        (uint256 expectedCrvUsd,,) = keeper.preview_contraction();
-        assertEq(expectedCrvUsd, 10_005e18);
+        uint256 expectedCrvUsd = keeper.trusted_backing_value();
+        (uint256 previewedCrvUsd,,) = keeper.preview_contraction();
+        assertEq(previewedCrvUsd, expectedCrvUsd);
 
         (, uint256 actualCrvUsd,) = keeper.contract_supply();
-        assertEq(actualCrvUsd, 10_005e18);
+        assertEq(actualCrvUsd, expectedCrvUsd);
     }
 
     function test_actionDelayIsSharedAcrossExpansionAndContraction() public {
@@ -2001,34 +2007,57 @@ contract PegKeeperV3LpYieldTest is Test {
         keeper.contract_supply();
     }
 
-    function test_preview_contractionRejectsFinalInsolvency() public {
+    function test_profitableContractionCanPartiallyRepairInsolvency() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         keeper.expand_supply();
 
         yieldAmm.setVirtualPrice(0.9e18);
+        yieldAmm.setBalances(5_000e18, 0);
         yieldAmm.setWithdrawBps(10_000);
-        vm.expectRevert();
-        keeper.preview_contraction();
-        vm.expectRevert();
-        keeper.contract_supply();
+        uint256 deficitBefore = keeper.debt() - keeper.trusted_backing_value();
+
+        (uint256 expectedCrvUsd, uint256 grossProfit, uint256 expectedRewardLp) =
+            keeper.preview_contraction();
+        assertEq(expectedCrvUsd, 1_000e18);
+        assertEq(grossProfit, 100e18);
+        uint256 expectedRewardValue = 30e18;
+        assertEq(expectedRewardLp, expectedRewardValue * 1e18 / yieldAmm.get_virtual_price());
+        assertEq(
+            keeper.estimate_caller_profit(), expectedRewardLp * yieldAmm.get_virtual_price() / 1e18
+        );
+
+        address caller = makeAddr("underwater contraction caller");
+        vm.prank(caller);
+        (uint256 lpBurned, uint256 crvUsdReceived, uint256 rewardLp) = keeper.contract_supply();
+
+        assertEq(lpBurned, 1_000e18);
+        assertEq(crvUsdReceived, expectedCrvUsd);
+        assertEq(rewardLp, expectedRewardLp);
+        assertEq(yieldAmm.balanceOf(caller), rewardLp);
+        assertEq(crvUsd.balanceOf(caller), 0);
+        assertEq(keeper.debt(), 9_000e18);
+        assertLt(keeper.trusted_backing_value(), keeper.debt());
+        assertLt(keeper.debt() - keeper.trusted_backing_value(), deficitBefore);
     }
 
-    function test_deficitRecoveryDoesNotCountTowardGrossExitMargin() public {
+    function test_underwaterKeeperBlocksProfitWithdrawal() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
         crvUsd.mint(address(keeper), 10_000e18);
         keeper.expand_supply();
 
-        // Burning 1,000 LP removes 900 of trusted value. The 1,899.37 principal-recovery
-        // basis includes the existing deficit, leaving only 0.43 gross profit: below 5 bp.
         yieldAmm.setVirtualPrice(0.9e18);
-        yieldAmm.setWithdrawBps(18_998);
+        crvUsd.mint(address(keeper), 100e18);
+        uint256 debtBefore = keeper.debt();
+        uint256 receiverBefore = crvUsd.balanceOf(feeReceiver);
+
         vm.expectRevert();
-        keeper.preview_contraction();
-        vm.expectRevert();
-        keeper.contract_supply();
+        keeper.withdraw_profit();
+
+        assertEq(keeper.debt(), debtBefore);
+        assertEq(crvUsd.balanceOf(feeReceiver), receiverBefore);
     }
 
     function test_typedBackingOracleCallUsesDeclaredPriceInterface() public {

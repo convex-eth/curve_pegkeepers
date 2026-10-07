@@ -36,14 +36,14 @@ expansion:
 contraction:
     retained LP
         -> remove_liquidity_imbalance([exact crvUSD, 0], max LP burn)
-        -> idle crvUSD
+        -> idle crvUSD + caller reward from unburned LP
 ```
 
 The core has no swap router, target AMM, path storage, route adapter, or detached preview module. For ERC-4626 paired tokens, loose shares are normalized with `convertToAssets()`. Held LP is valued only with `get_virtual_price()`; applying the ERC-4626 rate again would double-count it.
 
-Expansion, donation settlement, and contraction use measured token/LP deltas, constructor-set unlimited pool allowances, quote-derived slippage bounds, and gross-before-reward accounting. Profitable expansion and donation settlement may reduce a pre-existing deficit without curing it. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual burn and profit are rechecked.
+Expansion, donation settlement, and contraction use measured token/LP deltas, constructor-set unlimited pool allowances, quote-derived slippage bounds, and gross-before-reward accounting. Profitable interventions may reduce a pre-existing deficit without curing it; global solvency gates only protocol-profit withdrawal. Both expansion and contraction pay callers in LP. Contraction preview values the expected `calc_token_amount(..., false) + 1 LP wei` burn; the larger buffered burn is execution-only, where actual burn and marginal profit are rechecked.
 
-Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, bounded by balance, backing, and capacity. `update()` selects the local direction for V2 compatibility. `update(address beneficiary)` routes the physical reward to a selected nonzero beneficiary. Both forms return zero rather than reverting when another caller already consumed the shared `action_delay`.
+Ordinary interventions do not accept a caller-selected amount. `expand_supply()` and `contract_supply()` execute the sole current crvUSD amount: the configured `20%` share of normalized local imbalance, bounded by balance, backing, and capacity. Contraction output is additionally capped at pre-action LP value so a profitable withdrawal necessarily leaves LP inventory for its reward. `update()` selects the local direction for V2 compatibility. `update(address beneficiary)` routes the physical LP reward to a selected nonzero beneficiary while returning its crvUSD-equivalent value. Both forms return zero rather than reverting when another caller already consumed the shared `action_delay`.
 
 ## PegKeeperPolicy and Registry
 
@@ -57,7 +57,7 @@ policy.expansion_regime();
 
 The current `PegKeeperPolicy` owns the aggregate crvUSD oracle and global `fee_receiver`. It does not own a keeper list or reward setting and does not call keepers for local conditions. Its current rulings use only aggregate price. The no-argument selectors deliberately preserve a replaceable Policy boundary: a future Policy can add global or caller-aware rules, using `msg.sender` as the querying keeper, without changing keeper bytecode.
 
-Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, and reward accounting. Protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper-local state, so one keeper's local conditions cannot block another.
+Every keeper independently enforces pauses, action delay, local imbalance, backing-oracle health, capacity, AMM economics, and reward accounting. Expansion and contraction are not blocked merely because the keeper starts or remains underwater; each action must protect its own principal and satisfy its local profit floor. Protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper-local state, so one keeper's local conditions cannot block another.
 
 `PegKeeperRegistry` is a separate governance-owned discovery list:
 
@@ -137,7 +137,7 @@ Entry and normal-contraction floors apply to gross realized profit before keeper
 
 Ordinary expansion must cover its pre-action LP value, donation principal, and newly deployed crvUSD before the entry floor is checked. A zero or rounded-to-zero entry floor permits break-even, not a negative edge. Expansion preview and execution both allow partial repair of a pre-existing deficit.
 
-Every contraction requires strictly positive gross realized profit before compensation, even when the configured floor is zero. Break-even and loss-making withdrawals are never permitted.
+Every contraction requires strictly positive marginal gross profit before compensation, even when the configured floor is zero. Marginal gross is exact crvUSD received minus LP value removed by that call; a pre-existing deficit is not charged to the current withdrawal. The caller receives its share as LP, the full crvUSD receipt reduces debt, and profitable contractions may partially repair an underwater keeper. Break-even and loss-making withdrawals are never permitted.
 
 At the initial keeper-local `3_000 bps` reward share, the `0.1 bp` frxUSD entry boundary splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol. The `3 bp` USDC/USDT boundary splits into `0.9 bp` and `2.1 bp`.
 
@@ -181,14 +181,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      17,227 bytes
-keeper runtime core:       14,476 bytes
-standalone runtime:      14,508 bytes
-EIP-170 headroom:         10,068 bytes
+standalone initcode:      17,314 bytes
+keeper runtime core:       14,563 bytes
+standalone runtime:      14,595 bytes
+EIP-170 headroom:          9,981 bytes
 runtime core hash:
-0xa43304a9410595aaa28c7f74725b152c204d2b5209a63e2fa0129cc3b064a287
+0xcd8dfc8db0e011416bed0db061c14add7aa1efb70d54476e784d81ffd8e471ba
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0x591301e2a4eb3fab8cb77d0c1249779a5a05574f11a6be72f8e5f1d0d94fee0d
+0x3d1e4024e673e623956bef4d638e60b94922d29fce03809a4056983e1cad870a
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
@@ -209,7 +209,7 @@ ETH_RPC_URL=https://an-archive-rpc.example make check
 
 Coverage includes fixed- and dynamic-array liquidity dispatch, amountless expansion/contraction, V2-compatible update/profit views, ERC-4626 valuation, donations, surplus, keeper-local role and reward changes, replaceable Policy rulings, Registry lifecycle and pop-and-swap removal, independent execution, governance debt accounting, preview/execution parity, runtime pins, ABI parity, stateful invariants, deployment JSON, and full Curve ownership-vote execution.
 
-The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile. It exercises canonical expansion and exact-output contraction under the `20%` rule without weakening the profit floor, and verifies Policy direction, measured deltas, debt reduction, final solvency, ControllerFactory funding, idle-allocation burning, residual rugging, and persistent ControllerFactory/pool allowances.
+The pinned frxUSD canary uses the production `10 ppm` entry and `150 ppm` exit profile. It exercises canonical expansion and exact-output contraction under the `20%` rule without weakening the profit floor, and verifies Policy direction, measured deltas, LP-denominated rewards, full-receipt debt reduction, ControllerFactory funding, idle-allocation burning, residual rugging, and persistent ControllerFactory/pool allowances.
 
 The existing `deployments/mainnet/PegKeeperV3-release.json`, `docs/pegkeeper-v3-release-checklist.md`, and `scripts/verify-release-manifest.py` predate this source candidate. They remain frozen and must be regenerated from the final committed source snapshot before release.
 

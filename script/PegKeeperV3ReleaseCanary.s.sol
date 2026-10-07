@@ -218,12 +218,22 @@ contract PegKeeperV3ReleaseCanary is Script, StdCheats {
         internal
         returns (uint256 lpBurned, uint256 crvUsdReceived)
     {
+        uint256 keeperLpBefore = IERC20(pegKeeper.pool()).balanceOf(CANARY_KEEPER);
+        uint256 keeperCrvUsdBefore = IERC20(CRVUSD).balanceOf(CANARY_KEEPER);
         vm.prank(CANARY_KEEPER);
-        uint256 keeperReward;
-        (lpBurned, crvUsdReceived, keeperReward) = pegKeeper.contract_supply();
+        uint256 keeperRewardLp;
+        (lpBurned, crvUsdReceived, keeperRewardLp) = pegKeeper.contract_supply();
         require(lpBurned > 0, "no LP burned");
         require(crvUsdReceived > 0, "exact withdrawal returned no crvUSD");
-        require(keeperReward > 0, "contraction keeper reward missing");
+        require(keeperRewardLp > 0, "contraction keeper reward missing");
+        require(
+            IERC20(pegKeeper.pool()).balanceOf(CANARY_KEEPER) - keeperLpBefore == keeperRewardLp,
+            "contraction LP reward delta"
+        );
+        require(
+            IERC20(CRVUSD).balanceOf(CANARY_KEEPER) == keeperCrvUsdBefore,
+            "contraction paid crvUSD reward"
+        );
     }
 
     function _contractAndRugReturnedCrvUsd(IPegKeeperV3 pegKeeper)

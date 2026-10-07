@@ -81,7 +81,7 @@ Policy and keeper oracle reads use the declared `price()` interface directly. Or
 
 ## 4. Keeper-local admission
 
-Execution and previews query the selected Policy for the applicable global ruling, then enforce pauses, action delay, normalized local imbalance, idle crvUSD, keeper-local and ControllerFactory capacity, the retained-backing oracle floor, direct AMM economics, and reward accounting inside the keeper. Profitable expansion and donation settlement may reduce a pre-existing deficit without curing it. Protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper state and has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
+Execution and previews query the selected Policy for the applicable global ruling, then enforce pauses, action delay, normalized local imbalance, idle crvUSD, keeper-local and ControllerFactory capacity, the retained-backing oracle floor, direct AMM economics, and reward accounting inside the keeper. Profitable expansion, donation settlement, and contraction may reduce a pre-existing deficit without curing it. Interventions protect their own principal but do not require global post-action solvency; protocol-profit withdrawal remains bounded by backing surplus and rechecks final solvency. The current Policy does not inspect keeper state and has no cross-keeper ordering; keeper-local fees and profit floors provide soft economic preference only.
 
 ## 5. PegKeeperRegistry and wind-down
 
@@ -180,18 +180,26 @@ It requires:
 - contraction/global pauses open;
 - Policy contraction admission;
 - elapsed shared action delay;
-- canonical output equal to the configured `20%` normalized local crvUSD excess share, bounded by LP backing;
+- canonical output equal to the configured `20%` normalized local crvUSD excess share, bounded by buffered LP withdrawal capacity and pre-action LP value;
 - quoted and measured LP burn within the quote-derived bound;
 - measured crvUSD receipt exactly equal to requested output;
-- strictly positive gross exit profit before reward, even if the configured floor is zero;
-- the configured gross exit floor;
-- previewed retained LP backing at least projected remaining debt.
+- strictly positive marginal gross exit profit before reward, even if the configured floor is zero;
+- the configured gross exit floor; and
+- enough unburned LP to pay the caller reward while preserving the action's local principal.
 
-Preview uses expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, for gross profit and expected backing. The larger buffered maximum burn is execution-only. Execution independently rechecks actual burn, profit, and debt reduction.
+For receipt `R` and measured LP-value removal `L`:
 
-Contraction reduces debt by crvUSD retained after reward. Terminal value above remaining debt is sent to the selected Policy's global fee receiver.
+```text
+marginal gross profit = max(R - L, 0)
+caller reward value   = marginal gross profit * keeper_profit_share_bps / 10_000
+caller reward LP      = floor(caller reward value * 1e18 / post-action virtual price)
+```
 
-`update()` selects contraction when the pool has excess crvUSD and returns zero if the delay was consumed. `update(address beneficiary)` routes the physical reward to the selected nonzero beneficiary. `estimate_caller_profit()` returns zero when neither canonical direction is executable. `calc_profit()` aliases current protocol surplus in crvUSD-value terms.
+A pre-existing backing deficit does not enter this formula. Preview uses expected production-pool burn, `calc_token_amount(..., false) + 1 LP wei`, for gross profit and expected backing. The larger buffered maximum burn is execution-only. Execution independently rechecks actual burn, marginal profit, LP reward inventory, and debt reduction. Neither path requires the deficit to be cured.
+
+The caller reward is paid from unburned LP, so contraction reduces debt by the full measured crvUSD receipt. Current-call crvUSD above remaining debt is sent to the selected Policy's global fee receiver; pre-existing idle crvUSD is excluded. A rewarded terminal contraction can reduce debt to zero but deliberately leaves LP representing retained protocol profit instead of burning literally all LP.
+
+`update()` selects contraction when the pool has excess crvUSD and returns zero if the delay was consumed. `update(address beneficiary)` routes the physical LP reward to the selected nonzero beneficiary. `update()` and `estimate_caller_profit()` return its crvUSD-equivalent value and return zero when neither canonical direction is executable. `calc_profit()` aliases current protocol surplus in crvUSD-value terms.
 
 ## 10. Governance debt accounting
 
@@ -273,14 +281,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      17,227 bytes
-keeper runtime core:       14,476 bytes
-standalone runtime:      14,508 bytes
-EIP-170 headroom:         10,068 bytes
+standalone initcode:      17,314 bytes
+keeper runtime core:       14,563 bytes
+standalone runtime:      14,595 bytes
+EIP-170 headroom:          9,981 bytes
 runtime core hash:
-0xa43304a9410595aaa28c7f74725b152c204d2b5209a63e2fa0129cc3b064a287
+0xcd8dfc8db0e011416bed0db061c14add7aa1efb70d54476e784d81ffd8e471ba
 mainnet runtime hash:
-0x591301e2a4eb3fab8cb77d0c1249779a5a05574f11a6be72f8e5f1d0d94fee0d
+0x3d1e4024e673e623956bef4d638e60b94922d29fce03809a4056983e1cad870a
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:
