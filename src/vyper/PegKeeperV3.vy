@@ -803,7 +803,6 @@ def preview_expansion() -> (uint256, uint256, uint256, uint256):
     retained_value: uint256 = self._lp_value_at(retained_lp, virtual_price)
     assert retained_value >= accounting_baseline
     assert self._meets_entry_floor(gross_profit, crv_usd_deployed)
-    assert retained_value >= debt_after
     return crv_usd_deployed, gross_profit, keeper_reward, lp_tokens_out
 
 
@@ -946,9 +945,8 @@ def _settle_lp_expansion(
     gross_profit: uint256 = 0
     if lp_value_after > accounting_baseline + _principal:
         gross_profit = lp_value_after - accounting_baseline - _principal
-    entry_profit: uint256 = 0
-    if lp_value_after > entry_baseline + _principal:
-        entry_profit = lp_value_after - entry_baseline - _principal
+    assert lp_value_after >= entry_baseline + _principal
+    entry_profit: uint256 = lp_value_after - entry_baseline - _principal
     assert self._meets_entry_floor(entry_profit, _principal)
 
     keeper_reward_value: uint256 = self._keeper_reward(gross_profit)

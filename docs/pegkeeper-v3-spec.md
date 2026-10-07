@@ -117,12 +117,12 @@ The call:
 4. checks idle balance and both capacity ceilings;
 5. quotes and performs direct `add_liquidity` with the configured execution buffer;
 6. measures exact crvUSD, paired-token, and LP deltas;
-7. computes gross action profit before caller reward;
-8. pays reward in LP;
+7. requires LP value after deposit to cover the pre-action LP value, donation principal, and new crvUSD principal, then checks the gross entry floor;
+8. pays reward in LP and checks retained backing against the entry baseline;
 9. increases `debt` by actual matched crvUSD;
-10. checks final retained backing and records intervention time.
+10. records intervention time without requiring a pre-existing deficit to be fully cured.
 
-`preview_expansion()` applies the same accounting and safety predicates without state changes. No ordinary expansion function accepts a caller-selected amount. `update()` dispatches to this canonical action when local balance calls for expansion.
+`preview_expansion()` applies the same accounting and safety predicates without state changes, including partial-deficit-repair eligibility. A zero entry floor, or a positive floor rounded to zero, permits local break-even but never a loss of the action's protected principal. No ordinary expansion function accepts a caller-selected amount. `update()` dispatches to this canonical action when local balance calls for expansion.
 
 ## 7. LP and ERC-4626 valuation
 
@@ -273,14 +273,14 @@ Pinned Vyper `0.4.3`, codesize optimization, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0
-standalone initcode:      17,247 bytes
-keeper runtime core:       14,496 bytes
-standalone runtime:      14,528 bytes
-EIP-170 headroom:         10,048 bytes
+standalone initcode:      17,227 bytes
+keeper runtime core:       14,476 bytes
+standalone runtime:      14,508 bytes
+EIP-170 headroom:         10,068 bytes
 runtime core hash:
-0xecd9370b440f9cee24986f438e600f8c05e8b63824918711b94a4696a3a48801
+0xa43304a9410595aaa28c7f74725b152c204d2b5209a63e2fa0129cc3b064a287
 mainnet runtime hash:
-0xe47de059f1ce3e2a8615ff62cbd025afb02ad84874db9aee9b6852b1334bc009
+0x591301e2a4eb3fab8cb77d0c1249779a5a05574f11a6be72f8e5f1d0d94fee0d
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

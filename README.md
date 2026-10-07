@@ -135,6 +135,8 @@ Entry and normal-contraction floors apply to gross realized profit before keeper
 | frxUSD | `10` (`0.1 bp`) | `150` (`1.5 bp`) |
 | USDC / USDT | `300` (`3 bp`) | `80` (`0.8 bp`) |
 
+Ordinary expansion must cover its pre-action LP value, donation principal, and newly deployed crvUSD before the entry floor is checked. A zero or rounded-to-zero entry floor permits break-even, not a negative edge. Expansion preview and execution both allow partial repair of a pre-existing deficit.
+
 Every contraction requires strictly positive gross realized profit before compensation, even when the configured floor is zero. Break-even and loss-making withdrawals are never permitted.
 
 At the initial keeper-local `3_000 bps` reward share, the `0.1 bp` frxUSD entry boundary splits into `0.03 bp` for the caller and `0.07 bp` retained by the protocol. The `3 bp` USDC/USDT boundary splits into `0.9 bp` and `2.1 bp`.
@@ -179,14 +181,14 @@ Pinned Vyper `0.4.3`, `--optimize codesize`, Prague:
 
 ```text
 PegKeeperV3 version:       3.0.0 (numeric tuple: 3, 0, 0)
-standalone initcode:      17,247 bytes
-keeper runtime core:       14,496 bytes
-standalone runtime:      14,528 bytes
-EIP-170 headroom:         10,048 bytes
+standalone initcode:      17,227 bytes
+keeper runtime core:       14,476 bytes
+standalone runtime:      14,508 bytes
+EIP-170 headroom:         10,068 bytes
 runtime core hash:
-0xecd9370b440f9cee24986f438e600f8c05e8b63824918711b94a4696a3a48801
+0xa43304a9410595aaa28c7f74725b152c204d2b5209a63e2fa0129cc3b064a287
 mainnet runtime hash (canonical crvUSD immutable suffix):
-0xe47de059f1ce3e2a8615ff62cbd025afb02ad84874db9aee9b6852b1334bc009
+0x591301e2a4eb3fab8cb77d0c1249779a5a05574f11a6be72f8e5f1d0d94fee0d
 
 PegKeeperPolicy runtime:   905 bytes
 policy hash:

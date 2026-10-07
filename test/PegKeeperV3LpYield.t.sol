@@ -1232,22 +1232,172 @@ contract PegKeeperV3LpYieldTest is Test {
         assertEq(keeper.debt(), 12_000e18);
     }
 
+    function test_zeroEntryProfitFloorRejectsLossMakingExpansion() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        vm.prank(governance);
+        keeper.set_policy(0, 0, MAX_DEBT);
+        yieldAmm.setLpMintBps(9_999);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+
+        vm.expectRevert();
+        keeper.preview_expansion();
+        assertEq(keeper.estimate_caller_profit(), 0);
+        vm.expectRevert();
+        keeper.expand_supply();
+
+        assertEq(keeper.debt(), 0);
+        assertEq(keeper.last_intervention_at(), 0);
+        assertEq(crvUsd.balanceOf(address(keeper)), 10_000e18);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 0);
+        assertEq(yieldAmm.addLiquidityCalls(), 0);
+    }
+
+    function test_roundedEntryProfitFloorRejectsLossMakingExpansion() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        assertEq(keeper.entry_min_profit_ppm(), 10);
+        uint256 principal = 99_999;
+        assertEq(principal * keeper.entry_min_profit_ppm() / 1_000_000, 0);
+        yieldAmm.setLpMintBps(9_999);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), principal);
+
+        vm.expectRevert();
+        keeper.preview_expansion();
+        assertEq(keeper.estimate_caller_profit(), 0);
+        vm.expectRevert();
+        keeper.expand_supply();
+
+        assertEq(keeper.debt(), 0);
+        assertEq(keeper.last_intervention_at(), 0);
+        assertEq(crvUsd.balanceOf(address(keeper)), principal);
+        assertEq(yieldAmm.balanceOf(address(keeper)), 0);
+        assertEq(yieldAmm.addLiquidityCalls(), 0);
+    }
+
+    function test_zeroEntryProfitFloorRejectsLossDespiteExistingSurplus() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_010);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        uint256 lpBefore = keeper.lp_balance();
+        uint256 debtBefore = keeper.debt();
+        uint256 lastInterventionBefore = keeper.last_intervention_at();
+        assertGt(keeper.trusted_backing_value(), debtBefore + 1e18);
+
+        vm.prank(governance);
+        keeper.set_policy(0, 0, MAX_DEBT);
+        yieldAmm.setLpMintBps(9_999);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        vm.warp(block.timestamp + 1);
+
+        vm.expectRevert();
+        keeper.preview_expansion();
+        vm.expectRevert();
+        keeper.expand_supply();
+
+        assertEq(keeper.lp_balance(), lpBefore);
+        assertEq(keeper.debt(), debtBefore);
+        assertEq(keeper.last_intervention_at(), lastInterventionBefore);
+        assertEq(crvUsd.balanceOf(address(keeper)), 10_000e18);
+        assertEq(yieldAmm.addLiquidityCalls(), 1);
+    }
+
+    function test_zeroEntryProfitFloorAllowsBreakEvenExpansion() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        vm.prank(governance);
+        keeper.set_policy(0, 0, MAX_DEBT);
+        yieldAmm.setLpMintBps(10_000);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+
+        (
+            uint256 expectedDeployed,
+            uint256 grossProfit,
+            uint256 expectedReward,
+            uint256 expectedLp
+        ) = keeper.preview_expansion();
+        assertEq(grossProfit, 0);
+        assertEq(expectedReward, 0);
+        (uint256 deployed, uint256 lpReceived, uint256 reward) = keeper.expand_supply();
+        assertEq(deployed, expectedDeployed);
+        assertEq(lpReceived, expectedLp);
+        assertEq(reward, 0);
+        assertEq(keeper.trusted_backing_value(), keeper.debt());
+        assertEq(crvUsd.balanceOf(address(keeper)), 0);
+    }
+
+    function test_roundedEntryProfitFloorAllowsBreakEvenExpansion() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        uint256 principal = 99_999;
+        assertEq(principal * keeper.entry_min_profit_ppm() / 1_000_000, 0);
+        yieldAmm.setLpMintBps(10_000);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), principal);
+
+        (
+            uint256 expectedDeployed,
+            uint256 grossProfit,
+            uint256 expectedReward,
+            uint256 expectedLp
+        ) = keeper.preview_expansion();
+        assertEq(grossProfit, 0);
+        assertEq(expectedReward, 0);
+        (uint256 deployed, uint256 lpReceived, uint256 reward) = keeper.expand_supply();
+        assertEq(deployed, expectedDeployed);
+        assertEq(lpReceived, expectedLp);
+        assertEq(reward, 0);
+        assertEq(keeper.trusted_backing_value(), keeper.debt());
+        assertEq(crvUsd.balanceOf(address(keeper)), 0);
+    }
+
     function test_profitableExpansionCanPartiallyRepairInsolvency() public {
         ILpPegKeeperV3 keeper = _configuredDirectKeeper();
         yieldAmm.setLpMintBps(10_001);
-        crvUsd.mint(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
         keeper.expand_supply();
 
         yieldAmm.setVirtualPrice(0.9e18);
         uint256 deficitBefore = keeper.debt() - keeper.trusted_backing_value();
         yieldAmm.setLpMintBps(11_113);
-        crvUsd.mint(address(keeper), 10_000e18);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        uint256 debtBefore = keeper.debt();
+        (
+            uint256 expectedDeployed,
+            uint256 grossProfit,
+            uint256 expectedReward,
+            uint256 expectedLp
+        ) = keeper.preview_expansion();
+        assertGt(grossProfit, 0);
+        assertGt(expectedReward, 0);
+        uint256 estimatedRewardValue = keeper.estimate_caller_profit();
+        assertEq(estimatedRewardValue, expectedReward * yieldAmm.get_virtual_price() / 1e18);
 
-        keeper.expand_supply();
+        (uint256 deployed, uint256 lpReceived, uint256 reward) = keeper.expand_supply();
+        assertEq(deployed, expectedDeployed);
+        assertEq(lpReceived, expectedLp);
+        assertEq(reward, expectedReward);
+        assertEq(keeper.debt(), debtBefore + deployed);
 
         uint256 backingAfter = keeper.trusted_backing_value();
         assertLt(backingAfter, keeper.debt());
         assertLt(keeper.debt() - backingAfter, deficitBefore);
+    }
+
+    function test_updateCanPartiallyRepairInsolvencyWithEstimatedLpReward() public {
+        ILpPegKeeperV3 keeper = _configuredDirectKeeper();
+        yieldAmm.setLpMintBps(10_001);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        keeper.expand_supply();
+        yieldAmm.setVirtualPrice(0.9e18);
+        uint256 deficitBefore = keeper.debt() - keeper.trusted_backing_value();
+        yieldAmm.setLpMintBps(11_113);
+        controllerAndPolicy.increaseDebtCeiling(address(keeper), 10_000e18);
+        uint256 estimatedRewardValue = keeper.estimate_caller_profit();
+        assertGt(estimatedRewardValue, 0);
+
+        address beneficiary = makeAddr("partial-repair beneficiary");
+        uint256 rewardValue = keeper.update(beneficiary);
+        assertEq(rewardValue, estimatedRewardValue);
+        assertEq(rewardValue, yieldAmm.balanceOf(beneficiary) * yieldAmm.get_virtual_price() / 1e18);
+        assertLt(keeper.trusted_backing_value(), keeper.debt());
+        assertLt(keeper.debt() - keeper.trusted_backing_value(), deficitBefore);
     }
 
     function test_donationSweepCanPartiallyRepairInsolvency() public {
